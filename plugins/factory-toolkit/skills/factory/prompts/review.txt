@@ -1,0 +1,4 @@
+Review the change for ticket @TICKET@ on branch @BRANCH@ (base @BASE@). You are in a fresh, read-only session; edit nothing.
+Inputs: the ticket @FACTORY@/tickets/@TICKET@.md, the project's review standards @STANDARDS@, the diff `git diff @BASE@...HEAD -- . ':!handback'`, and the verification record @HANDBACK@/verification-record.md.
+Re-run the accept command yourself (it runs in the run's @GUEST_DESC@ build VM): @ACCEPT@ — and report its exit code and counts on the Reviewer line.
+Answer with exactly the eight lines your agent definition specifies, and nothing else.

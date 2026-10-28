@@ -1,0 +1,17 @@
+{
+  "name": "factory-toolkit",
+  "version": "0.1.0",
+  "description": "[EXPERIMENTAL] Software factory: Jira ticket -> spec with a red oracle -> unattended builder, verify, reviewer and blind VM QA loop -> hand-back for a human judge",
+  "author": {
+    "name": "Xavier Fortin",
+    "url": "https://github.com/xfortin-devolutions/skills-marketplace"
+  },
+  "homepage": "https://github.com/xfortin-devolutions/skills-marketplace",
+  "repository": "https://github.com/xfortin-devolutions/skills-marketplace",
+  "keywords": [
+    "development",
+    "agents",
+    "qa",
+    "experimental"
+  ]
+}

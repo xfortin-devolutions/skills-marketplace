@@ -1,0 +1,6 @@
+QA for ticket @TICKET@. @APP@, built in Debug from commit @SHA@, is starting on your VM's desktop (@GUEST_DESC@, screen @XRES@×@YRES@).
+Your working folder is @QA_DIR@: save every screenshot there, with relative names (01-start.png, ...).
+- vm.py: python3 @VM@/vm.py <op> ...
+- vmssh: @VM@/vmssh '<PowerShell>'
+Run each command bare: no pipes, no `&&`, no redirects, no environment-variable prefix (the environment already points at your VM).
+Check the ticket's Runtime check below and answer in the format your instructions give. Ignore its "Red on base" line: it is for the people who wrote the check.
