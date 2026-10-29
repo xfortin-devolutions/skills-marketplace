@@ -10,7 +10,8 @@ DEFAULT_PROFILE=rdm
 # Docs a change may always update (skills: the .claude side; .agents/ and AGENTS.md are symlinks to it).
 DOC_PATHS=".claude/skills/ docs/ CLAUDE.md"
 
-B_MODEL=claude-opus-5-5     B_USD=8    B_MIN=45
+# Builder: 75 min, since its guest builds take 20 to 30 of them (build, accept, the negative run's rebuild of the base).
+B_MODEL=claude-opus-5-5     B_USD=8    B_MIN=75
 R_MODEL=claude-sonnet-5-5   R_USD=2    R_MIN=20
 QA_MODEL=claude-opus-5-5    QA_USD=6   QA_MIN=40
 # Exploratory QA after a runtime QA PASS: charter (from the diff), explorer (same VM), re-check of findings on the base.

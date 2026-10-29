@@ -141,7 +141,7 @@ fill() { # fill <template file>: substitutes the @NAME@ placeholders
       -e "s|@GUEST@|$GUEST|g" -e "s|@ACCEPT@|$(echo "$ACCEPT_CMD" | sed 's/[|&\\]/\\&/g')|g" -e "s|@FACTORY@|$FACTORY_DIR_REL|g" -e "s|@SPEC@|$TICKET_FILE|g" \
       -e "s|@TEMPLATES@|$SKILL_REL/templates|g" -e "s|@VM@|$VM|g" -e "s|@APP@|$APP_NAME|g" \
       -e "s|@GUEST_DESC@|${GUEST_DESC:-}|g" -e "s|@XRES@|$VM_XRES|g" -e "s|@YRES@|$VM_YRES|g" \
-      -e "s|@STANDARDS@|${REVIEW_STANDARDS:-none}|g" -e "s|@DOCS@|${DOC_PATHS:-none}|g" "$1"
+      -e "s|@STANDARDS@|${REVIEW_STANDARDS:-none}|g" -e "s|@DOCS@|${DOC_PATHS:-none}|g" -e "s|@BMIN@|$B_MIN|g" "$1"
 }
 section() { # section <file> <heading>: the body of one "## <heading>" section
   awk -v h="## $2" '$0 == h { on = 1; next } /^## / { on = 0 } on' "$1"
@@ -726,8 +726,14 @@ while :; do
     --allowedTools "${BUILD_TOOLS[@]}" --output-format json
   read -r st _ _ _ <<< "$(fields "$RUN/$name.json")"
   read -r _ _ rc < "$RUN/$name.time"
+  # A builder stopped mid negative run (time box, budget) leaves the worktree detached on the base: the next round would
+  # see an empty branch. Its record steps never leave changes behind, so going back to the branch loses nothing.
+  if [ "$(git -C "$WT" symbolic-ref -q --short HEAD)" != "$BRANCH" ]; then
+    ev "$name left the worktree off $BRANCH ($(git -C "$WT" rev-parse --short HEAD)): switching back"
+    git -C "$WT" switch -q "$BRANCH" 2>> "$EV" || ev "could not switch $WT back to $BRANCH"
+  fi
   case "$rc/$st" in
-    142/*) out="time box" ;;
+    142/*) out="time box ($B_MIN min)" ;;
     */success) out="success" ;;
     */error_max_budget_usd) out="cap: dollars" ;;
     *) out="error: $st (exit $rc)" ;;
