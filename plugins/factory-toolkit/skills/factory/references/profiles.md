@@ -4,7 +4,7 @@ The engine knows nothing about a product. A repo's **project** says what its pro
 **profile** per product. It lives in the repo's own `.factory/` once the team adopts the factory; while the factory is
 experimental, it ships with the skill in `projects/<project>/`, picked by its `REPO_MATCH` against the repo's `origin`
 (supported projects and how to move one into its repo: `projects/README.md`). The repo's `.factory/profiles/` wins when
-both exist; tickets always live in the repo's `.factory/tickets/`, on each ticket's own branch. Each product
+both exist. Tickets are working files, never committed: `.claude/worktrees/factory-tickets/` in the main checkout. Each product
 is a **profile**, and each guest OS the product ships on is a **target** of that profile. RDM on Windows, macOS and
 Linux is one profile with three targets, not three profiles: standards, scope rules and branch naming are the same, only
 the guest image, build, test and launch differ. **Nothing builds or tests on the Mac**: every build and test runs in a VM
@@ -29,7 +29,7 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
     targets/<os>/launch.ps1        starts the build in the guest's desktop session
     layer/layer.conf, setup.ps1    optional: the VM layer the targets start from
     layer.md                       optional: notes on how the layer was worked out
-<repo>/.factory/tickets/<KEY>.md, <KEY>.sh   a spec and its inputs (references/spec-authoring.md), on the ticket's branch
+<main checkout>/.claude/worktrees/factory-tickets/<KEY>.md, <KEY>.sh   a spec and its inputs (spec-authoring.md), not committed
 ~/.factory/config.sh               per machine, never committed: FACTORY_VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, budget overrides
 ```
 
@@ -41,6 +41,7 @@ Load order, later wins: engine defaults (`scripts/lib/config.sh`) < the project'
 | Variable | Required | Meaning | Example (console) |
 |---|---|---|---|
 | `APP_NAME` | yes | what the builder and the QA agent are told they work on | `Devolutions Console` |
+| `CODE_PATHS` | yes | where the product's code is: repo paths, space-separated; `factory.sh which <path>` picks the profile with the longest match | `Console/` |
 | `TARGETS` | yes | targets under `targets/`, space-separated; the first is a ticket's default | `windows` |
 | `REVIEW_STANDARDS` | yes | the reviewer's standards file: absolute, or repo-relative | `$PROFILE_DIR/reviewer.md` |
 | `BRANCH_PREFIX` | yes | prefix of the run's branch; `TICKET` is set when it is read | `devex/factory-` |
@@ -75,7 +76,7 @@ verdict:
 |---|---|---|---|
 | `build` | `$Project` (empty: build what ships) | stop the running app first (it locks its files on the share) | `BUILD EXIT CODE: <n>` |
 | `test` | `$Project`, `$Filter` (may be empty) | run that test project only | `TEST EXIT CODE: <n>` |
-| `launch` | none | stop any running instance; start the built app in the signed-in desktop session (run again to restart it for the exploratory QA, and on a base build for its re-check) | `LAUNCH OK` once it is starting |
+| `launch` | none | stop any running instance; start the built app in the signed-in desktop session (run again to restart it for the exploratory QA, and on a base build for its re-check). A server or web app: deploy or start it, wait until it answers, then open the browser at its URL in the desktop session | `LAUNCH OK` once it is starting (a server: once its page answers) |
 
 Exit code rules: a non-zero code with restore or SDK errors (`NU…`, `NETSDK…`, `MSB4236`) is a harness error; any other
 non-zero code is the change's fault. When the harness is at fault (no `R:`, no SDK), stop **without** printing the
@@ -113,9 +114,11 @@ Every step checks whether it is already done and skips it, so a failed run is st
 
 ## Tickets
 
-`tickets/<KEY>.sh` picks `PROFILE` (default `DEFAULT_PROFILE`) and `PLATFORM` (default: the profile's first target), and
-sets `ACCEPT_TEST` (a test project), `ACCEPT_FILTER`, `ORACLE_PATHS` and `SCOPE_REGEX`: references/spec-authoring.md.
-`factory.sh check` checks the tickets of each profile too.
+`<KEY>.sh` (next to `<KEY>.md` in `factory-tickets/`) picks `PROFILE` (default `DEFAULT_PROFILE`; pick it with
+`factory.sh which`) and `PLATFORM` (default: the profile's first target), and sets `ACCEPT_TEST` (a test project),
+`ACCEPT_FILTER`, `ORACLE_PATHS` and `SCOPE_REGEX`: references/spec-authoring.md. `factory.sh check` checks the tickets of
+each profile too, and warns when `ACCEPT_TEST` is outside the profile's `CODE_PATHS`. Each run copies the spec into its
+run folder; `factory.sh clean <KEY>` deletes it with the runs once the ticket is done.
 
 ## What stays out of a profile
 

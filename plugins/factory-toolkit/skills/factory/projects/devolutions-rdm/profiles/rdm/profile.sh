@@ -7,6 +7,8 @@ APP_NAME="Remote Desktop Manager (RDM)"
 TARGETS="windows"
 
 PROTECTED_EXTRA=".github"
+# Where its code is (repo paths, space-separated): `factory.sh which <path>` picks the profile from these.
+CODE_PATHS="RDM/"
 REVIEW_STANDARDS="$PROFILE_DIR/reviewer.md"
 
 # GitHub only accepts branches under a team prefix (devex/, rdmw/, …): use the ticket's project key.

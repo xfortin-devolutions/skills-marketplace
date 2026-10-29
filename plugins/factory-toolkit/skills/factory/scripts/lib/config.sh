@@ -1,11 +1,12 @@
 # config.sh: the factory's layered configuration, sourced by run-loop.sh and factory.sh (bash 3.2 compatible).
 # Set before sourcing: REPO (the target repo), X (the engine's scripts folder), TICKET (optional).
-# Layers, later wins: engine defaults < <project>/config.sh < tickets/<TICKET>.sh (picks PROFILE, PLATFORM)
+# Layers, later wins: engine defaults < <project>/config.sh < <tickets>/<TICKET>.sh (picks PROFILE, PLATFORM)
 #   < profiles/<PROFILE>/profile.sh < profiles/<PROFILE>/targets/<PLATFORM>/target.sh < ~/.factory/config.sh.
 # The project layers say what the products need (shared by the team); the user layer says what this machine has.
 # The project (config.sh + profiles/) is the repo's own .factory/ when it has profiles; until then, the one bundled with
-# this skill in projects/<name>/ whose REPO_MATCH matches the repo's origin remote. Tickets always live in the repo's
-# .factory/tickets/, on each ticket's own branch.
+# this skill in projects/<name>/ whose REPO_MATCH matches the repo's origin remote. Tickets are working files, never
+# committed: next to the runs in the main checkout's .claude/worktrees/factory-tickets/ (TICKETS_DIR); each run takes a
+# copy of its spec, and `factory.sh clean <KEY>` removes a finished ticket's spec, runs and VM folders.
 
 FACTORY_DIR=${FACTORY_DIR:-$REPO/.factory}
 SKILL_DIR=$(cd "$X/.." && pwd)
@@ -47,9 +48,18 @@ else
 fi
 [ -n "$PROJECT_DIR" ] && [ -f "$PROJECT_DIR/config.sh" ] && . "$PROJECT_DIR/config.sh"
 
-PROFILE="" PLATFORM="" TARGET_DIR="" PROFILE_DIR=""
-if [ -n "${TICKET:-}" ] && [ -f "$FACTORY_DIR/tickets/$TICKET.sh" ]; then
-  . "$FACTORY_DIR/tickets/$TICKET.sh"
+TICKETS_DIR=${FACTORY_TICKETS:-$MAIN_REPO/.claude/worktrees/factory-tickets}
+# Specs, runs and run worktrees stay out of git even in a repo that doesn't ignore .claude/worktrees/ itself.
+if ! git -C "$MAIN_REPO" check-ignore -q .claude/worktrees/factory-runs 2> /dev/null; then
+  _ex=$(git -C "$MAIN_REPO" rev-parse --git-path info/exclude 2> /dev/null)
+  [ -n "$_ex" ] && { mkdir -p "$(dirname "$MAIN_REPO/${_ex#$MAIN_REPO/}")"; echo '.claude/worktrees/' >> "$MAIN_REPO/${_ex#$MAIN_REPO/}"; }
+fi
+# Specs written before 0.3.0 sit in the repo's .factory/tickets/, on their ticket branch.
+[ -n "${TICKET:-}" ] && [ ! -f "$TICKETS_DIR/$TICKET.sh" ] && [ -f "$FACTORY_DIR/tickets/$TICKET.sh" ] && TICKETS_DIR=$FACTORY_DIR/tickets
+
+PROFILE="" PLATFORM="" TARGET_DIR="" PROFILE_DIR="" CODE_PATHS=""
+if [ -n "${TICKET:-}" ] && [ -f "$TICKETS_DIR/$TICKET.sh" ]; then
+  . "$TICKETS_DIR/$TICKET.sh"
   PROFILE=${PROFILE:-$DEFAULT_PROFILE}
   [ -n "$PROJECT_DIR" ] || { echo "factory: no project for this repo: no $FACTORY_DIR_REL/profiles, and no projects/*/config.sh in the skill whose REPO_MATCH matches its origin" >&2; return 2; }
   PROFILE_DIR=$PROJECT_DIR/profiles/$PROFILE

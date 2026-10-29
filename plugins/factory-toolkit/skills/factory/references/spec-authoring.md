@@ -3,7 +3,11 @@
 The loop is only as good as its oracle (GAPS.md R1, I3). A spec is ready when an agent that never talks to anyone can
 finish it, and a script can tell whether it did.
 
-## tickets/<KEY>.md
+## <KEY>.md
+
+Specs live in the main checkout's `.claude/worktrees/factory-tickets/` (`factory.sh start` prints the path), never in
+git: the ticket branch carries only product commits (the oracle and its prerequisites).
+
 | Section | Contents |
 |---|---|
 | `# <KEY> — <title>` | first line; also the draft PR title |
@@ -14,7 +18,7 @@ finish it, and a script can tell whether it did.
 | Scope | Touches (globs) and Do not edit (oracle, factory, `.claude/`, `.github/`, `.resx`/`.axaml` unless needed) |
 | Standards | CLAUDE.md, CODING_STANDARDS.md, the skills the builder must invoke |
 
-## tickets/<KEY>.sh
+## <KEY>.sh
 ```
 ACCEPT_TEST=<test project the Acceptance command runs, repo-relative, no spaces>
 ACCEPT_FILTER=<optional test filter, no spaces>

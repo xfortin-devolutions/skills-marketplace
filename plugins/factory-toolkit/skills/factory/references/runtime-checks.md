@@ -1,6 +1,6 @@
 # Writing a Runtime check
 
-The `## Runtime check` section of `tickets/<KEY>.md` is what the blind QA agent receives, verbatim, and nothing else: it
+The `## Runtime check` section of the spec (`<KEY>.md`) is what the blind QA agent receives, verbatim, and nothing else: it
 never sees the code, the diff or the rest of the ticket. Write it for a careful tester who has never seen the app's source.
 
 ```
