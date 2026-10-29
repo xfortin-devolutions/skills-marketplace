@@ -194,7 +194,8 @@ verify() {
   sha=$(grep -m1 '^- Commit:' "$rec" | grep -oE '@ *[0-9a-f]{7,40}' | grep -oE '[0-9a-f]{7,40}')
   [ -n "$sha" ] || { echo "red: record has no Commit SHA"; return; }
   # Not merges, nor what the base brought (a --resume merges the ticket branch in after the record): the builder's only.
-  later=$(git -C "$WT" log --oneline --no-merges "$sha..HEAD" "^$BASE" -- . ':(exclude)handback' 2>> "$out")
+  # Nor the runner's own docs commit (apply_docs).
+  later=$(git -C "$WT" log --oneline --no-merges "$sha..HEAD" "^$BASE" -- . ':(exclude)handback' $(dot_docs | sed 's/^/:(exclude)/') 2>> "$out")
   [ -z "$later" ] || { echo "red: code commit after the record's Commit line"; return; }
   grep -qE '^- Verdict: *PASS' "$rec" || { echo "red: record Verdict is not PASS"; return; }
   touched=$(git -C "$WT" diff --name-only "$BASE" HEAD -- $PROTECTED_PATHS)
@@ -229,6 +230,29 @@ verify() {
     *) echo "error: guest test: $(harness_why "$out.test")" ;;
   esac
   rm -f "$out.test"
+}
+
+dot_docs() { # dot_docs: the DOC_PATHS under .claude/, one a line: the builder stages those, the runner applies them
+  local d
+  for d in $DOC_PATHS; do case "$d" in .claude/*) echo "$d" ;; esac; done
+}
+
+# apply_docs: Claude Code refuses a headless session's edits under any .claude/ folder, whatever the allow rules, so the
+# builder writes its new version of such a doc at $HANDBACK/docs/<path without the leading dot>. This copies the ones
+# under dot_docs into place, in a commit of the runner's that the reviewer then sees; anything else there is ignored.
+apply_docs() {
+  local st="$WT/$HANDBACK/docs/claude" f rel d ok
+  [ -d "$st" ] || return 0
+  while IFS= read -r f; do
+    rel=.claude/${f#$st/} ok=""
+    for d in $(dot_docs); do case "$rel" in "$d"*) ok=yes ;; esac; done
+    case "$rel" in *..*) ok="" ;; esac
+    [ -n "$ok" ] || { ev "staged doc $rel is not under DOC_PATHS ($(echo $(dot_docs))): ignored"; continue; }
+    mkdir -p "$(dirname "$WT/$rel")" && cp "$f" "$WT/$rel" && git -C "$WT" add -- "$rel"
+  done < <(find "$st" -type f)
+  git -C "$WT" diff --cached --quiet && return 0
+  git -C "$WT" commit -q -m "$TICKET: Updated the docs the builder staged under $HANDBACK/docs" \
+    && ev "applied the builder's staged docs: $(echo $(git -C "$WT" diff --name-only HEAD~1 HEAD))"
 }
 
 not_docs() { # not_docs: the paths on stdin that are under none of DOC_PATHS
@@ -732,6 +756,7 @@ while :; do
     ev "$name left the worktree off $BRANCH ($(git -C "$WT" rev-parse --short HEAD)): switching back"
     git -C "$WT" switch -q "$BRANCH" 2>> "$EV" || ev "could not switch $WT back to $BRANCH"
   fi
+  apply_docs
   case "$rc/$st" in
     142/*) out="time box ($B_MIN min)" ;;
     */success) out="success" ;;

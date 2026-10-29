@@ -214,8 +214,9 @@ new `targets/<os>/`, not a new profile.
 ## Rules for every agent the runner spawns
 - No AskUserQuestion, no waiting for a human inside a session: decide and record; the runner owns human hand-offs.
 - Builder: only the ticket's scope, plus the docs the change makes wrong (`DOC_PATHS`: skills, docs, CLAUDE.md), in
-  the same commit; never the oracle, the factory, or `.claude/` settings and hooks (denied anyway). One code commit, then
-  record, then hand-back. The reviewer checks the docs (its Docs line). Reviewer and charter: read-only. QA and explorer: blind (no source), never "Send error report".
+  the same commit; never the oracle, the factory, or `.claude/` settings and hooks (denied anyway). Claude Code refuses a
+  headless session's edits under `.claude/`, so the builder stages a skill update in `handback/<branch>/docs/claude/…`
+  and the runner commits it into place. One code commit, then record, then hand-back. The reviewer checks the docs (its Docs line). Reviewer and charter: read-only. QA and explorer: blind (no source), never "Send error report".
 - Nothing is pushed, no PR, no Jira write, unless the user asked for it in this conversation.
 
 ## Where things are
