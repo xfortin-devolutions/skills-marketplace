@@ -1,10 +1,14 @@
 # config.sh: the factory's layered configuration, sourced by run-loop.sh and factory.sh (bash 3.2 compatible).
 # Set before sourcing: REPO (the target repo), X (the engine's scripts folder), TICKET (optional).
-# Layers, later wins: engine defaults < <repo>/.factory/config.sh < tickets/<TICKET>.sh (picks PROFILE, PLATFORM)
+# Layers, later wins: engine defaults < <project>/config.sh < tickets/<TICKET>.sh (picks PROFILE, PLATFORM)
 #   < profiles/<PROFILE>/profile.sh < profiles/<PROFILE>/targets/<PLATFORM>/target.sh < ~/.factory/config.sh.
-# The repo layers say what the project needs (shared by the team); the user layer says what this machine has.
+# The project layers say what the products need (shared by the team); the user layer says what this machine has.
+# The project (config.sh + profiles/) is the repo's own .factory/ when it has profiles; until then, the one bundled with
+# this skill in projects/<name>/ whose REPO_MATCH matches the repo's origin remote. Tickets always live in the repo's
+# .factory/tickets/, on each ticket's own branch.
 
 FACTORY_DIR=${FACTORY_DIR:-$REPO/.factory}
+SKILL_DIR=$(cd "$X/.." && pwd)
 # Runs and build worktrees live in the main checkout, so they are found from any worktree of the repo.
 MAIN_REPO=$(cd "$(git -C "$REPO" rev-parse --git-common-dir)/.." && pwd)
 FACTORY_DIR_REL=${FACTORY_DIR#$REPO/}
@@ -28,15 +32,29 @@ PR_BASE=master
 BRANCH_PREFIX=factory/
 PROTECTED_EXTRA=""
 
-[ -f "$FACTORY_DIR/config.sh" ] && . "$FACTORY_DIR/config.sh"
+PROJECT_DIR="" PROJECT_FROM=""
+if [ -d "$FACTORY_DIR/profiles" ]; then
+  PROJECT_DIR=$FACTORY_DIR PROJECT_FROM="repo ($FACTORY_DIR_REL)"
+else
+  _origin=$(git -C "$REPO" remote get-url origin 2> /dev/null)
+  for _p in "$SKILL_DIR"/projects/*/config.sh; do
+    [ -f "$_p" ] && [ -n "$_origin" ] || continue
+    _m=$(REPO_MATCH=""; . "$_p" > /dev/null 2>&1; echo "$REPO_MATCH")
+    [ -n "$_m" ] && echo "$_origin" | grep -qE "$_m" || continue
+    PROJECT_DIR=$(dirname "$_p") PROJECT_FROM="skill (projects/$(basename "$(dirname "$_p")"), matches $_origin)"
+    break
+  done
+fi
+[ -n "$PROJECT_DIR" ] && [ -f "$PROJECT_DIR/config.sh" ] && . "$PROJECT_DIR/config.sh"
 
 PROFILE="" PLATFORM="" TARGET_DIR="" PROFILE_DIR=""
 if [ -n "${TICKET:-}" ] && [ -f "$FACTORY_DIR/tickets/$TICKET.sh" ]; then
   . "$FACTORY_DIR/tickets/$TICKET.sh"
   PROFILE=${PROFILE:-$DEFAULT_PROFILE}
-  PROFILE_DIR=$FACTORY_DIR/profiles/$PROFILE
+  [ -n "$PROJECT_DIR" ] || { echo "factory: no project for this repo: no $FACTORY_DIR_REL/profiles, and no projects/*/config.sh in the skill whose REPO_MATCH matches its origin" >&2; return 2; }
+  PROFILE_DIR=$PROJECT_DIR/profiles/$PROFILE
   [ -n "$PROFILE" ] && [ -f "$PROFILE_DIR/profile.sh" ] \
-    || { echo "factory: no profile '$PROFILE' ($FACTORY_DIR_REL/profiles/<name>/profile.sh; set PROFILE in the ticket .sh or DEFAULT_PROFILE)" >&2; return 2; }
+    || { echo "factory: no profile '$PROFILE' in $PROJECT_FROM (profiles/<name>/profile.sh; set PROFILE in the ticket .sh or DEFAULT_PROFILE)" >&2; return 2; }
   . "$PROFILE_DIR/profile.sh"
   # The ticket picks a target; the profile's first one is the default.
   PLATFORM=${PLATFORM:-${TARGETS%% *}}

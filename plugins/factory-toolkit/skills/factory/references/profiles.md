@@ -1,21 +1,25 @@
 # Profiles: the contract between a repo and the factory
 
-The skill is the engine and knows nothing about a product. A repo opts in with a `.factory/` folder; each product in it
+The engine knows nothing about a product. A repo's **project** says what its products need: a `config.sh` and one
+**profile** per product. It lives in the repo's own `.factory/` once the team adopts the factory; while the factory is
+experimental, it ships with the skill in `projects/<project>/`, picked by its `REPO_MATCH` against the repo's `origin`
+(supported projects and how to move one into its repo: `projects/README.md`). The repo's `.factory/profiles/` wins when
+both exist; tickets always live in the repo's `.factory/tickets/`, on each ticket's own branch. Each product
 is a **profile**, and each guest OS the product ships on is a **target** of that profile. RDM on Windows, macOS and
 Linux is one profile with three targets, not three profiles: standards, scope rules and branch naming are the same, only
 the guest image, build, test and launch differ. **Nothing builds or tests on the Mac**: every build and test runs in a VM
 of the target OS, through the target's scripts.
 
-Start one with `factory.sh new-profile <name>` (it copies `templates/profile/`, and creates `.factory/config.sh` when the
-repo has none), fill every `TODO`, then `factory.sh check <name>` until it says OK. `check` validates everything below
+Start one with `factory.sh new-profile <name> [--skill <project>]` (it copies `templates/profile/` into the repo's
+project; a repo with none gets one, in the skill with `--skill`, else in its `.factory/`), fill every `TODO`, then `factory.sh check <name>` until it says OK. `check` validates everything below
 that can be checked without running a VM; prove the rest with `run-loop.sh <KEY> --test-only <ref>` and
 `--qa-only <ref>` on a commit whose answer you know.
 
 ## Layout
 
 ```
-.factory/                          in the repo, shared by the team
-  config.sh                        team defaults: DEFAULT_PROFILE, models and caps
+<project>/                         <skill>/projects/<project>/ for now, <repo>/.factory/ once adopted
+  config.sh                        team defaults: DEFAULT_PROFILE, models and caps (REPO_MATCH in the skill)
   profiles/<name>/
     profile.sh                     the product
     reviewer.md                    the reviewer's standards for it
@@ -25,11 +29,11 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
     targets/<os>/launch.ps1        starts the build in the guest's desktop session
     layer/layer.conf, setup.ps1    optional: the VM layer the targets start from
     layer.md                       optional: notes on how the layer was worked out
-  tickets/<KEY>.md, <KEY>.sh       a spec and its inputs (references/spec-authoring.md)
+<repo>/.factory/tickets/<KEY>.md, <KEY>.sh   a spec and its inputs (references/spec-authoring.md), on the ticket's branch
 ~/.factory/config.sh               per machine, never committed: FACTORY_VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, budget overrides
 ```
 
-Load order, later wins: engine defaults (`scripts/lib/config.sh`) < `.factory/config.sh` < the ticket's `.sh` <
+Load order, later wins: engine defaults (`scripts/lib/config.sh`) < the project's `config.sh` < the ticket's `.sh` <
 `profile.sh` < `target.sh` < `~/.factory/config.sh`. All are bash 3.2 (the macOS default): no associative arrays.
 
 ## profile.sh
@@ -38,7 +42,7 @@ Load order, later wins: engine defaults (`scripts/lib/config.sh`) < `.factory/co
 |---|---|---|---|
 | `APP_NAME` | yes | what the builder and the QA agent are told they work on | `Devolutions Console` |
 | `TARGETS` | yes | targets under `targets/`, space-separated; the first is a ticket's default | `windows` |
-| `REVIEW_STANDARDS` | yes | the reviewer's standards file, repo-relative | `.factory/profiles/console/reviewer.md` |
+| `REVIEW_STANDARDS` | yes | the reviewer's standards file: absolute, or repo-relative | `$PROFILE_DIR/reviewer.md` |
 | `BRANCH_PREFIX` | yes | prefix of the run's branch; `TICKET` is set when it is read | `devex/factory-` |
 | `PR_BASE` | yes | the draft PR's target branch | `master` |
 | `PROTECTED_EXTRA` | no | paths the builder may never touch, beyond the oracle, `.factory` and `.claude` | `.github` |

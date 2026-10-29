@@ -1,6 +1,6 @@
 ---
 name: factory
-description: "[EXPERIMENTAL] Software factory for Jira tickets, run from a Mac, for any repo with a .factory/ folder (profiles per product: RDM, Devolutions Console, …): turn a ticket into an agent-ready spec with a red oracle, then run the unattended loop — headless builder in its own worktree that builds and tests in a per-run QEMU VM of the target OS (nothing builds on the Mac), runner verify in that VM, read-only reviewer, a blind runtime QA stage that drives the verified build in a fresh throwaway VM, then a blind exploratory QA around the change (charter from the diff, findings re-tried on the base) that leaves the judge a guided tour — with send-backs, caps, a hand-back for the human judge, and Screen Sharing on the VM when a human is needed. Sub-commands: spec, run, qa, status, show, human, judge, stop, vm, setup, profile, layer. Use when the user says factory, factory loop, 'run the loop on <ticket>', 'make <ticket> agent-ready', 'test <ticket> in a VM', 'show me the VM', or asks to judge or check a factory run. Also: set up a repo or a new profile for the factory. Not for a one-off interactive fix (fix-jira) or a QA tester's .app/.deb build (rdm-mac-qa-fix, rdm-linux-qa-fix)."
+description: "[EXPERIMENTAL] Software factory for Jira tickets, run from a Mac, for a supported repo (projects bundled with the skill, or a repo's own .factory/; profiles per product: RDM, Devolutions Console, …): turn a ticket into an agent-ready spec with a red oracle, then run the unattended loop — headless builder in its own worktree that builds and tests in a per-run QEMU VM of the target OS (nothing builds on the Mac), runner verify in that VM, read-only reviewer, a blind runtime QA stage that drives the verified build in a fresh throwaway VM, then a blind exploratory QA around the change (charter from the diff, findings re-tried on the base) that leaves the judge a guided tour — with send-backs, caps, a hand-back for the human judge, and Screen Sharing on the VM when a human is needed. Sub-commands: spec, run, qa, status, show, human, judge, stop, vm, setup, profile, layer. Use when the user says factory, factory loop, 'run the loop on <ticket>', 'make <ticket> agent-ready', 'test <ticket> in a VM', 'show me the VM', or asks to judge or check a factory run. Also: set up a repo or a new profile for the factory. Not for a one-off interactive fix (fix-jira) or a QA tester's .app/.deb build (rdm-mac-qa-fix, rdm-linux-qa-fix)."
 ---
 
 # Software factory
@@ -35,12 +35,15 @@ human is an exception the run asks for (NEEDS-HUMAN), not a step.
 
 `F=<skill dir>/scripts`, where `<skill dir>` is this skill's base directory (an absolute path: the skill is installed as
 a plugin, apart from any repo). Run every command from inside the target repo or one of its worktrees: the engine works on
-the repo it is run from. The skill is the engine; everything about a project lives in the repo's `.factory/` and is
-described in [references/profiles.md](references/profiles.md):
-- `.factory/config.sh`: team defaults (models, caps, `DEFAULT_PROFILE`).
-- `.factory/profiles/<name>/`: one per product (`rdm`, `console`, …): `profile.sh` (app name, targets, protected paths,
+the repo it is run from. The skill is the engine; what a repo's products need is its **project**, described in
+[references/profiles.md](references/profiles.md). While the factory is experimental, projects ship with the skill:
+`projects/<project>/`, picked by `REPO_MATCH` against the repo's `origin`; the supported ones are listed in
+[projects/README.md](projects/README.md) (today `devolutions-rdm`: RDM and Devolutions Console, on Windows). A repo's own
+`.factory/profiles/` wins, which is how a project moves into its repo later. `factory.sh check` says which one is used.
+- `<project>/config.sh`: team defaults (models, caps, `DEFAULT_PROFILE`, `REPO_MATCH`).
+- `<project>/profiles/<name>/`: one per product (`rdm`, `console`, …): `profile.sh` (app name, targets, protected paths,
   branch prefix), `reviewer.md` (review standards), `targets/<os>/` (guest image and build/test/launch scripts).
-- `.factory/tickets/<KEY>.md` + `.sh` (the `.sh` picks `PROFILE` and `PLATFORM`), on the ticket's own branch.
+- `<repo>/.factory/tickets/<KEY>.md` + `.sh` (the `.sh` picks `PROFILE` and `PLATFORM`), on the ticket's own branch.
 - Per machine, never in the repo: `~/.factory/config.sh` (VM root, CPUs, RAM, budget overrides).
 The agents' system prompts, in this skill's `agents/`: `factory-reviewer.md`, `factory-qa.md` (acceptance QA),
 `factory-charter.md` and `factory-explorer.md` (exploratory QA: explore, and re-check on the base).
@@ -70,7 +73,7 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
    `master` with the product's commits only.
 1. Read the ticket: Atlassian MCP `getJiraIssue`, then `acli jira workitem view <KEY>`; never WebFetch Jira.
 2. Find the code (root cause or the place to change) and **verify every anchor** you put in the spec.
-3. Pick the profile (product) and platform. Write `.factory/tickets/<KEY>.md`: Context, Acceptance (itemized),
+3. Pick the profile (product) and platform. Write `.factory/tickets/<KEY>.md` (in the repo): Context, Acceptance (itemized),
    Acceptance command, Runtime check (when the behaviour shows in the app:
    [references/runtime-checks.md](references/runtime-checks.md)), Scope (Touches / Do not edit), Standards. Write `tickets/<KEY>.sh` (PROFILE, PLATFORM, ACCEPT_TEST, ACCEPT_FILTER, ORACLE_PATHS, SCOPE_REGEX).
 4. Write the oracle test **before** any fix, in a test project the target's guest runs (any of the product's test
@@ -136,19 +139,20 @@ The final merge decision is the Judge section of the hand-back, which the human 
 [references/vm-setup.md](references/vm-setup.md); it needs their Windows ISO, Artifactory NuGet config and one keypress.
 One golden image per guest OS (`<VM root>/<os>/base.qcow2`); never one per scenario: per-run state belongs in fixtures.
 
-## profile <name> (set up a product, or a repo that has no `.factory/`)
+## profile <name> (set up a product, or a repo with no project yet)
 
 [references/profiles.md](references/profiles.md) is the contract: read it first. One profile per product, one target per
 guest OS it ships on (RDM on Windows and Linux is one profile with two targets). A new OS for an existing product is a
 new `targets/<os>/`, not a new profile.
-1. `bash $F/factory.sh new-profile <name>` from the repo: copies `templates/profile/` to `.factory/profiles/<name>/`,
-   and creates `.factory/config.sh` when the repo has none.
+1. `bash $F/factory.sh new-profile <name>` from the repo: copies `templates/profile/` into the repo's project. A repo
+   with no project gets one: in the skill with `--skill <project>` (the default while the factory is experimental: the
+   product repo stays untouched; add a row to `projects/README.md`), else in the repo's `.factory/`.
 2. Fill every `TODO` with the user, reading the repo for the answers before asking: `profile.sh` (app name, targets,
    branch prefix, protected paths, review standards), `reviewer.md` (the product's standards docs and what Data flows
    covers), and per target `target.sh` (image, guest OS), `build.ps1` (builds what ships, in the guest), `test.ps1` (one
    test project, with a filter), `launch.ps1` (stops a running instance, starts the build in the guest's desktop
    session, prints `LAUNCH OK`; exploratory QA runs it again to restart the app).
-   The `rdm` and `console` profiles in the RDM repo are worked examples.
+   The `rdm` and `console` profiles in `projects/devolutions-rdm/` are worked examples.
 3. `bash $F/factory.sh check <name>` until it says OK.
 4. When the product needs software in the guest beyond the golden image (a database, a server), write `layer/setup.ps1`
    and `layer/layer.conf`, rehearse with `factory.sh layer <name> --test`, then `--build` (ask first: it writes a VM
@@ -156,7 +160,8 @@ new `targets/<os>/`, not a new profile.
 5. Prove the target before any builder run, with a probe ticket whose answer you know: `run-loop.sh <KEY> --test-only
    <ref>` (the build and test scripts) and `--qa-only <ref>` (launch and QA). Both red for the stated reason on the base,
    green on a fixed commit.
-6. Commit `.factory/` to the repo through its normal review: profiles are the team's, the engine is not.
+6. A project in the skill: commit it to the skill's marketplace repo. In the repo's `.factory/`: commit it through the
+   repo's normal review. Moving one from the skill to its repo: `projects/README.md`.
 
 ## Rules for every agent the runner spawns
 - No AskUserQuestion, no waiting for a human inside a session: decide and record; the runner owns human hand-offs.
@@ -171,7 +176,8 @@ new `targets/<os>/`, not a new profile.
 | Builder branch / worktree | `<BRANCH_PREFIX><key>-build-<stamp>`, `.claude/worktrees/<key>-build-<stamp>/` (main checkout) |
 | Hand-back (builder, reviewer, QA, exploratory QA sections + Judge) | `<worktree>/handback/<branch-dir>/hand-back.md`, QA screenshots in `qa-<n>/`, the charter, tour and re-check in `qa-<n>/charter.md`, `explore/`, `recheck/` |
 | VM disks (overlays) and the QA agent's folder | `~/VMs/factory/<os>/runs/<run>/` (golden image: `~/VMs/factory/<os>/base.qcow2`) |
-| Project config, profiles, tickets | `.factory/` |
+| Project config and profiles | `projects/<project>/` in this skill (or the repo's `.factory/`, which wins) |
+| Tickets | `<repo>/.factory/tickets/`, on each ticket's branch |
 | What is still missing | `GAPS.md` at the plugin's root |
 
 Credits: the VM layer is the `rdm-windows-vm-test` setup (QEMU Windows 11 ARM64, QMP driving, SMB share), vendored and

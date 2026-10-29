@@ -730,7 +730,7 @@ while :; do
   rname=review-$builds
   fill "$SKILL/prompts/review.txt" > "$RUN/$rname.prompt"
   run_claude "$rname" "$R_MIN" "$WT" -p "$(cat "$RUN/$rname.prompt")" --model "$R_MODEL" \
-    --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-reviewer.md")" \
+    --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-reviewer.md")" --add-dir "$PROFILE_DIR" \
     --max-budget-usd "$R_USD" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools Edit Write \
     --output-format json
   jq -r '.result // ""' "$RUN/$rname.json" > "$RUN/$rname.md" 2> /dev/null

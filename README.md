@@ -24,9 +24,12 @@ the VMs.
 
 - **Engine (this plugin):** the runner, VM tooling, prompts, templates, the reviewer's and QA agent's system prompts, and
   [GAPS.md](plugins/factory-toolkit/GAPS.md), what the loop still lacks.
-- **Project side (each repo):** a `.factory/` folder with `config.sh` and one profile per product
-  (`profiles/<name>/`: `profile.sh`, `reviewer.md`, `targets/<os>/` build, test and launch scripts, optional VM layer).
-  Ask the skill to "set up a profile for <product>"; the contract is
+- **Projects (for now, in this plugin):** each supported repo's `config.sh` and one profile per product
+  (`profiles/<name>/`: `profile.sh`, `reviewer.md`, `targets/<os>/` build, test and launch scripts, optional VM layer),
+  in [`skills/factory/projects/`](plugins/factory-toolkit/skills/factory/projects/README.md), picked by the repo's
+  `origin`. Today: Devolutions/RDM (RDM and Devolutions Console, on Windows). Nothing is committed to the product repo
+  except each ticket's spec, on the ticket's own branch. Once a team adopts the factory, its project moves to the repo's
+  `.factory/`, which then wins. Ask the skill to "set up a profile for <product>"; the contract is
   [references/profiles.md](plugins/factory-toolkit/skills/factory/references/profiles.md).
 - **Per machine:** `~/.factory/config.sh` (VM root, CPUs, RAM, budget overrides) and the golden VM image
   ([references/vm-setup.md](plugins/factory-toolkit/skills/factory/references/vm-setup.md)).

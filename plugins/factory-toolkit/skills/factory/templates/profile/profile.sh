@@ -9,7 +9,7 @@ TARGETS="windows"
 # Paths the builder may never touch, beyond the ticket's oracle, .factory and .claude (space-separated, repo-relative).
 PROTECTED_EXTRA=".github"
 # The reviewer's standards for this product (what to check, what Data flows means here).
-REVIEW_STANDARDS="$FACTORY_DIR_REL/profiles/@PROFILE@/reviewer.md"
+REVIEW_STANDARDS="$PROFILE_DIR/reviewer.md"
 
 # Branches the remote accepts, and the PR target. TICKET is set: e.g. DEVEX-123 -> devex/factory-devex-123-build-<stamp>.
 BRANCH_PREFIX="$(echo "${TICKET%%-*}" | tr '[:upper:]' '[:lower:]')/factory-"
