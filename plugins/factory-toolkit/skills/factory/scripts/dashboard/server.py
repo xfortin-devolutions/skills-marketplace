@@ -216,7 +216,7 @@ def nodes(run):
                 if b:
                     v = re.search(r"verify (.*)$", b["outcome"])
                     text = v.group(1) if v else b["outcome"]
-                    out.append(node(st, n, "done", text, outcome_class(text.replace("green", ""))))
+                    out.append(node(st, n, "done", text, "good" if text.startswith("green") else outcome_class(text)))
                 elif session_state(run, f"build-{n}") == "done":
                     out.append(node(st, n, "stopped", "stopped: the run ended first", "neutral") if over
                                else node(st, n, "running", "building and testing in the build VM", "neutral"))
