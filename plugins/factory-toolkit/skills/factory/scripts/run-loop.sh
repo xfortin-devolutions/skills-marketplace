@@ -436,7 +436,9 @@ CODE_RE='\.(cs|axaml|xaml|csproj|props|targets|ts|tsx|js|py|sh|ps1|java|kt|swift
 # charter_stage <n> <commit> <dir>: the charter for the change $BASE..<commit>, by a fresh read-only session in <dir>.
 # Sets CHARTER (the file) or CHARTER_WHY.
 charter_stage() {
-  local n=$1 sha=$2 dir=$3 raw="$RUN/charter-$n.raw" items dropped out
+  # Two lines: bash expands a whole `local` line before it assigns any of it, so $n is not set yet on the first.
+  local n=$1 sha=$2 dir=$3 items dropped out
+  local raw="$RUN/charter-$n.raw"
   CHARTER="" CHARTER_WHY=""
   if over "$SPENT + $C_USD" "$LOOP_USD"; then CHARTER_WHY="loop budget"; return; fi
   fill "$SKILL/prompts/charter.txt" | sed "s|@SHA@|$sha|g" > "$RUN/charter-$n.prompt"
@@ -460,7 +462,8 @@ charter_stage() {
 # explore_stage <n> <commit>: on qa_stage's VM, the app restarted, the blind explorer tours the change led by $CHARTER.
 # Sets X_STATUS and X_FINDINGS (its "- F<n> (blocker|minor): …" lines); report and screenshots in $RUN/qa-<n>/explore/.
 explore_stage() {
-  local n=$1 ref=$2 xd="$QA_ROOT/explore-$n" out="$RUN/qa-$n/explore"
+  local n=$1 ref=$2
+  local xd="$QA_ROOT/explore-$n" out="$RUN/qa-$n/explore"
   mkdir -p "$xd" "$out"
   [ -n "$CHARTER" ] || { X_STATUS="not run: no charter (${CHARTER_WHY:-none written})"; return; }
   if over "$SPENT + $X_USD" "$LOOP_USD"; then X_STATUS="not run: loop budget"; return; fi
@@ -486,7 +489,8 @@ explore_stage() {
 # VM of their own; the build VM is powered off to free its slot (VM_MAX) and the loop boots it again if it goes on.
 # Sets RC_STATUS, then recheck_classify.
 recheck_stage() {
-  local n=$1 base=$2 rd="$QA_ROOT/recheck-$n" out="$RUN/qa-$n/recheck" vmrun="$QA_ROOT/vm-base-$n" bwt rc
+  local n=$1 base=$2 bwt rc
+  local rd="$QA_ROOT/recheck-$n" out="$RUN/qa-$n/recheck" vmrun="$QA_ROOT/vm-base-$n"
   RC_STATUS="not needed"
   [ -n "$X_FINDINGS" ] || { recheck_classify ""; return; }
   if over "$SPENT + $RC_USD" "$LOOP_USD"; then RC_STATUS="could not run: loop budget"; recheck_classify ""; return; fi
