@@ -1,6 +1,6 @@
 ---
 name: factory
-description: "[EXPERIMENTAL] Software factory for Jira tickets, run from a Mac, for any repo with a .factory/ folder (profiles per product: RDM, Devolutions Console, …): turn a ticket into an agent-ready spec with a red oracle, then run the unattended loop — headless builder in its own worktree that builds and tests in a per-run QEMU VM of the target OS (nothing builds on the Mac), runner verify in that VM, read-only reviewer, and a blind runtime QA stage that drives the verified build in a fresh throwaway VM — with send-backs, caps, a hand-back for the human judge, and Screen Sharing on the VM when a human is needed. Sub-commands: spec, run, qa, status, show, human, judge, stop, vm, setup, profile, layer. Use when the user says factory, factory loop, 'run the loop on <ticket>', 'make <ticket> agent-ready', 'test <ticket> in a VM', 'show me the VM', or asks to judge or check a factory run. Also: set up a repo or a new profile for the factory. Not for a one-off interactive fix (fix-jira) or a QA tester's .app/.deb build (rdm-mac-qa-fix, rdm-linux-qa-fix)."
+description: "[EXPERIMENTAL] Software factory for Jira tickets, run from a Mac, for any repo with a .factory/ folder (profiles per product: RDM, Devolutions Console, …): turn a ticket into an agent-ready spec with a red oracle, then run the unattended loop — headless builder in its own worktree that builds and tests in a per-run QEMU VM of the target OS (nothing builds on the Mac), runner verify in that VM, read-only reviewer, a blind runtime QA stage that drives the verified build in a fresh throwaway VM, then a blind exploratory QA around the change (charter from the diff, findings re-tried on the base) that leaves the judge a guided tour — with send-backs, caps, a hand-back for the human judge, and Screen Sharing on the VM when a human is needed. Sub-commands: spec, run, qa, status, show, human, judge, stop, vm, setup, profile, layer. Use when the user says factory, factory loop, 'run the loop on <ticket>', 'make <ticket> agent-ready', 'test <ticket> in a VM', 'show me the VM', or asks to judge or check a factory run. Also: set up a repo or a new profile for the factory. Not for a one-off interactive fix (fix-jira) or a QA tester's .app/.deb build (rdm-mac-qa-fix, rdm-linux-qa-fix)."
 ---
 
 # Software factory
@@ -11,12 +11,20 @@ description: "[EXPERIMENTAL] Software factory for Jira tickets, run from a Mac, 
 > Known gaps: `GAPS.md` at the plugin's root (`<skill dir>/../../GAPS.md`).
 
 ```
-spec (human-approved) ─► run: worktree ─► builder ─► verify ─► reviewer ─► runtime QA (own VM) ─► hand-back ─► judge
-                                              ▲      red     │ send back  │ FAIL (findings + screenshots)  │
-                                              └──────────────┴────────────┴────────────────────────────────┘ ≤ ITER_CAP
+spec (human-approved) ─► run: worktree ─► builder ─► verify ─► reviewer ─► runtime QA ─► exploratory QA ─► hand-back ─► judge
+                                              ▲      red     │ send back  │ FAIL         │ new blocker (once)
+                                              └──────────────┴────────────┴──────────────┴──────────────────┘ ≤ ITER_CAP
                               └──── build VM (one per run, shares the worktree) ────┘   └─ fresh clone, launches
                                     builder's `guest build|test`, verify's build + test      the verified binaries
 ```
+
+Exploratory QA does what a human would do with a new feature: try it around the edges and show the judge around. It
+never touches the acceptance verdict, which is fixed first. A fresh read-only session writes a **charter** from the ticket
+and the diff (never the builder's notes, so the builder can't steer it): where to poke and what a user might see go wrong,
+in user terms; the runner drops any item naming code. A second **blind** agent restarts the app on the QA VM, follows the
+charter and reports a **tour** (steps + screenshots, for the judge) and **findings** (blocker or minor). Each finding is
+re-tried on a **build of the base** in its own VM: only a blocker the base doesn't show sends the change back, at most
+`EXPLORE_SENDBACKS` times; every other finding is for the judge (hand-back section Exploratory QA).
 
 Nothing builds or tests on the Mac: the product ships on the guest OS, so it is compiled and tested there. The Mac only
 edits, runs git, and drives the VMs.
@@ -34,7 +42,8 @@ described in [references/profiles.md](references/profiles.md):
   branch prefix), `reviewer.md` (review standards), `targets/<os>/` (guest image and build/test/launch scripts).
 - `.factory/tickets/<KEY>.md` + `.sh` (the `.sh` picks `PROFILE` and `PLATFORM`), on the ticket's own branch.
 - Per machine, never in the repo: `~/.factory/config.sh` (VM root, CPUs, RAM, budget overrides).
-The reviewer's and the QA agent's system prompts: `agents/factory-reviewer.md`, `agents/factory-qa.md` in this skill.
+The agents' system prompts, in this skill's `agents/`: `factory-reviewer.md`, `factory-qa.md` (acceptance QA),
+`factory-charter.md` and `factory-explorer.md` (exploratory QA: explore, and re-check on the base).
 
 ## Pick the sub-command
 
@@ -73,17 +82,20 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
 6. Show the spec to the user and stop. Commit only once they approve (branch commits: no `[TICKET]` prefix, no `CR:`).
 7. Offer to post the itemized acceptance and scope back to Jira; never post without a yes.
 
-## run <KEY> [--open-pr] [--qa | --no-qa] [--keep-vm]
+## run <KEY> [--open-pr] [--qa | --no-qa] [--no-explore] [--keep-vm]
 
 Preconditions: run from the ticket's worktree (`factory.sh start`), with the ticket files and oracle committed: the run
 cuts its own branch and worktree from that `HEAD`, and nothing builds in your checkout. It also needs the target's VM image (**setup**). The run holds two VM slots while QA runs: the build VM
-and the QA clone.
+and the QA clone. A base re-check (findings to re-try) powers the build VM off for its own VM, and the loop boots it
+again if a send back follows.
 ```
 bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loop takes minutes to an hour
 ```
 - QA runs by default when the ticket has a `## Runtime check` and a golden image exists; `--no-qa` skips it, `--qa`
   makes a missing image an error. `--keep-vm` leaves the last QA VM running, whatever the verdict, for **show**;
   `factory.sh down <run>` removes it.
+- Exploratory QA follows every runtime QA PASS (`EXPLORE=yes`); `--no-explore` skips it. It costs a charter (`C_USD`), an
+  explorer (`X_USD`), and when there are findings a base build plus a re-check (`RC_USD`).
 - A builder that finds a QA expectation wrong (intended behaviour, or outside the scope) disputes it in
   `handback/<branch>/disputes.md` instead of changing code: the next QA round gets only the intended behaviour (never the
   reasons), reports the item as disputed, and the hand-back lists it for the judge. A send back that changes no code and
@@ -91,13 +103,15 @@ bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loo
 - `--open-pr` pushes and opens a **draft** PR when the run is ready: outward-facing, so only when the user asked for it in
   this conversation.
 - While it runs, answer progress questions with **status**; when it ends, summarise `loop-handback.md`: status, builder
-  runs, spend, the hand-back path, and the QA verdict with its screenshots (Read the PNGs and show the decisive ones).
+  runs, spend, the hand-back path, the QA verdict with its screenshots (Read the PNGs and show the decisive ones), and
+  the Exploratory QA section: walk the user through the tour with its screenshots, then the findings, new ones first.
 
-## qa <KEY> [<ref>] [--keep-vm]
+## qa <KEY> [<ref>] [--explore [--base <ref>]] [--keep-vm]
 
 The QA stage alone, on a commit: `bash $F/run-loop.sh <KEY> --qa-only <ref>` (background). Use it for red-on-base
 (spec step 5), to re-test a branch, or to answer a judge's "does it really work?". It needs no builder and spends only
-the QA budget.
+the QA budget. `--explore` adds the exploratory QA after a PASS, for the change `<base>..<ref>` (`--base`, default the
+merge-base with `PR_BASE`, or `<ref>~1` when `<ref>` is already on it); its section is `qa-1/exploratory.md` in the run.
 
 ## status [run] · show [run] · human [run] · judge [run] pass|fail <why> · stop [run] · down [run]
 
@@ -132,7 +146,8 @@ new `targets/<os>/`, not a new profile.
 2. Fill every `TODO` with the user, reading the repo for the answers before asking: `profile.sh` (app name, targets,
    branch prefix, protected paths, review standards), `reviewer.md` (the product's standards docs and what Data flows
    covers), and per target `target.sh` (image, guest OS), `build.ps1` (builds what ships, in the guest), `test.ps1` (one
-   test project, with a filter), `launch.ps1` (starts the build in the guest's desktop session, prints `LAUNCH OK`).
+   test project, with a filter), `launch.ps1` (stops a running instance, starts the build in the guest's desktop
+   session, prints `LAUNCH OK`; exploratory QA runs it again to restart the app).
    The `rdm` and `console` profiles in the RDM repo are worked examples.
 3. `bash $F/factory.sh check <name>` until it says OK.
 4. When the product needs software in the guest beyond the golden image (a database, a server), write `layer/setup.ps1`
@@ -146,7 +161,7 @@ new `targets/<os>/`, not a new profile.
 ## Rules for every agent the runner spawns
 - No AskUserQuestion, no waiting for a human inside a session: decide and record; the runner owns human hand-offs.
 - Builder: only the ticket's scope; never edit the oracle or the factory (denied anyway). One code commit, then record,
-  then hand-back. Reviewer: read-only. QA: blind (no source), never "Send error report".
+  then hand-back. Reviewer and charter: read-only. QA and explorer: blind (no source), never "Send error report".
 - Nothing is pushed, no PR, no Jira write, unless the user asked for it in this conversation.
 
 ## Where things are
@@ -154,7 +169,7 @@ new `targets/<os>/`, not a new profile.
 |---|---|
 | Run log, prompts, JSON of every session, verify logs, QA evidence | `.claude/worktrees/factory-runs/<run>/` |
 | Builder branch / worktree | `<BRANCH_PREFIX><key>-build-<stamp>`, `.claude/worktrees/<key>-build-<stamp>/` (main checkout) |
-| Hand-back (builder, reviewer, QA sections + Judge) | `<worktree>/handback/<branch-dir>/hand-back.md`, QA screenshots in `qa-<n>/` |
+| Hand-back (builder, reviewer, QA, exploratory QA sections + Judge) | `<worktree>/handback/<branch-dir>/hand-back.md`, QA screenshots in `qa-<n>/`, the charter, tour and re-check in `qa-<n>/charter.md`, `explore/`, `recheck/` |
 | VM disks (overlays) and the QA agent's folder | `~/VMs/factory/<os>/runs/<run>/` (golden image: `~/VMs/factory/<os>/base.qcow2`) |
 | Project config, profiles, tickets | `.factory/` |
 | What is still missing | `GAPS.md` at the plugin's root |

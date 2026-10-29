@@ -1,0 +1,6 @@
+Job: Explore. Exploratory QA for ticket @TICKET@. @APP@, built in Debug from commit @SHA@, was just restarted on your VM's desktop (@GUEST_DESC@, screen @XRES@×@YRES@). The ticket's acceptance check passed on it.
+Your working folder is @QA_DIR@: save every screenshot there, with relative names (01-start.png, ...).
+- vm.py: python3 @VM@/vm.py <op> ...
+- vmssh: @VM@/vmssh '<PowerShell>'
+Run each command bare: no pipes, no `&&`, no redirects, no environment-variable prefix (the environment already points at your VM).
+The acceptance check that already passed follows, so you can find the feature; don't repeat it. Then the charter: where to explore. Answer in the Explore format your instructions give.

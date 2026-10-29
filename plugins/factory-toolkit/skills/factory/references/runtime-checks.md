@@ -37,3 +37,7 @@ Red on base: <which expectation fails on the base commit, and how>   (confirmed 
 The runner builds the branch head in a fresh VM (a guest build failure is already a FAIL), launches the app, and gives this
 section to the QA agent. Its verdict goes into the hand-back's Runtime check section with the screenshots; FAIL goes back
 to the builder with the report.
+
+After a PASS, the exploratory QA gets this section too, without its Red on base line, so it can find the feature; it
+doesn't repeat it, and its findings never change this verdict. So keep the Runtime check to what the ticket asks: what
+the change might break around it is the charter's job, not more expectations here.

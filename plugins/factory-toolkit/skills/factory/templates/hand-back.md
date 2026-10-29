@@ -38,12 +38,19 @@
 - Disputed by the builder: <none | the expectations, and the file with the builder's reasons: the judge decides them>
 - Report: <path>; evidence: <screenshots>
 
+## Exploratory QA
+<!-- Written by the runner after a runtime QA PASS: a second blind agent explored around the change on the same VM, led by a charter written from the diff by a separate session (never the builder's notes). Each finding was then re-tried on a build of the base commit. A blocker the base doesn't show sends the change back once; every other finding is for the judge. Not filled: no runtime QA PASS, or exploration was off. -->
+- Explorer: <tool, model, blind; charter by <model>: <path>>
+- Findings: <none | count, then one per line, indented two spaces: F<n> (<blocker | minor>, <new | pre-existing | not rechecked>): <what was seen>>
+- Base re-check: <not needed | build of <short SHA>: <path> | could not run: <why>>
+- Tour for the judge: <path>; evidence: <screenshots>
+
 ## Judge (human)
 <!-- Check first: `git log --oneline <SHA verified>..HEAD -- . ':!handback'` prints nothing, or only docs(harness) commits, and `git show --stat <that SHA>` touches only the file named in "Written back to the harness". If not, the record is stale: Q3 = no. Harness entries do not count for Q1. -->
 1. Does it do what the ticket asked, and nothing outside it? <yes | no | unknown>
 2. Would a test fail if the change were reverted? <yes | no | unknown>
 3. Does the verification record show real output, on the PR's last code commit? <yes | no | unknown>
-4. Can the open review findings ship as they are? <yes | no | unknown>
+4. Can the open review findings and the exploratory findings ship as they are? <yes | no | unknown>
 5. If it is wrong in production, will we see it, and is the undo enough? <yes | no | unknown>
 
 Decision: <merge | merge behind flag: <flag> | send back | reject>: <one-line reason>, <your first and last name>, <YYYY-MM-DD>

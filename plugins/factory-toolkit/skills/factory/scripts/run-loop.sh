@@ -1,14 +1,18 @@
 #!/bin/bash
 # run-loop.sh: one factory loop for one ticket, adapted from the training's long-run loop.sh.
 #   builder (headless claude, own worktree) -> runner verify (its own checks) -> reviewer (fresh read-only session)
-#   -> runtime QA (throwaway VM, blind QA agent) -> send back with the reason, up to ITER_CAP builder runs
-#   -> hand-back. Optional --open-pr pushes a draft PR.
+#   -> runtime QA (throwaway VM, blind QA agent) -> exploratory QA (charter from the diff, blind explorer, findings
+#   re-tried on the base) -> send back with the reason, up to ITER_CAP builder runs -> hand-back. Optional --open-pr
+#   pushes a draft PR.
 # Nothing builds on the Mac: one build VM per run (a clone of the target's image, sharing the run's worktree) serves the
 # builder's guest tool and the runner's verify; each QA round gets a fresh clone that launches the verified binaries.
 # Usage (from the repo):
-#   run-loop.sh <TICKET> [--open-pr] [--qa | --no-qa] [--keep-vm]   the loop; QA runs when the ticket has a Runtime check;
-#                                                                    --keep-vm leaves the last QA VM running (factory.sh down)
-#   run-loop.sh <TICKET> --qa-only <ref> [--keep-vm]                 the QA stage alone on <ref> (red-on-base check)
+#   run-loop.sh <TICKET> [--open-pr] [--qa | --no-qa] [--no-explore] [--keep-vm]
+#                                    the loop; QA runs when the ticket has a Runtime check, exploration after a QA PASS;
+#                                    --keep-vm leaves the last QA VM running (factory.sh down)
+#   run-loop.sh <TICKET> --qa-only <ref> [--explore [--base <ref>]] [--keep-vm]
+#                                    the QA stage alone on <ref> (red-on-base check); --explore adds the exploratory QA,
+#                                    the change being <base>..<ref> (default: the merge-base with PR_BASE, else <ref>~1)
 #   run-loop.sh <TICKET> --test-only <ref>                           the acceptance test alone on <ref>, in a build VM
 #   run-loop.sh <TICKET> --resume <run branch> "<judge's reason>"     a judge's send back on a finished run: merges the
 #                                                                    ticket branch (the updated spec) into the run branch,
@@ -22,17 +26,20 @@ set -u
 # One block: bash parses it whole before running it, so editing this file during a run can't break that run.
 {
 
-usage() { sed -n '8,18p' "$0" >&2; exit 2; }
+usage() { sed -n '9,22p' "$0" >&2; exit 2; }
 TICKET=${1:-}
 [ -n "$TICKET" ] && [ "${TICKET#-}" = "$TICKET" ] || usage
 shift
-OPEN_PR=no QA=auto KEEP_VM=no QA_ONLY="" TEST_ONLY="" RESUME="" JUDGE_REASON="" CONTINUE=no
+OPEN_PR=no QA=auto KEEP_VM=no QA_ONLY="" TEST_ONLY="" RESUME="" JUDGE_REASON="" CONTINUE=no EXPLORE_CLI="" QA_BASE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --open-pr) OPEN_PR=yes ;;
     --qa) QA=yes ;;
     --no-qa) QA=no ;;
     --keep-vm) KEEP_VM=yes ;;
+    --explore) EXPLORE_CLI=yes ;;
+    --no-explore) EXPLORE_CLI=no ;;
+    --base) QA_BASE=${2:-}; [ -n "$QA_BASE" ] || usage; shift ;;
     --qa-only) QA_ONLY=${2:-}; [ -n "$QA_ONLY" ] || usage; shift ;;
     --test-only) TEST_ONLY=${2:-}; [ -n "$TEST_ONLY" ] || usage; shift ;;
     --resume) RESUME=${2:-} JUDGE_REASON=${3:-}; [ -n "$RESUME" ] && [ -n "$JUDGE_REASON" ] || usage; shift 2 ;;
@@ -70,6 +77,10 @@ grep -q '^## Runtime check' "$TICKET_FILE" && HAS_RC=yes || HAS_RC=no
 [ "$QA" = auto ] && QA=$HAS_RC
 [ -n "$QA_ONLY" ] && QA=yes
 [ -n "$TEST_ONLY" ] && QA=no
+# Exploration follows a runtime QA PASS: on in the loop (EXPLORE), off in --qa-only unless --explore.
+[ -n "$QA_ONLY" ] && EXPLORE=no
+[ -n "$EXPLORE_CLI" ] && EXPLORE=$EXPLORE_CLI
+[ "$QA" = yes ] || EXPLORE=no
 if [ "$QA" = yes ]; then
   [ "$HAS_RC" = yes ] || { echo "the ticket has no '## Runtime check' section" >&2; exit 2; }
   [ -n "${GUEST_LAUNCH:-}" ] || { echo "profile $PROFILE, target '$PLATFORM': no GUEST_LAUNCH" >&2; exit 2; }
@@ -105,6 +116,9 @@ EV=$RUN/events.log
 RUNS=$RUN/runs.md
 SPENT=0
 STATUS="not started"
+BUILD_VM_UP=no X_STATUS="" X_FINDINGS="" X_NEW="" X_LINES="" RC_STATUS="not needed" CHARTER="" CHARTER_WHY=""
+# The charter writer reads the change and builds nothing.
+CHARTER_TOOLS=("${REVIEW_TOOLS[@]}")
 
 ev() { echo "$(date -u +%FT%TZ) $*" | tee -a "$EV"; }
 # A host sleep freezes the VMs and every station waits on them (GAPS V43): keep the Mac awake while this runner lives.
@@ -234,6 +248,10 @@ write_section() {
 import re, sys
 hb_path, heading, body_path = sys.argv[1], sys.argv[2], sys.argv[3]
 hb = open(hb_path).read()
+if "## " + heading not in hb:
+    j = hb.find("## Judge (human)")
+    j = len(hb) if j < 0 else j
+    hb = hb[:j] + "## " + heading + "\n\n" + hb[j:]
 start = hb.index("## " + heading)
 end = hb.index("\n## ", start + 1) + 1
 section = hb[start:end]
@@ -258,15 +276,40 @@ release_kept_vms() {
   done
 }
 
+# app_launch <log>: (re)starts the app in the guest's desktop session; the target's launch script stops a running one.
+app_launch() { "$VM/vmssh" - < "$GUEST_LAUNCH" > "$1" 2>&1 && grep -q '^LAUNCH OK' "$1"; }
+
+# app_up <vm run dir> <share> <built: yes|no> <log dir>: boots a QA VM sharing <share>, builds it there unless <built>,
+# and launches the app; the VM's environment (vm.py, vmssh) is exported. Returns 0 when the app runs, 1 when the guest
+# build fails, 2 when the harness fails; APP_WHY says why.
+app_up() {
+  local vmrun=$1 share=$2 built=$3 log=$4 rc
+  APP_WHY=""
+  "$VM/vmctl.sh" up "$vmrun" "$share" > "$log/vm.log" 2>&1 || { APP_WHY="VM did not come up: $(tail -1 "$log/vm.log")"; return 2; }
+  eval "$("$VM/vmctl.sh" env "$vmrun")"
+  if [ "$built" = no ]; then
+    ev "$(basename "$log"): guest build (time box $GUEST_BUILD_MIN min)"
+    guest_conf "$vmrun" "$share"
+    "$X/guest.sh" "$vmrun" build > "$log/guest-build.log" 2>&1
+    rc=$?
+    cp "$vmrun/build.log" "$log/guest-build-full.log" 2> /dev/null
+    [ $rc -eq 1 ] && { APP_WHY="the $GUEST_DESC build fails: $(first_errors "$log/guest-build.log")"; return 1; }
+    [ $rc -ne 0 ] && { APP_WHY="guest build: $(harness_why "$log/guest-build.log")"; return 2; }
+  fi
+  app_launch "$log/launch.log" || { APP_WHY="$APP_NAME did not start in the guest: $(tail -1 "$log/launch.log")"; return 2; }
+  return 0
+}
+
 # qa_stage <n> <commit> [<built worktree>]: launch the app in a throwaway VM, let the blind QA agent check the ticket's
-# Runtime check, then hand the screen to a human if asked. With <built worktree> (the loop), the clone shares that
-# worktree and launches what verify built there; without it (--qa-only), the stage cuts its own worktree and builds it in
-# the clone first. Sets QA_VERDICT to "PASS: …", "FAIL: …", "NEEDS-HUMAN: …" or "ERROR: …" (ERROR = the harness
-# failed, not the change) and copies the report and screenshots to $RUN/qa-<n>/.
+# Runtime check, then hand the screen to a human if asked; after a PASS, the exploratory QA runs on the same VM
+# (explore_stage). With <built worktree> (the loop), the clone shares that worktree and launches what verify built there;
+# without it (--qa-only), the stage cuts its own worktree and builds it in the clone first. Sets QA_VERDICT to
+# "PASS: …", "FAIL: …", "NEEDS-HUMAN: …" or "ERROR: …" (ERROR = the harness failed, not the change) and copies the
+# report and screenshots to $RUN/qa-<n>/.
 qa_stage() {
   local n=$1 ref=$2 built=${3:-}
-  local q="$QA_ROOT/qa-$n" vmrun="$QA_ROOT/vm-$n" qwt="" share rc v waited
-  QA_VERDICT=""
+  local q="$QA_ROOT/qa-$n" vmrun="$QA_ROOT/vm-$n" qwt="" share v waited
+  QA_VERDICT="" X_STATUS="" X_FINDINGS=""
   release_kept_vms
   mkdir -p "$q" "$RUN/qa-$n"
   if [ -n "$built" ]; then
@@ -277,64 +320,52 @@ qa_stage() {
     share=$qwt
   fi
   ev "qa-$n: VM up, sharing ${share#$MAIN_REPO/} at $ref"
-  if ! "$VM/vmctl.sh" up "$vmrun" "$share" > "$RUN/qa-$n/vm.log" 2>&1; then
-    QA_VERDICT="ERROR: VM did not come up: $(tail -1 "$RUN/qa-$n/vm.log")"
-  else
-    eval "$("$VM/vmctl.sh" env "$vmrun")"
-    rc=0
-    if [ -z "$built" ]; then
-      ev "qa-$n: guest build (time box $GUEST_BUILD_MIN min)"
-      guest_conf "$vmrun" "$share"
-      "$X/guest.sh" "$vmrun" build > "$RUN/qa-$n/guest-build.log" 2>&1
-      rc=$?
-      cp "$vmrun/build.log" "$RUN/qa-$n/guest-build-full.log" 2> /dev/null
-    fi
-    if [ $rc -eq 1 ]; then
-      QA_VERDICT="FAIL: the $GUEST_DESC build fails: $(first_errors "$RUN/qa-$n/guest-build.log")"
-    elif [ $rc -ne 0 ]; then
-      QA_VERDICT="ERROR: guest build: $(harness_why "$RUN/qa-$n/guest-build.log")"
-    elif ! "$VM/vmssh" - < "$GUEST_LAUNCH" > "$RUN/qa-$n/launch.log" 2>&1 || ! grep -q '^LAUNCH OK' "$RUN/qa-$n/launch.log"; then
-      QA_VERDICT="ERROR: $APP_NAME did not start in the guest: $(tail -1 "$RUN/qa-$n/launch.log")"
-    else
-      { fill "$SKILL/prompts/qa.txt" | sed -e "s|@QA_DIR@|$q|g" -e "s|@SHA@|$ref|g"; echo; section "$TICKET_FILE" "Runtime check"
-        [ -n "$built" ] && disputes_for_qa; } > "$RUN/qa-$n.prompt"
-      run_claude "qa-$n" "$QA_MIN" "$q" -p "$(cat "$RUN/qa-$n.prompt")" --model "$QA_MODEL" --max-budget-usd "$QA_USD" \
-        --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-qa.md")" \
-        --tools Read Bash --allowedTools "${QA_TOOLS[@]}" --output-format json
-      jq -r '.result // ""' "$RUN/qa-$n.json" > "$q/report.md" 2> /dev/null
-      v=$(grep -m1 '^Verdict:' "$q/report.md" | sed -E 's/^Verdict: *//')
-      case "$v" in
-        PASS*) QA_VERDICT="PASS: $(grep -m1 '^Summary:' "$q/report.md" | sed 's/^Summary: *//')" ;;
-        FAIL*) QA_VERDICT="FAIL: $(grep -m1 '^Summary:' "$q/report.md" | sed 's/^Summary: *//')" ;;
-        NEEDS-HUMAN*) QA_VERDICT="NEEDS-HUMAN: $(grep -m1 '^Human:' "$q/report.md" | sed 's/^Human: *//')" ;;
-        *) QA_VERDICT="ERROR: no usable QA report (qa-$n.json)" ;;
-      esac
-      row "$n" qa "qa-$n" "$QA_VERDICT"
-    fi
+  app_up "$vmrun" "$share" "$([ -n "$built" ] && echo yes || echo no)" "$RUN/qa-$n"
+  case $? in
+    1) QA_VERDICT="FAIL: $APP_WHY" ;;
+    2) QA_VERDICT="ERROR: $APP_WHY" ;;
+    *) { fill "$SKILL/prompts/qa.txt" | sed -e "s|@QA_DIR@|$q|g" -e "s|@SHA@|$ref|g"; echo; section "$TICKET_FILE" "Runtime check"
+         [ -n "$built" ] && disputes_for_qa; } > "$RUN/qa-$n.prompt"
+       run_claude "qa-$n" "$QA_MIN" "$q" -p "$(cat "$RUN/qa-$n.prompt")" --model "$QA_MODEL" --max-budget-usd "$QA_USD" \
+         --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-qa.md")" \
+         --tools Read Bash --allowedTools "${QA_TOOLS[@]}" --output-format json
+       jq -r '.result // ""' "$RUN/qa-$n.json" > "$q/report.md" 2> /dev/null
+       v=$(grep -m1 '^Verdict:' "$q/report.md" | sed -E 's/^Verdict: *//')
+       case "$v" in
+         PASS*) QA_VERDICT="PASS: $(grep -m1 '^Summary:' "$q/report.md" | sed 's/^Summary: *//')" ;;
+         FAIL*) QA_VERDICT="FAIL: $(grep -m1 '^Summary:' "$q/report.md" | sed 's/^Summary: *//')" ;;
+         NEEDS-HUMAN*) QA_VERDICT="NEEDS-HUMAN: $(grep -m1 '^Human:' "$q/report.md" | sed 's/^Human: *//')" ;;
+         *) QA_VERDICT="ERROR: no usable QA report (qa-$n.json)" ;;
+       esac
+       row "$n" qa "qa-$n" "$QA_VERDICT" ;;
+  esac
 
-    if [ "${QA_VERDICT#ERROR}" = "$QA_VERDICT" ] && { [ "${QA_VERDICT#NEEDS-HUMAN}" != "$QA_VERDICT" ] || [ -e "$RUN/HUMAN" ]; }; then
-      rm -f "$RUN/HUMAN"
-      echo "$vmrun" > "$RUN/WAITING-FOR-HUMAN"
-      notify "QA needs you: ${QA_VERDICT#*: }"
-      "$VM/vmctl.sh" show "$vmrun" >> "$EV" 2>&1
-      ev "qa-$n: waiting up to $HUMAN_WAIT_MIN min for $RUN/HUMAN-VERDICT ('pass: <why>' or 'fail: <why>')"
-      waited=0
-      while [ ! -s "$RUN/HUMAN-VERDICT" ] && [ "$waited" -lt $((HUMAN_WAIT_MIN * 60)) ] && [ ! -e "$RUN/STOP" ]; do
-        sleep 10; waited=$((waited + 10))
-      done
-      rm -f "$RUN/WAITING-FOR-HUMAN"
-      v=$(head -1 "$RUN/HUMAN-VERDICT" 2> /dev/null)
-      rm -f "$RUN/HUMAN-VERDICT"
-      case "$v" in
-        pass*) QA_VERDICT="PASS: human: ${v#*: }" ;;
-        fail*) QA_VERDICT="FAIL: human: ${v#*: }" ;;
-        *) QA_VERDICT="NEEDS-HUMAN: no human verdict after $HUMAN_WAIT_MIN min" ;;
-      esac
-      { echo; echo "Human verdict: ${v:-none}"; } >> "$q/report.md"
-    fi
+  if [ "${QA_VERDICT#ERROR}" = "$QA_VERDICT" ] && { [ "${QA_VERDICT#NEEDS-HUMAN}" != "$QA_VERDICT" ] || [ -e "$RUN/HUMAN" ]; }; then
+    rm -f "$RUN/HUMAN"
+    echo "$vmrun" > "$RUN/WAITING-FOR-HUMAN"
+    notify "QA needs you: ${QA_VERDICT#*: }"
+    "$VM/vmctl.sh" show "$vmrun" >> "$EV" 2>&1
+    ev "qa-$n: waiting up to $HUMAN_WAIT_MIN min for $RUN/HUMAN-VERDICT ('pass: <why>' or 'fail: <why>')"
+    waited=0
+    while [ ! -s "$RUN/HUMAN-VERDICT" ] && [ "$waited" -lt $((HUMAN_WAIT_MIN * 60)) ] && [ ! -e "$RUN/STOP" ]; do
+      sleep 10; waited=$((waited + 10))
+    done
+    rm -f "$RUN/WAITING-FOR-HUMAN"
+    v=$(head -1 "$RUN/HUMAN-VERDICT" 2> /dev/null)
+    rm -f "$RUN/HUMAN-VERDICT"
+    case "$v" in
+      pass*) QA_VERDICT="PASS: human: ${v#*: }" ;;
+      fail*) QA_VERDICT="FAIL: human: ${v#*: }" ;;
+      *) QA_VERDICT="NEEDS-HUMAN: no human verdict after $HUMAN_WAIT_MIN min" ;;
+    esac
+    { echo; echo "Human verdict: ${v:-none}"; } >> "$q/report.md"
   fi
   ev "qa-$n: $QA_VERDICT"
   cp "$q"/*.png "$q/report.md" "$RUN/qa-$n/" 2> /dev/null
+  if [ "$EXPLORE" = yes ] && [ "${QA_VERDICT#PASS}" != "$QA_VERDICT" ]; then
+    if [ -e "$RUN/STOP" ]; then X_STATUS="not run: STOP file"; else explore_stage "$n" "$ref"; fi
+    ev "explore-$n: $X_STATUS"
+  fi
   # --keep-vm leaves the VM running whatever the verdict (a PASS is what a judge wants to look at) until factory.sh down.
   if [ "$KEEP_VM" = yes ] && "$VM/vmctl.sh" env "$vmrun" > /dev/null 2>&1; then
     printf '%s' "$qwt" > "$vmrun/factory-kept"
@@ -345,6 +376,149 @@ qa_stage() {
   fi
 }
 
+# Exploratory QA. Kept apart from the acceptance verdict, which is fixed before any of it runs: a separate read-only
+# session writes the charter from the ticket and the diff (never the builder's notes), so the builder can't steer it; the
+# explorer is blind like the QA agent and gets the charter's places to try, never expected results from the code; each
+# finding is re-tried on a build of the base, so only what the change brought can send it back (EXPLORE_SENDBACKS).
+
+# Only numbered items in a user's terms reach the blind explorer: a line naming a source file or a code member is dropped.
+CODE_RE='\.(cs|axaml|xaml|csproj|props|targets|ts|tsx|js|py|sh|ps1|java|kt|swift|cpp|h)\b|[A-Za-z_]+\(\)'
+
+# charter_stage <n> <commit> <dir>: the charter for the change $BASE..<commit>, by a fresh read-only session in <dir>.
+# Sets CHARTER (the file) or CHARTER_WHY.
+charter_stage() {
+  local n=$1 sha=$2 dir=$3 raw="$RUN/charter-$n.raw" items dropped out
+  CHARTER="" CHARTER_WHY=""
+  if over "$SPENT + $C_USD" "$LOOP_USD"; then CHARTER_WHY="loop budget"; return; fi
+  fill "$SKILL/prompts/charter.txt" | sed "s|@SHA@|$sha|g" > "$RUN/charter-$n.prompt"
+  run_claude "charter-$n" "$C_MIN" "$dir" -p "$(cat "$RUN/charter-$n.prompt")" --model "$C_MODEL" \
+    --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-charter.md")" \
+    --max-budget-usd "$C_USD" --tools Read Grep Glob Bash --allowedTools "${CHARTER_TOOLS[@]}" \
+    --disallowedTools Edit Write "Read(./handback/**)" --output-format json
+  jq -r '.result // ""' "$RUN/charter-$n.json" > "$raw" 2> /dev/null
+  grep -E '^[0-9]+\. ' "$raw" | grep -vE "$CODE_RE" > "$RUN/charter-$n.md"
+  items=$(grep -c . "$RUN/charter-$n.md")
+  dropped=$(grep -E '^[0-9]+\. ' "$raw" | grep -cE "$CODE_RE")
+  if [ "$items" -gt 0 ]; then
+    CHARTER=$RUN/charter-$n.md
+    out="$items items$([ "$dropped" -gt 0 ] && echo ", $dropped dropped (code terms)")"
+  else
+    CHARTER_WHY="no usable charter (charter-$n.json)"; out=$CHARTER_WHY
+  fi
+  row "$n" charter "charter-$n" "$out"
+}
+
+# explore_stage <n> <commit>: on qa_stage's VM, the app restarted, the blind explorer tours the change led by $CHARTER.
+# Sets X_STATUS and X_FINDINGS (its "- F<n> (blocker|minor): …" lines); report and screenshots in $RUN/qa-<n>/explore/.
+explore_stage() {
+  local n=$1 ref=$2 xd="$QA_ROOT/explore-$n" out="$RUN/qa-$n/explore"
+  mkdir -p "$xd" "$out"
+  [ -n "$CHARTER" ] || { X_STATUS="not run: no charter (${CHARTER_WHY:-none written})"; return; }
+  if over "$SPENT + $X_USD" "$LOOP_USD"; then X_STATUS="not run: loop budget"; return; fi
+  app_launch "$out/launch.log" || { X_STATUS="not run: $APP_NAME did not restart: $(tail -1 "$out/launch.log")"; return; }
+  { fill "$SKILL/prompts/explore.txt" | sed -e "s|@QA_DIR@|$xd|g" -e "s|@SHA@|$ref|g"
+    echo; echo "## Acceptance check (passed)"; section "$TICKET_FILE" "Runtime check" | awk '/^Red on base/ { exit } 1'
+    echo "## Charter"; cat "$CHARTER"; } > "$RUN/explore-$n.prompt"
+  run_claude "explore-$n" "$X_MIN" "$xd" -p "$(cat "$RUN/explore-$n.prompt")" --model "$X_MODEL" --max-budget-usd "$X_USD" \
+    --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-explorer.md")" \
+    --tools Read Bash --allowedTools "${QA_TOOLS[@]}" --output-format json
+  jq -r '.result // ""' "$RUN/explore-$n.json" > "$xd/report.md" 2> /dev/null
+  cp "$xd"/*.png "$xd/report.md" "$out/" 2> /dev/null
+  if grep -q '^Findings:' "$xd/report.md"; then
+    X_FINDINGS=$(grep -E '^- F[0-9]+ \((blocker|minor)\):' "$xd/report.md")
+    X_STATUS="$(printf '%s' "$X_FINDINGS" | grep -c .) finding(s)"
+  else
+    X_STATUS="no usable report (explore-$n.json)"
+  fi
+  row "$n" explorer "explore-$n" "$X_STATUS"
+}
+
+# recheck_stage <n> <base commit>: the explorer's findings re-tried by the same blind agent on a build of the base, in a
+# VM of their own; the build VM is powered off to free its slot (VM_MAX) and the loop boots it again if it goes on.
+# Sets RC_STATUS, then recheck_classify.
+recheck_stage() {
+  local n=$1 base=$2 rd="$QA_ROOT/recheck-$n" out="$RUN/qa-$n/recheck" vmrun="$QA_ROOT/vm-base-$n" bwt rc
+  RC_STATUS="not needed"
+  [ -n "$X_FINDINGS" ] || { recheck_classify ""; return; }
+  if over "$SPENT + $RC_USD" "$LOOP_USD"; then RC_STATUS="could not run: loop budget"; recheck_classify ""; return; fi
+  mkdir -p "$rd" "$out"
+  bwt="$MAIN_REPO/.claude/worktrees/$T-base-$STAMP-$n"
+  if ! git -C "$REPO" worktree add -q --detach "$bwt" "$base" 2>> "$EV"; then
+    RC_STATUS="could not run: base worktree add failed"; recheck_classify ""; return
+  fi
+  if [ "$BUILD_VM_UP" = yes ]; then "$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1; BUILD_VM_UP=no; fi
+  ev "recheck-$n: VM up, building the base ${base:0:11}"
+  app_up "$vmrun" "$bwt" no "$out"
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    RC_STATUS="could not run: $APP_WHY"
+  else
+    { fill "$SKILL/prompts/recheck.txt" | sed -e "s|@QA_DIR@|$rd|g" -e "s|@SHA@|$base|g"
+      echo; echo "## Findings"; printf '%s\n' "$X_FINDINGS" | sed 's/; evidence: .*$//'; } > "$RUN/recheck-$n.prompt"
+    run_claude "recheck-$n" "$RC_MIN" "$rd" -p "$(cat "$RUN/recheck-$n.prompt")" --model "$X_MODEL" --max-budget-usd "$RC_USD" \
+      --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-explorer.md")" \
+      --tools Read Bash --allowedTools "${QA_TOOLS[@]}" --output-format json
+    jq -r '.result // ""' "$RUN/recheck-$n.json" > "$rd/report.md" 2> /dev/null
+    cp "$rd"/*.png "$rd/report.md" "$out/" 2> /dev/null
+    RC_STATUS="build of ${base:0:11}"
+    row "$n" recheck "recheck-$n" "$(grep -cE '^- F[0-9]+: same' "$rd/report.md") of $(printf '%s\n' "$X_FINDINGS" | grep -c .) on the base too"
+  fi
+  "$VM/vmctl.sh" down "$vmrun" >> "$EV" 2>&1
+  git -C "$REPO" worktree remove --force "$bwt" 2>> "$EV"
+  ev "recheck-$n: $RC_STATUS"
+  recheck_classify "$([ $rc -eq 0 ] && echo "$rd/report.md")"
+}
+
+# recheck_classify <recheck report | "">: X_LINES, one "  F<n> (<blocker|minor>, <new|pre-existing|not rechecked>): …"
+# per finding, and X_NEW, the blockers the base doesn't show (what may send the change back). "can't tell" on the base
+# (the feature isn't there) counts as new.
+recheck_classify() {
+  local line id sev r tag
+  X_LINES="" X_NEW=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    id=$(echo "$line" | sed -E 's/^- (F[0-9]+) .*/\1/')
+    sev=$(echo "$line" | sed -E 's/^- F[0-9]+ \((blocker|minor)\).*/\1/')
+    r=""
+    [ -n "${1:-}" ] && r=$(grep -m1 -E "^- $id: " "$1" | sed -E "s/^- $id: *(same|different|can't tell).*/\1/")
+    case "$r" in
+      same) tag=pre-existing ;;
+      different|"can't tell") tag=new ;;
+      *) tag="not rechecked" ;;
+    esac
+    X_LINES="$X_LINES  $id ($sev, $tag): $(echo "$line" | sed -E 's/^- F[0-9]+ \([a-z]+\): *//; s/; evidence: .*$//')
+"
+    [ "$sev" = blocker ] && [ "$tag" = new ] && X_NEW="$X_NEW $id"
+  done <<< "$X_FINDINGS"
+}
+
+# x_summary: the exploratory QA's outcome on one line
+x_summary() {
+  case "$X_STATUS" in
+    "") echo "exploratory QA: off" ;;
+    "not run"*|"no usable"*) echo "exploratory QA: $X_STATUS" ;;
+    *) echo "exploratory QA: $X_STATUS$([ -n "$X_NEW" ] && echo ", new blockers:$X_NEW")" ;;
+  esac
+}
+
+# explore_section <n> <dir shown for paths>: the Exploratory QA section of the hand-back
+explore_section() {
+  local n=$1 p=$2
+  case "$X_STATUS" in
+    "not run"*|"no usable"*)
+      echo "- Explorer: Claude Code, $X_MODEL, blind: $X_STATUS"
+      echo "- Findings: none"; echo "- Base re-check: not needed"; echo "- Tour for the judge: none" ;;
+    *)
+      echo "- Explorer: Claude Code, $X_MODEL, blind; same VM, app restarted; charter by $C_MODEL from the diff: \`$p/charter.md\`"
+      if [ -z "$X_FINDINGS" ]; then echo "- Findings: none"; else echo "- Findings: $X_STATUS"; printf '%s' "$X_LINES"; fi
+      case "$RC_STATUS" in
+        "build of"*) echo "- Base re-check: $RC_STATUS: \`$p/recheck/report.md\`" ;;
+        *) echo "- Base re-check: $RC_STATUS" ;;
+      esac
+      echo "- Tour for the judge: \`$p/explore/report.md\`; evidence: $(cd "$RUN/qa-$n/explore" 2> /dev/null && ls *.png 2> /dev/null | tr '\n' ' ')" ;;
+  esac
+}
+
 # disputes <field>: the builder's disputed expectations (handback/disputes.md), each heading with one field's lines
 disputes() {
   local f="$WT/$HANDBACK/disputes.md"
@@ -352,10 +526,12 @@ disputes() {
 }
 
 # disputes_for_qa: the "Disputed expectations" part of a QA prompt. Only the behaviour the builder says is intended
-# reaches the blind QA agent, never its reasons or evidence (those are for the human judge).
+# reaches the blind QA agent, never its reasons or evidence (those are for the human judge). Only the Runtime check's
+# expectations (E<n>): a disputed exploratory finding (F<n>) is for the judge alone.
 disputes_for_qa() {
   local d
-  d=$(disputes "Expected instead" | sed 's/^## /### /') || return 0
+  d=$(disputes "Expected instead" | awk '/^## / { keep = ($0 ~ /^## E/) } keep' | sed 's/^## /### /')
+  [ -n "$d" ] || return 0
   printf '\n## Disputed expectations\nThe builder says the app is designed to behave as described below, so for these expectations the Runtime check expects the wrong thing. Check both, report each as `disputed: <what you saw for both>`; a disputed expectation alone does not make the verdict FAIL.\n%s\n' "$d"
 }
 
@@ -381,6 +557,20 @@ write_qa() {
     echo "- Report: \`$HANDBACK/qa-$n/report.md\`; evidence: $(cd "$dir" && ls *.png 2> /dev/null | tr '\n' ' ')"
   } > "$RUN/qa-$n/section.md"
   write_section "Runtime check (QA)" "$RUN/qa-$n/section.md"
+  if [ -n "$X_STATUS" ]; then
+    for sub in explore recheck; do
+      [ -d "$RUN/qa-$n/$sub" ] || continue
+      mkdir -p "$dir/$sub"
+      cp "$RUN/qa-$n/$sub"/*.png "$RUN/qa-$n/$sub/report.md" "$dir/$sub/" 2> /dev/null
+    done
+    [ -n "$CHARTER" ] && cp "$CHARTER" "$dir/charter.md"
+    explore_section "$n" "$HANDBACK/qa-$n" > "$RUN/qa-$n/explore-section.md"
+    write_section "Exploratory QA" "$RUN/qa-$n/explore-section.md"
+  elif [ "$EXPLORE" = yes ]; then
+    # No stale tour from an earlier round: exploration only follows a PASS.
+    printf -- '- Explorer: not run in round %s: the runtime QA verdict was not PASS\n- Findings: none\n- Base re-check: not needed\n- Tour for the judge: none\n' "$n" > "$RUN/qa-$n/explore-section.md"
+    write_section "Exploratory QA" "$RUN/qa-$n/explore-section.md"
+  fi
   git -C "$WT" add "$HANDBACK"
   git -C "$WT" commit -q -m "handback: $TICKET runtime check $n"
 }
@@ -396,8 +586,27 @@ if [ -n "$QA_ONLY" ]; then
   printf '# QA only · %s · %s\nRef: %s\n\n| Run | Role | Min | subtype | Turns | Cost $ | Denials | Outcome |\n|---|---|---|---|---|---|---|---|\n' \
     "$TICKET" "$STAMP" "$REF" > "$RUNS"
   ev "qa only: $TICKET on $REF"
+  if [ "$EXPLORE" = yes ]; then
+    if [ -n "$QA_BASE" ]; then
+      XB=$(git -C "$REPO" rev-parse --verify "$QA_BASE^{commit}") || { echo "unknown ref $QA_BASE" >&2; exit 2; }
+    else
+      XB=$(git -C "$REPO" merge-base "$REF" "origin/$PR_BASE" 2> /dev/null || git -C "$REPO" merge-base "$REF" "$PR_BASE")
+      # <ref> already on PR_BASE (a merged change): the change is its own commit.
+      [ "$XB" = "$REF" ] && XB=$(git -C "$REPO" rev-parse "$REF~1")
+    fi
+    BASE=$(git -C "$REPO" rev-parse --short "$XB")
+    ev "explore: the change is $BASE..${REF:0:11}"
+    charter_stage 1 "$REF" "$REPO"
+  fi
   qa_stage 1 "$REF"
   STATUS=$QA_VERDICT
+  if [ -n "$X_STATUS" ]; then
+    recheck_stage 1 "$XB"
+    [ -n "$CHARTER" ] && cp "$CHARTER" "$RUN/qa-1/charter.md"
+    explore_section 1 "$RUN/qa-1" > "$RUN/qa-1/exploratory.md"
+    STATUS="$STATUS; $(x_summary)"
+    echo "Exploratory QA: $RUN/qa-1/exploratory.md"
+  fi
   echo "Report: $RUN/qa-1/report.md · run log: $RUNS"
   finish
 fi
@@ -430,7 +639,7 @@ fi
 
 cat > "$RUNS" <<EOF
 # Loop runs · $TICKET · $STAMP
-Base: $BASE · branch: $BRANCH · builder: $B_MODEL (\$$B_USD, $B_MIN min) · reviewer: $R_MODEL (\$$R_USD, $R_MIN min) · QA: $([ "$QA" = yes ] && echo "$QA_MODEL (\$$QA_USD, $QA_MIN min)" || echo off) · iteration cap $ITER_CAP · loop \$$LOOP_USD
+Base: $BASE · branch: $BRANCH · builder: $B_MODEL (\$$B_USD, $B_MIN min) · reviewer: $R_MODEL (\$$R_USD, $R_MIN min) · QA: $([ "$QA" = yes ] && echo "$QA_MODEL (\$$QA_USD, $QA_MIN min)" || echo off) · exploration: $([ "$EXPLORE" = yes ] && echo "charter $C_MODEL (\$$C_USD), explorer $X_MODEL (\$$X_USD, re-check \$$RC_USD), $EXPLORE_SENDBACKS send back(s)" || echo off) · iteration cap $ITER_CAP · loop \$$LOOP_USD
 
 | Run | Role | Min | subtype | Turns | Cost \$ | Denials | Outcome |
 |---|---|---|---|---|---|---|---|
@@ -466,12 +675,16 @@ else
   git -C "$REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE" || { echo "worktree add failed" >&2; exit 1; }
 fi
 FIRST=$builds
-vm_up=yes
-build_vm_up "$WT" || { vm_up=no; STATUS="harness error: the build VM did not come up: $(tail -1 "$RUN/build-vm.log")"; }
+xsend=0 LAST_X=""
 BUILD_TOOLS+=("Bash($GUEST *)")
 REVIEW_TOOLS+=("Bash($GUEST test *)")
-while [ "$vm_up" = yes ]; do
+while :; do
   release_kept_vms
+  # Up at the start, and again after a base re-check powered it off to free its slot.
+  if [ "$BUILD_VM_UP" != yes ]; then
+    build_vm_up "$WT" || { STATUS="harness error: the build VM did not come up: $(tail -1 "$RUN/build-vm.log")"; break; }
+    BUILD_VM_UP=yes
+  fi
   if [ $((builds - FIRST)) -ge "$ITER_CAP" ]; then STATUS="reject: iteration cap ($ITER_CAP builder runs); last reason: $reason"; break; fi
   if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file"; break; fi
   if over "$SPENT + $B_USD" "$LOOP_USD"; then STATUS="stopped: loop budget (\$$SPENT spent)"; break; fi
@@ -541,15 +754,29 @@ while [ "$vm_up" = yes ]; do
   if [ "$QA" != yes ]; then STATUS="ready for the judge (Recommend: merge; no runtime QA)"; break; fi
   if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file (reviewed, no runtime QA)"; break; fi
   if over "$SPENT + $QA_USD" "$LOOP_USD"; then STATUS="reviewed, no runtime QA (loop budget)"; break; fi
-  qa_stage "$builds" "$(git -C "$WT" rev-parse HEAD)" "$WT"
+  head=$(git -C "$WT" rev-parse HEAD)
+  CHARTER="" CHARTER_WHY=""
+  [ "$EXPLORE" = yes ] && charter_stage "$builds" "$head" "$WT"
+  qa_stage "$builds" "$head" "$WT"
   case "$QA_VERDICT" in
     ERROR*) STATUS="reviewed; runtime QA could not run: ${QA_VERDICT#ERROR: }"; break ;;
   esac
+  X_NEW="" X_LINES="" RC_STATUS="not needed"
+  [ -n "$X_STATUS" ] && recheck_stage "$builds" "$BASE"
+  [ -n "$X_STATUS" ] && LAST_X=$(x_summary)
   write_qa "$builds"
   case "$QA_VERDICT" in
-    PASS*) d=$(disputed_ids)
-           STATUS="ready for the judge (Recommend: merge; runtime QA PASS)"
-           [ "$d" != none ] && STATUS="ready for the judge (Recommend: merge; runtime QA PASS, disputed by the builder: $d; the judge decides)"
+    PASS*) if [ -n "$X_NEW" ] && [ "$xsend" -lt "$EXPLORE_SENDBACKS" ]; then
+             xsend=$((xsend + 1))
+             reason="exploratory QA (run $builds) found blockers that the base commit's build does not show:$X_NEW. Findings, repro steps and screenshots: $HANDBACK/qa-$builds/explore/report.md (the base re-check: $HANDBACK/qa-$builds/recheck/)"
+             from=explore; STATUS="send back: exploratory QA"; continue
+           fi
+           d=$(disputed_ids)
+           STATUS="ready for the judge (Recommend: merge; runtime QA PASS"
+           [ -n "$X_NEW" ] && STATUS="ready for the judge (Recommend: the judge decides the new exploratory blockers$X_NEW, still there after $xsend send back(s); runtime QA PASS"
+           [ -n "$X_STATUS" ] && STATUS="$STATUS; $(x_summary)"
+           [ "$d" != none ] && STATUS="$STATUS; disputed by the builder: $d; the judge decides"
+           STATUS="$STATUS)"
            break ;;
     NEEDS-HUMAN*) STATUS="reviewed; runtime QA waiting for a human: ${QA_VERDICT#NEEDS-HUMAN: }"; break ;;
     *) reason="runtime check failed (QA run $builds): ${QA_VERDICT#FAIL: }. QA report and screenshots: $HANDBACK/qa-$builds/"
@@ -573,6 +800,7 @@ fi
   echo "- Branch: \`$BRANCH\` (worktree \`${WT#$REPO/}\`) · base $BASE · last commit: $(git -C "$WT" log -1 --format='%h %s')"
   echo "- Builder runs: $((builds - FIRST))$([ -n "$RESUME" ] && echo " (resumed after round $FIRST)") · spent: \$$SPENT of \$$LOOP_USD · PR: $PR_URL"
   echo "- Hand-back for the judge: \`${WT#$REPO/}/$HANDBACK/hand-back.md\`"
+  [ -n "$LAST_X" ] && echo "- Last round's ${LAST_X}; tour, findings and base re-check in the hand-back's Exploratory QA section"
   [ -s "$WT/$HANDBACK/disputes.md" ] && echo "- Disputed by the builder (the judge decides): $(disputed_ids); reasons: \`${WT#$REPO/}/$HANDBACK/disputes.md\`"
   echo "- Run log: \`$RUNS\` · events: \`$EV\` · every run's JSON, stderr and prompt: \`$RUN/\`"
 } > "$RUN/loop-handback.md"

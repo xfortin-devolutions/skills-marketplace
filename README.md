@@ -18,8 +18,8 @@ Restart Claude Code. The repository is private: you need read access to it.
 ### factory-toolkit (0.x, experimental)
 
 The `factory` skill: turns a Jira ticket into an agent-ready spec with a red oracle, then runs an unattended loop
-(builder in its own worktree, the runner's own verify, a read-only reviewer, blind runtime QA in a throwaway VM) and hands
-back to a human judge. Every build and test runs in a QEMU VM of the target OS; the Mac only edits, runs git and drives
+(builder in its own worktree, the runner's own verify, a read-only reviewer, blind runtime QA in a throwaway VM, then a
+blind exploratory QA that tours the change and re-tries its findings on the base build) and hands back to a human judge. Every build and test runs in a QEMU VM of the target OS; the Mac only edits, runs git and drives
 the VMs.
 
 - **Engine (this plugin):** the runner, VM tooling, prompts, templates, the reviewer's and QA agent's system prompts, and

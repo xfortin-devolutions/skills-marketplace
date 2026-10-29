@@ -1,0 +1,6 @@
+Job: Recheck. @APP@, built in Debug from commit @SHA@, the commit before the change, is starting on your VM's desktop (@GUEST_DESC@, screen @XRES@×@YRES@).
+Your working folder is @QA_DIR@: save every screenshot there, with relative names (01-start.png, ...).
+- vm.py: python3 @VM@/vm.py <op> ...
+- vmssh: @VM@/vmssh '<PowerShell>'
+Run each command bare: no pipes, no `&&`, no redirects, no environment-variable prefix (the environment already points at your VM).
+For each finding below, follow its repro and answer in the Recheck format your instructions give.
