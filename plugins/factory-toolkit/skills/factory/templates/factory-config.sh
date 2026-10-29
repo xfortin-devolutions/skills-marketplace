@@ -2,6 +2,8 @@
 # Machine-specific values (VM root, CPUs, RAM, budget overrides) go in ~/.factory/config.sh, not here.
 
 DEFAULT_PROFILE=@PROFILE@
+# Docs a change may always update besides the ticket's scope (repo path prefixes), e.g. ".claude/skills/ docs/ CLAUDE.md".
+DOC_PATHS=""
 
 B_MODEL=claude-opus-5-5     B_USD=8    B_MIN=45
 R_MODEL=claude-sonnet-5-5   R_USD=2    R_MIN=20

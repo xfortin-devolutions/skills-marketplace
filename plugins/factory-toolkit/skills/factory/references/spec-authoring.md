@@ -15,7 +15,7 @@ git: the ticket branch carries only product commits (the oracle and its prerequi
 | Acceptance | itemized, testable; include non-goals and "keeps working" items |
 | Acceptance command | the test project and filter that pass when done (run in the guest); today's red result from `--test-only` (how many fail, why) |
 | Runtime check | when the bug shows in the app: [runtime-checks.md](runtime-checks.md) |
-| Scope | Touches (globs) and Do not edit (oracle, factory, `.claude/`, `.github/`, `.resx`/`.axaml` unless needed) |
+| Scope | Touches (globs) and Do not edit (oracle, factory, `.github/`, `.resx`/`.axaml` unless needed). Docs under the project's `DOC_PATHS` (skills, `docs/`, CLAUDE.md) are always in scope: the builder updates the ones the change makes wrong |
 | Standards | CLAUDE.md, CODING_STANDARDS.md, the skills the builder must invoke |
 
 ## <KEY>.sh

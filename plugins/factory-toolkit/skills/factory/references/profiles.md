@@ -33,6 +33,10 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
 ~/.factory/config.sh               per machine, never committed: FACTORY_VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, budget overrides
 ```
 
+The project's `config.sh` also sets `DOC_PATHS`: repo path prefixes of docs any change may update (`.claude/skills/
+docs/ CLAUDE.md` for RDM). The builder keeps them true, verify accepts them whatever the ticket's scope, the reviewer's
+Docs line checks them, and `factory.sh which` treats them as shared by every product.
+
 Load order, later wins: engine defaults (`scripts/lib/config.sh`) < the project's `config.sh` < the ticket's `.sh` <
 `profile.sh` < `target.sh` < `~/.factory/config.sh`. All are bash 3.2 (the macOS default): no associative arrays.
 

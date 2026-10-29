@@ -94,8 +94,9 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
    passes on buggy code is the most common spec bug: assert on what the user sees.
 7. If there is a Runtime check and a golden VM: `bash $F/run-loop.sh <KEY> --qa-only HEAD` must come back FAIL for the
    stated reason. Record both red runs in the ticket.
-8. Show the spec to the user and stop. Commit the oracle only once they approve (branch commits: no `[TICKET]` prefix,
-   no `CR:`).
+8. Show the spec to the user and stop: give them its path (`factory.sh spec <KEY>`; `--open` opens it), the red output,
+   and the Jira enrichment you'd post. The oracle is already committed (the red runs need it); if they change the spec,
+   amend the oracle commit to match (branch commits: no `[TICKET]` prefix, no `CR:`).
 9. Offer to post the itemized acceptance and scope back to Jira; never post without a yes.
 
 ## run <KEY> [--open-pr] [--qa | --no-qa] [--no-explore] [--keep-vm]
@@ -202,8 +203,9 @@ new `targets/<os>/`, not a new profile.
 
 ## Rules for every agent the runner spawns
 - No AskUserQuestion, no waiting for a human inside a session: decide and record; the runner owns human hand-offs.
-- Builder: only the ticket's scope; never edit the oracle or the factory (denied anyway). One code commit, then record,
-  then hand-back. Reviewer and charter: read-only. QA and explorer: blind (no source), never "Send error report".
+- Builder: only the ticket's scope, plus the docs the change makes wrong (`DOC_PATHS`: skills, docs, CLAUDE.md), in
+  the same commit; never the oracle, the factory, or `.claude/` settings and hooks (denied anyway). One code commit, then
+  record, then hand-back. The reviewer checks the docs (its Docs line). Reviewer and charter: read-only. QA and explorer: blind (no source), never "Send error report".
 - Nothing is pushed, no PR, no Jira write, unless the user asked for it in this conversation.
 
 ## Where things are

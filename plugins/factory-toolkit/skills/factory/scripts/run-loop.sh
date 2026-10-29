@@ -139,7 +139,7 @@ fill() { # fill <template file>: substitutes the @NAME@ placeholders
       -e "s|@GUEST@|$GUEST|g" -e "s|@ACCEPT@|$(echo "$ACCEPT_CMD" | sed 's/[|&\\]/\\&/g')|g" -e "s|@FACTORY@|$FACTORY_DIR_REL|g" -e "s|@SPEC@|$TICKET_FILE|g" \
       -e "s|@TEMPLATES@|$SKILL_REL/templates|g" -e "s|@VM@|$VM|g" -e "s|@APP@|$APP_NAME|g" \
       -e "s|@GUEST_DESC@|${GUEST_DESC:-}|g" -e "s|@XRES@|$VM_XRES|g" -e "s|@YRES@|$VM_YRES|g" \
-      -e "s|@STANDARDS@|${REVIEW_STANDARDS:-none}|g" "$1"
+      -e "s|@STANDARDS@|${REVIEW_STANDARDS:-none}|g" -e "s|@DOCS@|${DOC_PATHS:-none}|g" "$1"
 }
 section() { # section <file> <heading>: the body of one "## <heading>" section
   awk -v h="## $2" '$0 == h { on = 1; next } /^## / { on = 0 } on' "$1"
@@ -190,7 +190,7 @@ verify() {
   grep -qE '^- Verdict: *PASS' "$rec" || { echo "red: record Verdict is not PASS"; return; }
   touched=$(git -C "$WT" diff --name-only "$BASE" HEAD -- $PROTECTED_PATHS)
   [ -z "$touched" ] || { echo "red: protected files changed: $(echo $touched)"; return; }
-  outside=$(git -C "$WT" diff --name-only "$BASE" HEAD -- . ':(exclude)handback' | grep -vE "$SCOPE_REGEX")
+  outside=$(git -C "$WT" diff --name-only "$BASE" HEAD -- . ':(exclude)handback' | grep -vE "$SCOPE_REGEX" | not_docs)
   [ -z "$outside" ] || { echo "red: files outside the ticket scope: $(echo $outside)"; return; }
   [ -n "$(git -C "$WT" diff --name-only "$BASE" HEAD -- . ':(exclude)handback')" ] || { echo "red: no code change"; return; }
   [ -z "$(git -C "$WT" status --porcelain)" ] || { echo "red: uncommitted changes left in the worktree"; return; }
@@ -220,6 +220,16 @@ verify() {
     *) echo "error: guest test: $(harness_why "$out.test")" ;;
   esac
   rm -f "$out.test"
+}
+
+not_docs() { # not_docs: the paths on stdin that are under none of DOC_PATHS
+  local p d keep
+  while IFS= read -r p; do
+    keep=yes
+    for d in $DOC_PATHS; do case "$p" in "$d"*) keep=no ;; esac; done
+    [ "$keep" = yes ] && echo "$p"
+  done
+  return 0
 }
 
 harness_why() { # harness_why <guest.sh output>: its HARNESS ERROR line, else its last line

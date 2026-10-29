@@ -27,6 +27,7 @@
 - Schema: <OK | finding | n/a>: <one line>
 - Data flows: <OK | finding | n/a>: <one line>
 - Duplication: <OK | finding | n/a>: <one line>
+- Docs: <OK | finding | n/a>: <one line>
 - Open findings: <"none", or one per line, each marked (blocking) or (non-blocking)>
 - Written back to the harness: <file (AGENTS.md / CLAUDE.md, a skill, a hook) and commit SHA, this round only | none if nothing new>
 - Recommend: <merge | send back>

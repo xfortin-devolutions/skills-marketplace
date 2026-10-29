@@ -7,6 +7,8 @@
 REPO_MATCH='[:/]Devolutions/RDM(\.git)?$'
 
 DEFAULT_PROFILE=rdm
+# Docs a change may always update (skills: the .claude side; .agents/ and AGENTS.md are symlinks to it).
+DOC_PATHS=".claude/skills/ docs/ CLAUDE.md"
 
 B_MODEL=claude-opus-5-5     B_USD=8    B_MIN=45
 R_MODEL=claude-sonnet-5-5   R_USD=2    R_MIN=20
