@@ -726,6 +726,12 @@ while :; do
     --allowedTools "${BUILD_TOOLS[@]}" --output-format json
   read -r st _ _ _ <<< "$(fields "$RUN/$name.json")"
   read -r _ _ rc < "$RUN/$name.time"
+  # A builder stopped mid negative run (time box, budget) leaves the worktree detached on the base: the next round would
+  # see an empty branch. Its record steps never leave changes behind, so going back to the branch loses nothing.
+  if [ "$(git -C "$WT" symbolic-ref -q --short HEAD)" != "$BRANCH" ]; then
+    ev "$name left the worktree off $BRANCH ($(git -C "$WT" rev-parse --short HEAD)): switching back"
+    git -C "$WT" switch -q "$BRANCH" 2>> "$EV" || ev "could not switch $WT back to $BRANCH"
+  fi
   case "$rc/$st" in
     142/*) out="time box" ;;
     */success) out="success" ;;

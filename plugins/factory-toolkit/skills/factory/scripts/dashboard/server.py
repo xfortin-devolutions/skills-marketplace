@@ -316,11 +316,20 @@ def worktree_changes(run):
             return subprocess.run(["git", "-C", wt, *a], capture_output=True, text=True, timeout=10).stdout
         except (OSError, subprocess.SubprocessError):
             return ""
-    log = git("log", "--oneline", "--no-decorate", f"{base}..HEAD") if base else git("log", "--oneline", "-5")
-    stat = git("diff", "--stat", base or "HEAD~1", "--", ".", ":(exclude)handback") if base else ""
+    # The run's branch, not HEAD: a builder in the middle of its negative run has HEAD detached on the base.
+    branch = next((l.split("branch: ")[1].split(" ")[0] for l in (read(os.path.join(run, "runs.md")) or "").splitlines()
+                   if "branch: " in l), None)
+    tip = branch or "HEAD"
+    head = git("symbolic-ref", "-q", "--short", "HEAD").strip()
+    note = ""
+    if branch and head != branch:
+        note = (f"Note: the worktree is not on {branch} right now (HEAD {git('rev-parse', '--short', 'HEAD').strip()}"
+                f"{', detached' if not head else ', on ' + head}): the builder may be running its negative test.\n\n")
+    log = git("log", "--oneline", "--no-decorate", f"{base}..{tip}") if base else git("log", "--oneline", "-5", tip)
+    stat = git("diff", "--stat", base, tip, "--", ".", ":(exclude)handback") if base else ""
     dirty = git("status", "--short")
-    return (f"Commits since the base:\n{log or '  none yet'}\n\nChanged files (committed and not):\n"
-            f"{git('diff', '--stat', base) if base else stat or '  none'}\nUncommitted:\n{dirty or '  nothing'}")
+    return (f"{note}Commits on the branch since the base:\n{log or '  none yet'}\n\nCommitted changes:\n{stat or '  none'}\n"
+            f"Uncommitted in the worktree:\n{dirty or '  nothing'}")
 
 
 def safe_join(root, rel):
