@@ -36,6 +36,9 @@
   .dot.running { background: var(--run); animation: pulse 1.4s infinite; }
   .dot.waiting { background: var(--warn); animation: pulse 1s infinite; }
   .dot.done { background: var(--good); }
+  .dot.done.bad { background: var(--bad); }
+  .dot.done.warn { background: var(--warn); }
+  .dot.done.neutral { background: var(--muted); }
   .dot.dead, .dot.stale { background: var(--bad); }
   @keyframes pulse { 50% { opacity: .35; } }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
@@ -52,6 +55,7 @@
   .node.good { background: var(--good-bg); border-color: color-mix(in srgb, var(--good) 35%, transparent); }
   .node.bad { background: var(--bad-bg); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
   .node.warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+  .node.stopped { border-style: dashed; }
   .node.running, .node.preparing { background: var(--run-bg); border-color: var(--run); }
   .arrow { width: 18px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); }
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 10px 0; flex-wrap: wrap; }
@@ -107,7 +111,7 @@ async function loadRuns() {
   const runs = await get("/api/runs");
   $("#runs").innerHTML = runs.map(r => `
     <div class="run ${r.id === state.run ? "sel" : ""}" data-id="${esc(r.id)}">
-      <div class="top"><span class="dot ${r.state}"></span><b>${esc(r.ticket)}</b><span class="badge">${esc(r.kind)}</span>
+      <div class="top"><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}"></span><b>${esc(r.ticket)}</b><span class="badge">${esc(r.kind)}</span>
         <span class="muted" style="margin-left:auto">${r.spent ? "$" + r.spent.toFixed(2) : ""}</span></div>
       <div class="status" title="${esc(r.status)}">${esc(r.status)}</div>
       <div class="muted">${esc(r.state)} · ${ago(r.updated)}</div>
@@ -135,7 +139,7 @@ async function loadRun() {
       ${rounds[k].map(nodeHtml).join('<div class="arrow">→</div>')}</div>`).join("") || `<div class="muted">Nothing has started yet.</div>`;
   const live = r.state === "running" || r.state === "waiting";
   let html = `<div class="card runhead">
-      <h2><span class="dot ${r.state}" style="display:inline-block"></span> ${esc(r.ticket)} <span class="badge">${esc(r.kind)}</span></h2>
+      <h2><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}" style="display:inline-block"></span> ${esc(r.ticket)} <span class="badge">${esc(r.kind)}</span></h2>
       <div class="muted">${esc(r.id)} · started ${ago(r.started)} · ${live ? "running for " + elapsed(r.started) : "took " + elapsed(r.started, r.updated)} · spent $${r.spent.toFixed(2)}</div>
       <div style="margin-top:6px">${esc(r.status)}</div>
       ${r.header ? `<div class="muted" style="margin-top:4px">${esc(r.header)}</div>` : ""}

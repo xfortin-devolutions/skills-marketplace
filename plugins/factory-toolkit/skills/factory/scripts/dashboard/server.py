@@ -110,7 +110,10 @@ def run_summary(run):
     if os.path.exists(os.path.join(run, "WAITING-FOR-HUMAN")):
         state = "waiting"
     spent = sum(as_float(r["cost"]) for r in rows(run))
+    # A finished run's dot shows how it ended, not just that it ended.
+    cls = "neutral" if status.startswith("stopped") else outcome_class(status)
     return {"id": run_id, "ticket": ticket_of(run_id), "kind": run_kind(run_id), "state": state, "status": status,
+            "cls": cls,
             "started": evs[0]["t"] if evs else None, "updated": evs[-1]["t"] if evs else None,
             "spent": round(spent, 2)}
 
@@ -188,6 +191,8 @@ def nodes(run):
     for r in rs:
         by.setdefault((r["role"], r["n"]), r)
     out = []
+    # A session the run never saw end (killed, or the runner died) is stopped, not working.
+    over = any(e["msg"].startswith("end: ") for e in evs) or pid_alive(run) is False
     if kind == "test":
         test = read(os.path.join(run, "test.out"))
         end = next((e["msg"][5:] for e in evs if e["msg"].startswith("end: ")), None)
@@ -213,7 +218,8 @@ def nodes(run):
                     text = v.group(1) if v else b["outcome"]
                     out.append(node(st, n, "done", text, outcome_class(text.replace("green", ""))))
                 elif session_state(run, f"build-{n}") == "done":
-                    out.append(node(st, n, "running", "building and testing in the build VM", "neutral"))
+                    out.append(node(st, n, "stopped", "stopped: the run ended first", "neutral") if over
+                               else node(st, n, "running", "building and testing in the build VM", "neutral"))
                 continue
             state = session_state(run, name)
             if st == "qa" and state is None:
@@ -221,7 +227,10 @@ def nodes(run):
                 if prep:
                     last = prep[-1][len(f"qa-{n}: "):]
                     done = any(e["msg"].startswith(f"qa-{n}: ") and re.match(r"(PASS|FAIL|ERROR|NEEDS)", e["msg"][len(f"qa-{n}: "):]) for e in evs)
-                    out.append(node(st, n, "done" if done else "preparing", last, outcome_class(last) if done else "neutral"))
+                    if not done and over:
+                        out.append(node(st, n, "stopped", "stopped: the run ended first", "neutral"))
+                    else:
+                        out.append(node(st, n, "done" if done else "preparing", last, outcome_class(last) if done else "neutral"))
                 continue
             if state is None:
                 continue
@@ -229,6 +238,8 @@ def nodes(run):
             text = r["outcome"] if r else ""
             if not text and state == "done":
                 text = last_event(evs, name) or ""
+            if state == "running" and over:
+                state, text = "stopped", "stopped: the run ended first"
             if not text and state == "running":
                 text = "working"
             out.append(node(st, n, state, text, outcome_class(text) if r else "neutral",
