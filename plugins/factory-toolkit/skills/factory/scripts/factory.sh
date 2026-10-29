@@ -13,6 +13,7 @@
 #                                        a repo with no project gets one: .factory/ in the repo, or with --skill, in the skill
 #   factory.sh check [profile]           which project this repo uses, then check a profile (default: every one)
 #   factory.sh which <path>...           the profile whose CODE_PATHS own each repo path (how the spec step picks one)
+#   factory.sh spec <KEY> [--open]       a ticket's spec files (and open the .md in the default app)
 #   factory.sh clean <KEY> [--dry-run]   a finished ticket: delete its spec, its run logs and its VM folders; list the
 #                                        worktrees and branches left (removing those stays a human's call)
 #   factory.sh layer <profile> --test|--build   rehearse (throwaway clone) or build and freeze the profile's VM layer
@@ -159,6 +160,9 @@ case "$cmd" in
     found=""
     for path in "$@"; do
       path=${path#$REPO/} best="" blen=0
+      doc=no
+      for c in $DOC_PATHS; do case "$path" in "$c"*) doc=yes ;; esac; done
+      [ "$doc" = yes ] && { echo "$path: docs (any profile)"; continue; }
       for d in "$PROJECT_DIR"/profiles/*/; do
         cps=$(TICKET=X PROFILE_DIR=${d%/} CODE_PATHS=""; . "${d}profile.sh" > /dev/null 2>&1; echo "$CODE_PATHS")
         for c in $cps; do
@@ -175,6 +179,12 @@ case "$cmd" in
       *" "?*" ") echo "-> several products ($found): the profile is the one whose app shows the change; ask if the ticket doesn't say" ;;
       *) echo "-> profile: $found" ;;
     esac ;;
+  spec)
+    key=${1:-}; [ -n "$key" ] || die "usage: factory.sh spec <KEY> [--open]"
+    [ -f "$TICKETS_DIR/$key.md" ] || die "no spec for $key in $TICKETS_DIR"
+    echo "$TICKETS_DIR/$key.md"
+    [ -f "$TICKETS_DIR/$key.sh" ] && echo "$TICKETS_DIR/$key.sh"
+    [ "${2:-}" = --open ] && open "$TICKETS_DIR/$key.md" ;;
   clean)
     key=${1:-}; [ -n "$key" ] || die "usage: factory.sh clean <KEY> [--dry-run]"
     dry=no; [ "${2:-}" = --dry-run ] && dry=yes
@@ -200,5 +210,5 @@ case "$cmd" in
     brs=$(git -C "$REPO" branch --list "*$k*" | sed 's/^[*+ ] */  /')
     [ -z "$wts$brs" ] || printf 'left for you to remove (git worktree remove / git branch -D):\n%s%s\n' "${wts:+$wts
 }" "$brs" ;;
-  *) sed -n '2,18p' "$0"; exit 2 ;;
+  *) sed -n '2,19p' "$0"; exit 2 ;;
 esac

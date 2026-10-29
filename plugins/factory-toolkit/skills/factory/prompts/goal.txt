@@ -10,7 +10,8 @@ You are done when both commands exit 0:
 - build: @GUEST@ build
 - accept: @ACCEPT@
 The ticket's Runtime check is not yours: a blind QA stage runs the app after you, so it is never a "Not verified" item in your record.
-Change only what the ticket's Scope allows, and nothing its "Do not edit" line names (those edits are denied anyway; do not try to work around a denial). Run each command bare: no pipes, no `&&`, no redirects, no environment-variable prefix.
+Keep the docs true: when your change makes a skill, a doc or CLAUDE.md wrong or incomplete (a new property, a changed behaviour, a pattern to follow), update it in the same code commit. These paths are always in scope for that: @DOCS@. Edit the `.claude/` side of a skill: `.agents/` and AGENTS.md are symlinks to it. Don't rewrite docs your change doesn't touch.
+Change only what the ticket's Scope allows (plus those docs), and nothing its "Do not edit" line names (those edits are denied anyway; do not try to work around a denial). Run each command bare: no pipes, no `&&`, no redirects, no environment-variable prefix.
 
 Work in this order and stop after step 4.
 1. Fix the code. Commit the change alone with the message '@TICKET@: <what changed, past tense>'. Make exactly one code commit: if you change code again before step 2, amend it (git commit --amend --no-edit).
