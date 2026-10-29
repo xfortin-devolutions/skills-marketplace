@@ -31,6 +31,8 @@ the VMs.
   except each ticket's spec, on the ticket's own branch. Once a team adopts the factory, its project moves to the repo's
   `.factory/`, which then wins. Ask the skill to "set up a profile for <product>"; the contract is
   [references/profiles.md](plugins/factory-toolkit/skills/factory/references/profiles.md).
+- **Dashboard:** `factory.sh dashboard` (or ask the skill "show me the dashboard") opens a live local page of the runs:
+  each run's pipeline, what the running agent is doing, the builder's changes, QA screenshots as they're taken.
 - **Per machine:** `~/.factory/config.sh` (VM root, CPUs, RAM, budget overrides) and the golden VM image
   ([references/vm-setup.md](plugins/factory-toolkit/skills/factory/references/vm-setup.md)).
 

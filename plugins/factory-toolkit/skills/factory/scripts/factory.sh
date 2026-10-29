@@ -14,6 +14,7 @@
 #   factory.sh check [profile]           which project this repo uses, then check a profile (default: every one)
 #   factory.sh which <path>...           the profile whose CODE_PATHS own each repo path (how the spec step picks one)
 #   factory.sh spec <KEY> [--open]       a ticket's spec files (and open the .md in the default app)
+#   factory.sh dashboard [--port N] [--no-open]   live view of the runs in the browser (local, read-only; Ctrl-C stops)
 #   factory.sh clean <KEY> [--dry-run]   a finished ticket: delete its spec, its run logs and its VM folders; list the
 #                                        worktrees and branches left (removing those stays a human's call)
 #   factory.sh layer <profile> --test|--build   rehearse (throwaway clone) or build and freeze the profile's VM layer
@@ -179,6 +180,23 @@ case "$cmd" in
       *" "?*" ") echo "-> several products ($found): the profile is the one whose app shows the change; ask if the ticket doesn't say" ;;
       *) echo "-> profile: $found" ;;
     esac ;;
+  dashboard)
+    port=8765 open_it=yes
+    while [ $# -gt 0 ]; do
+      case "$1" in --port) port=${2:-8765}; shift ;; --no-open) open_it=no ;; esac
+      shift
+    done
+    command -v python3 > /dev/null || die "the dashboard needs python3"
+    log=$(mktemp -t factory-dashboard)
+    python3 -I "$X/dashboard/server.py" --runs "$RUNS" --vm-root "$FACTORY_VM_ROOT" --port "$port" > "$log" 2>&1 &
+    srv=$!
+    trap 'kill $srv 2> /dev/null; rm -f "$log"' EXIT INT TERM
+    for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q http "$log" && break; sleep 0.3; done
+    url=$(grep -o 'http://[^ ]*' "$log" | head -1)
+    [ -n "$url" ] || { cat "$log" >&2; die "the dashboard did not start"; }
+    echo "factory dashboard: $url (Ctrl-C stops it)"
+    [ "$open_it" = yes ] && open "$url"
+    wait $srv ;;
   spec)
     key=${1:-}; [ -n "$key" ] || die "usage: factory.sh spec <KEY> [--open]"
     [ -f "$TICKETS_DIR/$key.md" ] || die "no spec for $key in $TICKETS_DIR"
@@ -210,5 +228,5 @@ case "$cmd" in
     brs=$(git -C "$REPO" branch --list "*$k*" | sed 's/^[*+ ] */  /')
     [ -z "$wts$brs" ] || printf 'left for you to remove (git worktree remove / git branch -D):\n%s%s\n' "${wts:+$wts
 }" "$brs" ;;
-  *) sed -n '2,19p' "$0"; exit 2 ;;
+  *) sed -n '2,20p' "$0"; exit 2 ;;
 esac
