@@ -1,13 +1,13 @@
 {
   "name": "xfortin-skills-marketplace",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Xavier Fortin's experimental Claude Code skills, incubated here before they move to Devolutions/skills-marketplace",
   "owner": { "name": "Xavier Fortin", "email": "xfortin@devolutions.net" },
   "plugins": [
     {
       "name": "factory-toolkit",
       "description": "[EXPERIMENTAL] Software factory: Jira ticket -> spec with a red oracle -> unattended builder, verify, reviewer and blind VM QA loop -> hand-back for a human judge. Builds and tests in QEMU VMs of the target OS, driven from a Mac",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "author": { "name": "Xavier Fortin", "email": "xfortin@devolutions.net" },
       "source": "./plugins/factory-toolkit",
       "category": "development"
