@@ -29,7 +29,7 @@ Expected: True, a 10.0.x line, True.
 Boot the golden image itself, writable, sharing a worktree of master: `$G/start.sh /path/to/master-worktree` (window).
 Then from the Mac (default single-VM mode: port 2222, `$H/qmp.sock`):
 ```
-S=<skill dir>/scripts/vm; P=.factory/profiles/<profile>/targets/windows
+S=<skill dir>/scripts/vm; P=<project dir>/profiles/<profile>/targets/windows   # projects/<project>/ in the skill, or <repo>/.factory/
 python3 $S/vm.py wait-ssh
 $S/vmssh - < $P/build.ps1            # fills the guest's NuGet cache (~10-15 min the first time)
 $S/vmssh - < $P/launch.ps1           # launch the app once

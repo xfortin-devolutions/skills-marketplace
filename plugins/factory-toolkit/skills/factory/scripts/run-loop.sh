@@ -20,7 +20,8 @@
 #   run-loop.sh <TICKET> --continue <run branch> "<why>"            the same after the runner stopped for a human who
 #                                                                    sends it on: no Decision line, the reason goes as is
 # Any time: touch <run dir>/STOP (stops before the next station), touch <run dir>/HUMAN (a human judges the next QA).
-# Config: <repo>/.factory (FACTORY_DIR): config.sh, tickets/<TICKET>.md + .sh, profiles/<profile>/ (see lib/config.sh).
+# Config (lib/config.sh): the project (config.sh, profiles/<profile>/), in the skill's projects/ or the repo's .factory/;
+# the ticket's spec <TICKET>.md + .sh in ~/.factory/tickets/<repo>/ (TICKETS_DIR), copied into the run at its start.
 # bash 3.2 compatible (macOS default): no associative arrays, no ${x,,}.
 set -u
 # One block: bash parses it whole before running it, so editing this file during a run can't break that run.
@@ -57,22 +58,22 @@ SKILL=$(cd "$X/.." && pwd)
 case "$SKILL/" in "$REPO"/*) SKILL_REL=${SKILL#$REPO/} SKILL_IN_REPO=$SKILL_REL ;; *) SKILL_REL=$SKILL SKILL_IN_REPO="" ;; esac
 . "$X/lib/config.sh" || exit 2
 . "$X/lib/timebox.sh"
-TICKET_FILE=$FACTORY_DIR/tickets/$TICKET.md
-[ -f "$TICKET_FILE" ] || { echo "no ticket file $FACTORY_DIR_REL/tickets/$TICKET.md" >&2; exit 2; }
-[ -n "$PROFILE" ] || { echo "no ticket inputs $FACTORY_DIR_REL/tickets/$TICKET.sh (PROFILE, ACCEPT_TEST, ORACLE_PATHS, SCOPE_REGEX)" >&2; exit 2; }
+TICKET_FILE=$TICKETS_DIR/$TICKET.md
+[ -f "$TICKET_FILE" ] || { echo "no ticket file $TICKETS_DIR/$TICKET.md" >&2; exit 2; }
+[ -n "$PROFILE" ] || { echo "no ticket inputs $TICKETS_DIR/$TICKET.sh (PROFILE, ACCEPT_TEST, ORACLE_PATHS, SCOPE_REGEX)" >&2; exit 2; }
 
 for c in claude git jq perl python3; do
   command -v "$c" > /dev/null || { echo "run-loop.sh needs $c on the PATH" >&2; exit 2; }
 done
 if [ -n "$(git -C "$REPO" status --porcelain -- "$FACTORY_DIR_REL" $SKILL_IN_REPO $ORACLE_PATHS)" ]; then
-  echo "commit the loop kit, the ticket and the acceptance tests first: the worktree is cut from HEAD" >&2; exit 2
+  echo "commit the acceptance tests (and the project, when it is in the repo) first: the worktree is cut from HEAD" >&2; exit 2
 fi
 
 # Every build and test runs in the guest, so every mode needs the target's image and scripts.
 [ -f "$FACTORY_VM_HOME/$GOLDEN_IMAGE" ] && command -v qemu-system-aarch64 > /dev/null \
   || { echo "no $GOLDEN_IMAGE in $FACTORY_VM_HOME (or no QEMU): see $SKILL_REL/references/vm-setup.md" >&2; exit 2; }
 [ -n "${GUEST_BUILD:-}" ] && [ -n "${GUEST_TEST:-}" ] || { echo "profile $PROFILE, target '$PLATFORM': no GUEST_BUILD/GUEST_TEST" >&2; exit 2; }
-[ -n "${ACCEPT_TEST:-}" ] || { echo "no ACCEPT_TEST in $FACTORY_DIR_REL/tickets/$TICKET.sh" >&2; exit 2; }
+[ -n "${ACCEPT_TEST:-}" ] || { echo "no ACCEPT_TEST in $TICKETS_DIR/$TICKET.sh" >&2; exit 2; }
 grep -q '^## Runtime check' "$TICKET_FILE" && HAS_RC=yes || HAS_RC=no
 [ "$QA" = auto ] && QA=$HAS_RC
 [ -n "$QA_ONLY" ] && QA=yes
@@ -96,6 +97,11 @@ mkdir -p "$FACTORY_RUNS"
 i=1; base_id=$ID
 until mkdir "$FACTORY_RUNS/$ID" 2> /dev/null; do i=$((i + 1)); ID=$base_id-$i; STAMP=${STAMP%%-*}-$i; done
 RUN=$FACTORY_RUNS/$ID
+# The run's own copy of the spec: what its agents read (a later edit of the ticket doesn't change a run in flight, and a
+# --resume takes the updated one), in a folder of its own so they get it and nothing else of the run.
+SPEC_DIR=$RUN/spec
+mkdir -p "$SPEC_DIR" && cp "$TICKET_FILE" "$TICKETS_DIR/$TICKET.sh" "$SPEC_DIR/"
+TICKET_FILE=$SPEC_DIR/$TICKET.md
 # VM disks and the QA agent's folder live outside the repo: the QA agent must not find CLAUDE.md or the source above it.
 QA_ROOT=$FACTORY_VM_HOME/runs/$ID
 BRANCH=$BRANCH_PREFIX$T-build-$STAMP
@@ -130,7 +136,7 @@ add_usd() { SPENT=$(python3 -c "print(round($SPENT + ${1:-0}, 4))"); }
 over() { python3 -c "import sys; sys.exit(0 if $1 > $2 else 1)"; }
 fill() { # fill <template file>: substitutes the @NAME@ placeholders
   sed -e "s|@TICKET@|$TICKET|g" -e "s|@BRANCH@|$BRANCH|g" -e "s|@BASE@|$BASE|g" -e "s|@HANDBACK@|$HANDBACK|g" \
-      -e "s|@GUEST@|$GUEST|g" -e "s|@ACCEPT@|$(echo "$ACCEPT_CMD" | sed 's/[|&\\]/\\&/g')|g" -e "s|@FACTORY@|$FACTORY_DIR_REL|g" \
+      -e "s|@GUEST@|$GUEST|g" -e "s|@ACCEPT@|$(echo "$ACCEPT_CMD" | sed 's/[|&\\]/\\&/g')|g" -e "s|@FACTORY@|$FACTORY_DIR_REL|g" -e "s|@SPEC@|$TICKET_FILE|g" \
       -e "s|@TEMPLATES@|$SKILL_REL/templates|g" -e "s|@VM@|$VM|g" -e "s|@APP@|$APP_NAME|g" \
       -e "s|@GUEST_DESC@|${GUEST_DESC:-}|g" -e "s|@XRES@|$VM_XRES|g" -e "s|@YRES@|$VM_YRES|g" \
       -e "s|@STANDARDS@|${REVIEW_STANDARDS:-none}|g" "$1"
@@ -393,7 +399,7 @@ charter_stage() {
   fill "$SKILL/prompts/charter.txt" | sed "s|@SHA@|$sha|g" > "$RUN/charter-$n.prompt"
   run_claude "charter-$n" "$C_MIN" "$dir" -p "$(cat "$RUN/charter-$n.prompt")" --model "$C_MODEL" \
     --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-charter.md")" \
-    --max-budget-usd "$C_USD" --tools Read Grep Glob Bash --allowedTools "${CHARTER_TOOLS[@]}" \
+    --max-budget-usd "$C_USD" --tools Read Grep Glob Bash --allowedTools "${CHARTER_TOOLS[@]}" --add-dir "$SPEC_DIR" \
     --disallowedTools Edit Write "Read(./handback/**)" --output-format json
   jq -r '.result // ""' "$RUN/charter-$n.json" > "$raw" 2> /dev/null
   grep -E '^[0-9]+\. ' "$raw" | grep -vE "$CODE_RE" > "$RUN/charter-$n.md"
@@ -649,7 +655,8 @@ EOF
 for p in $PROTECTED_PATHS; do
   [ -d "$REPO/$p" ] && p="$p/**"
   printf '"Edit(%s)"\n"Write(%s)"\n' "$p" "$p"
-done | { cat; printf '"%s"\n' "${DENY_BASH[@]}"; } | jq -s '{permissions: {deny: .}}' > "$RUN/builder-settings.json"
+done | { cat; printf '"Edit(/%s/**)"\n"Write(/%s/**)"\n' "$SPEC_DIR" "$SPEC_DIR"; printf '"%s"\n' "${DENY_BASH[@]}"; } \
+  | jq -s '{permissions: {deny: .}}' > "$RUN/builder-settings.json"
 
 builds=0
 reason=""
@@ -696,7 +703,7 @@ while :; do
     mv "$RUN/$name.prompt.tmp" "$RUN/$name.prompt"
   fi
   run_claude "$name" "$B_MIN" "$WT" -p "$(cat "$RUN/$name.prompt")" --model "$B_MODEL" --max-budget-usd "$B_USD" \
-    --permission-mode acceptEdits --settings "$RUN/builder-settings.json" --add-dir "$SKILL/templates" \
+    --permission-mode acceptEdits --settings "$RUN/builder-settings.json" --add-dir "$SKILL/templates" --add-dir "$SPEC_DIR" \
     --allowedTools "${BUILD_TOOLS[@]}" --output-format json
   read -r st _ _ _ <<< "$(fields "$RUN/$name.json")"
   read -r _ _ rc < "$RUN/$name.time"
@@ -730,7 +737,7 @@ while :; do
   rname=review-$builds
   fill "$SKILL/prompts/review.txt" > "$RUN/$rname.prompt"
   run_claude "$rname" "$R_MIN" "$WT" -p "$(cat "$RUN/$rname.prompt")" --model "$R_MODEL" \
-    --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-reviewer.md")" \
+    --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-reviewer.md")" --add-dir "$PROFILE_DIR" --add-dir "$SPEC_DIR" \
     --max-budget-usd "$R_USD" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools Edit Write \
     --output-format json
   jq -r '.result // ""' "$RUN/$rname.json" > "$RUN/$rname.md" 2> /dev/null

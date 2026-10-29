@@ -1,2 +1,2 @@
-Write the exploratory test charter for ticket @TICKET@: the change is `git diff @BASE@ @SHA@ -- . ':!handback'`, and the ticket is @FACTORY@/tickets/@TICKET@.md. The working tree may not be at @SHA@: read a changed file as it is there with `git show @SHA@:<path>`. Edit nothing. Run each command bare: no loops, pipes, `&&` or redirects.
+Write the exploratory test charter for ticket @TICKET@: the change is `git diff @BASE@ @SHA@ -- . ':!handback'`, and the ticket is @SPEC@. The working tree may not be at @SHA@: read a changed file as it is there with `git show @SHA@:<path>`. Edit nothing. Run each command bare: no loops, pipes, `&&` or redirects.
 Answer with the charter in the exact format your instructions give, and nothing else.

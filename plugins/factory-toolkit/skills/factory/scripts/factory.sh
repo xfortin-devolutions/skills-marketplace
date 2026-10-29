@@ -8,8 +8,13 @@
 #   factory.sh judge [run] pass|fail <why>   answer a run that waits for a human; the loop resumes
 #   factory.sh stop [run]                stop the run before its next station
 #   factory.sh down [run]                power off the VMs a run kept (--keep-vm) and remove their worktrees
-#   factory.sh new-profile <name>        start .factory/profiles/<name>/ from the skill's templates (and .factory/ itself)
-#   factory.sh check [profile]           check a profile (default: every profile) against references/profiles.md
+#   factory.sh new-profile <name> [--skill <project>]   start profiles/<name>/ from the skill's templates, in this repo's
+#                                        project (its own .factory/, or the skill's projects/<project>/ that matches it);
+#                                        a repo with no project gets one: .factory/ in the repo, or with --skill, in the skill
+#   factory.sh check [profile]           which project this repo uses, then check a profile (default: every one)
+#   factory.sh which <path>...           the profile whose CODE_PATHS own each repo path (how the spec step picks one)
+#   factory.sh clean <KEY> [--dry-run]   a finished ticket: delete its spec, its run logs and its VM folders; list the
+#                                        worktrees and branches left (removing those stays a human's call)
 #   factory.sh layer <profile> --test|--build   rehearse (throwaway clone) or build and freeze the profile's VM layer
 # [run] is a run id or a prefix of one (devex-528-2026…); default: the newest run.
 set -u
@@ -95,41 +100,105 @@ case "$cmd" in
       git -C "$REPO" fetch -q origin "$PR_BASE" || die "could not fetch origin/$PR_BASE"
       from=origin/$PR_BASE
     fi
-    [ -f "$FACTORY_DIR/profiles/$prof/profile.sh" ] || die "no profile '$prof' (factory.sh start <KEY> <profile>)"
-    prefix=$(TICKET=$key; . "$FACTORY_DIR/profiles/$prof/profile.sh" > /dev/null 2>&1; echo "${BRANCH_PREFIX:-}")
+    [ -n "$PROJECT_DIR" ] || die "no project for this repo (factory.sh new-profile)"
+    [ -f "$PROJECT_DIR/profiles/$prof/profile.sh" ] || die "no profile '$prof' in $PROJECT_FROM (factory.sh start <KEY> <profile>)"
+    prefix=$(TICKET=$key PROFILE_DIR=$PROJECT_DIR/profiles/$prof; . "$PROFILE_DIR/profile.sh" > /dev/null 2>&1; echo "${BRANCH_PREFIX:-}")
     k=$(echo "$key" | tr '[:upper:]' '[:lower:]')
     branch=$prefix$k wt=$MAIN_REPO/.claude/worktrees/$k
     git -C "$REPO" worktree add -q --no-track -b "$branch" "$wt" "$from" || die "could not create $branch at ${wt#$MAIN_REPO/}"
-    [ -d "$wt/$FACTORY_DIR_REL" ] || echo "note: $from has no $FACTORY_DIR_REL: the loop can't run there until the factory is in it (--from <factory branch>)"
+    [ "$PROJECT_DIR" != "$FACTORY_DIR" ] || [ -d "$wt/$FACTORY_DIR_REL/profiles" ] \
+      || echo "note: $from has no $FACTORY_DIR_REL/profiles: the loop can't run there until the project is in it (--from <branch that has it>)"
     echo "ticket $key: branch $branch from $from @ $(git -C "$wt" rev-parse --short HEAD), worktree ${wt#$MAIN_REPO/}"
-    echo "write the spec, its oracle and its prerequisites there, and run the loop from there (each run cuts its own branch from it)" ;;
+    echo "profile: $prof$([ "$prof" = "${DEFAULT_PROFILE:-}" ] && echo " (the default: check it with factory.sh which <code paths>)")"
+    echo "spec: $TICKETS_DIR/$key.md and $key.sh (this machine's, never committed)"
+    echo "write the oracle and its prerequisites in the worktree, and run the loop from there (each run cuts its own branch from it)" ;;
   new-profile)
-    name=${1:-}
-    case "$name" in ''|*[!a-z0-9-]*) die "usage: factory.sh new-profile <name> (lowercase letters, digits, dashes)" ;; esac
-    dest=$FACTORY_DIR/profiles/$name
-    [ -e "$dest" ] && die "$FACTORY_DIR_REL/profiles/$name already exists"
-    if [ ! -f "$FACTORY_DIR/config.sh" ]; then
-      mkdir -p "$FACTORY_DIR/tickets"
-      sed "s/@PROFILE@/$name/g" "$X/../templates/factory-config.sh" > "$FACTORY_DIR/config.sh"
-      echo "created $FACTORY_DIR_REL/config.sh (team defaults; DEFAULT_PROFILE=$name)"
+    name=${1:-} proj=""
+    [ "${2:-}" = --skill ] && proj=${3:-}
+    case "$name" in ''|*[!a-z0-9-]*) die "usage: factory.sh new-profile <name> [--skill <project>] (lowercase letters, digits, dashes)" ;; esac
+    if [ -z "$PROJECT_DIR" ]; then
+      # A new project: in the repo (.factory/), or, while the repo shouldn't carry it yet, in the skill.
+      if [ -n "$proj" ]; then
+        case "$proj" in *[!a-z0-9-]*) die "--skill <project>: lowercase letters, digits, dashes" ;; esac
+        PROJECT_DIR=$SKILL_DIR/projects/$proj
+        origin=$(git -C "$REPO" remote get-url origin 2> /dev/null) || die "the repo has no origin remote to match"
+        match="[:/]$(echo "$origin" | sed -E 's#^.*[:/]([^/:]+/[^/]+)$#\1#; s#\.git$##')(\\.git)?\$"
+      else
+        PROJECT_DIR=$FACTORY_DIR
+      fi
+      mkdir -p "$PROJECT_DIR"
+      sed "s/@PROFILE@/$name/g" "$X/../templates/factory-config.sh" > "$PROJECT_DIR/config.sh"
+      [ -n "$proj" ] && printf '\n# Which repo this project is for: an ERE on its origin remote URL.\nREPO_MATCH=%s\n' "'$match'" >> "$PROJECT_DIR/config.sh"
+      echo "created $PROJECT_DIR/config.sh (team defaults; DEFAULT_PROFILE=$name)"
     fi
+    dest=$PROJECT_DIR/profiles/$name
+    [ -e "$dest" ] && die "$dest already exists"
     mkdir -p "$dest"
     cp -R "$X/../templates/profile/" "$dest/"
     find "$dest" -type f -exec sed -i '' "s/@PROFILE@/$name/g" {} +
-    echo "created $FACTORY_DIR_REL/profiles/$name: fill every TODO, then factory.sh check $name"
-    find "$dest" -type f | sed "s|^$REPO/|  |" ;;
+    echo "created $dest: fill every TODO, then factory.sh check $name"
+    find "$dest" -type f | sed "s|^$PROJECT_DIR/|  |" ;;
   check)
     n=0 bad=0
-    for d in "$FACTORY_DIR"/profiles/${1:-*}/; do
-      [ -d "$d" ] || die "no profile '${1:-}' in $FACTORY_DIR_REL/profiles"
-      "$X/lib/check-profile.sh" "$REPO" "$FACTORY_DIR" "$(basename "$d")" || bad=$((bad + 1))
+    [ -n "$PROJECT_DIR" ] || die "no project for this repo: no $FACTORY_DIR_REL/profiles, and no skill projects/*/config.sh whose REPO_MATCH matches its origin (factory.sh new-profile)"
+    echo "project: $PROJECT_FROM"
+    for d in "$PROJECT_DIR"/profiles/${1:-*}/; do
+      [ -d "$d" ] || die "no profile '${1:-}' in $PROJECT_DIR/profiles"
+      "$X/lib/check-profile.sh" "$REPO" "$TICKETS_DIR" "$PROJECT_DIR" "$(basename "$d")" || bad=$((bad + 1))
       n=$((n + 1))
     done
     [ "$bad" -eq 0 ] && echo "$n profile(s) OK" || { echo "$bad of $n profile(s) need work"; exit 1; } ;;
   layer)
     name=${1:-}; mode=${2:-}
     [ -n "$name" ] && [ "$mode" = --test -o "$mode" = --build ] || die "usage: factory.sh layer <profile> --test|--build"
-    [ -f "$FACTORY_DIR/profiles/$name/layer/layer.conf" ] || die "profile $name has no layer/layer.conf"
-    FACTORY_VM_HOME=$FACTORY_VM_ROOT/windows exec "$X/vm/golden/layer-build.sh" "$FACTORY_DIR/profiles/$name/layer" "$mode" ;;
-  *) sed -n '2,13p' "$0"; exit 2 ;;
+    [ -f "$PROJECT_DIR/profiles/$name/layer/layer.conf" ] || die "profile $name has no layer/layer.conf"
+    FACTORY_VM_HOME=$FACTORY_VM_ROOT/windows exec "$X/vm/golden/layer-build.sh" "$PROJECT_DIR/profiles/$name/layer" "$mode" ;;
+  which)
+    [ -n "$PROJECT_DIR" ] || die "no project for this repo (factory.sh new-profile)"
+    [ $# -gt 0 ] || die "usage: factory.sh which <repo path>..."
+    found=""
+    for path in "$@"; do
+      path=${path#$REPO/} best="" blen=0
+      for d in "$PROJECT_DIR"/profiles/*/; do
+        cps=$(TICKET=X PROFILE_DIR=${d%/} CODE_PATHS=""; . "${d}profile.sh" > /dev/null 2>&1; echo "$CODE_PATHS")
+        for c in $cps; do
+          case "$path" in "$c"*) [ ${#c} -gt $blen ] && best=$(basename "$d") blen=${#c} ;; esac
+        done
+      done
+      echo "$path: ${best:-no profile}"
+      found="$found ${best:-none}"
+    done
+    found=$(echo $found | tr ' ' '\n' | sort -u | tr '\n' ' ')
+    case "$found" in
+      "none ") echo "-> no profile covers this code: set one up first (the skill's profile steps), in $PROJECT_FROM" ;;
+      *none*) echo "-> part of it has no profile: the profile is the product whose app shows the change; ask if unsure" ;;
+      *" "?*" ") echo "-> several products ($found): the profile is the one whose app shows the change; ask if the ticket doesn't say" ;;
+      *) echo "-> profile: $found" ;;
+    esac ;;
+  clean)
+    key=${1:-}; [ -n "$key" ] || die "usage: factory.sh clean <KEY> [--dry-run]"
+    dry=no; [ "${2:-}" = --dry-run ] && dry=yes
+    k=$(echo "$key" | tr '[:upper:]' '[:lower:]')
+    gone="" busy=""
+    for d in "$TICKETS_DIR/$key.md" "$TICKETS_DIR/$key.sh" "$RUNS/$k"-*; do
+      [ -e "$d" ] || continue
+      if [ -d "$d" ]; then
+        [ -n "$(live_vm "$d")" ] || [ -e "$d/WAITING-FOR-HUMAN" ] && { busy="$busy $(basename "$d")"; continue; }
+        for v in "$FACTORY_VM_ROOT"/*/runs/"$(basename "$d")"; do [ -d "$v" ] && gone="$gone $v"; done
+      fi
+      gone="$gone $d"
+    done
+    [ -z "$busy" ] || echo "kept (a VM is live or it waits for a human; factory.sh down / stop first):$busy"
+    if [ -z "$gone" ]; then echo "nothing to delete for $key"
+    else
+      du -shc $gone 2> /dev/null | tail -1 | sed "s/total/to delete for $key/"
+      for d in $gone; do echo "  ${d#$HOME/}"; done
+      [ "$dry" = yes ] || { rm -rf $gone; echo "deleted"; }
+    fi
+    git -C "$REPO" worktree prune
+    wts=$(git -C "$REPO" worktree list | grep -i -- "$k" | awk '{print "  " $1 "  " $3}')
+    brs=$(git -C "$REPO" branch --list "*$k*" | sed 's/^[*+ ] */  /')
+    [ -z "$wts$brs" ] || printf 'left for you to remove (git worktree remove / git branch -D):\n%s%s\n' "${wts:+$wts
+}" "$brs" ;;
+  *) sed -n '2,18p' "$0"; exit 2 ;;
 esac
