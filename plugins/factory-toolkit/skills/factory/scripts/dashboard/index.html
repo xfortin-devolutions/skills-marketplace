@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory runs</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --line: #e2e5ea; --text: #1d2330; --muted: #667085; --accent: #3a6df0;
+    --good: #1f8a4c; --good-bg: #e7f6ed; --bad: #c43d3d; --bad-bg: #fbeaea; --warn: #b26b00; --warn-bg: #fdf3e1;
+    --run: #3a6df0; --run-bg: #e8effe; --neutral-bg: #f0f2f5; --code-bg: #f3f4f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1e26; --line: #2a303b; --text: #e6e9ef; --muted: #98a2b3; --accent: #7aa2ff;
+      --good: #4cc282; --good-bg: #16301f; --bad: #ff7b7b; --bad-bg: #3a1c1c; --warn: #f0b04a; --warn-bg: #3a2c12;
+      --run: #7aa2ff; --run-bg: #1c2a4a; --neutral-bg: #232833; --code-bg: #0f1217;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; }
+  header .muted { margin-left: auto; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .layout { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 45px); }
+  aside { border-right: 1px solid var(--line); overflow-y: auto; background: var(--panel); }
+  main { overflow-y: auto; padding: 16px; }
+  .run { padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .run:hover { background: var(--neutral-bg); }
+  .run.sel { background: var(--run-bg); }
+  .run .top { display: flex; align-items: center; gap: 8px; }
+  .run .status { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .badge { font-size: 11px; padding: 1px 6px; border-radius: 9px; background: var(--neutral-bg); color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
+  .dot.running { background: var(--run); animation: pulse 1.4s infinite; }
+  .dot.waiting { background: var(--warn); animation: pulse 1s infinite; }
+  .dot.done { background: var(--good); }
+  .dot.dead, .dot.stale { background: var(--bad); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  .runhead h2 { margin: 0 0 4px; font-size: 18px; }
+  .banner { background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 8px 12px; margin-top: 8px; font-weight: 600; }
+  .round { display: flex; align-items: stretch; gap: 0; margin: 8px 0; flex-wrap: wrap; row-gap: 8px; }
+  .round .label { width: 64px; flex: none; color: var(--muted); font-size: 12px; padding-top: 10px; }
+  .node { width: 170px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: pointer; background: var(--neutral-bg); position: relative; }
+  .node:hover { border-color: var(--accent); }
+  .node.sel { outline: 2px solid var(--accent); }
+  .node .t { font-weight: 600; font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .node .o { font-size: 12px; color: var(--muted); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .node .m { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .node.good { background: var(--good-bg); border-color: color-mix(in srgb, var(--good) 35%, transparent); }
+  .node.bad { background: var(--bad-bg); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .node.warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+  .node.running, .node.preparing { background: var(--run-bg); border-color: var(--run); }
+  .arrow { width: 18px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 10px 0; flex-wrap: wrap; }
+  .tab { padding: 6px 10px; cursor: pointer; border-radius: 6px 6px 0 0; color: var(--muted); }
+  .tab.on { color: var(--text); background: var(--neutral-bg); font-weight: 600; }
+  pre { background: var(--code-bg); border-radius: 6px; padding: 10px; overflow: auto; max-height: 480px; white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; }
+  .steps { list-style: none; padding: 0; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .steps li { padding: 4px 8px; border-left: 3px solid var(--line); margin-bottom: 3px; background: var(--code-bg); border-radius: 0 4px 4px 0; white-space: pre-wrap; word-break: break-word; }
+  .steps li.text { border-left-color: var(--accent); font-family: inherit; }
+  .steps li:last-child { border-left-color: var(--run); }
+  .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .shots figure { margin: 0; cursor: zoom-in; }
+  .shots img { width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
+  .shots figcaption { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .zoom { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: flex; align-items: center; justify-content: center; z-index: 9; cursor: zoom-out; }
+  .zoom img { max-width: 96vw; max-height: 94vh; border-radius: 6px; }
+  .events div { font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); }
+  .events b { color: var(--text); font-weight: 500; }
+  a { color: var(--accent); }
+  .empty { color: var(--muted); padding: 40px; text-align: center; }
+  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; height: auto; } aside { max-height: 40vh; } }
+</style>
+</head>
+<body>
+<header><h1>Factory runs</h1><span class="badge">local · read-only</span><span class="muted" id="clock"></span></header>
+<div class="layout">
+  <aside id="runs"></aside>
+  <main id="main"><div class="empty">Pick a run.</div></main>
+</div>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const state = { run: null, node: null, tab: null, runData: null };
+const ago = t => { if (!t) return ""; const s = (Date.now() - Date.parse(t)) / 1000;
+  return s < 60 ? `${Math.round(s)} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
+const elapsed = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000;
+  return s < 3600 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`; };
+
+function readHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  state.run = h.get("run"); state.node = h.get("node"); state.tab = h.get("tab");
+}
+function writeHash() {
+  const h = new URLSearchParams();
+  if (state.run) h.set("run", state.run);
+  if (state.node) h.set("node", state.node);
+  if (state.tab) h.set("tab", state.tab);
+  history.replaceState(null, "", "#" + h.toString());
+}
+async function get(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(r.status); return r.json(); }
+
+async function loadRuns() {
+  const runs = await get("/api/runs");
+  $("#runs").innerHTML = runs.map(r => `
+    <div class="run ${r.id === state.run ? "sel" : ""}" data-id="${esc(r.id)}">
+      <div class="top"><span class="dot ${r.state}"></span><b>${esc(r.ticket)}</b><span class="badge">${esc(r.kind)}</span>
+        <span class="muted" style="margin-left:auto">${r.spent ? "$" + r.spent.toFixed(2) : ""}</span></div>
+      <div class="status" title="${esc(r.status)}">${esc(r.status)}</div>
+      <div class="muted">${esc(r.state)} · ${ago(r.updated)}</div>
+    </div>`).join("") || `<div class="empty">No runs yet.</div>`;
+  for (const el of document.querySelectorAll(".run")) el.onclick = () => { state.run = el.dataset.id; state.node = null; state.tab = null; state.lastRun = null; writeHash(); refresh(); };
+  if (!state.run && runs.length) { state.run = runs[0].id; writeHash(); }
+}
+
+function nodeHtml(n) {
+  const cls = n.state === "done" ? n.cls : n.state;
+  const icon = n.state === "running" || n.state === "preparing" ? '<span class="dot running"></span>' : "";
+  const meta = [n.minutes ? `${n.minutes} min` : "", n.cost ? `$${Number(n.cost).toFixed(2)}` : ""].filter(Boolean).join(" · ");
+  return `<div class="node ${cls} ${n.key === state.node ? "sel" : ""}" data-key="${esc(n.key)}">
+    <div class="t">${icon}${esc(n.title)}</div><div class="o" title="${esc(n.outcome)}">${esc(n.outcome)}</div>
+    ${meta ? `<div class="m">${meta}</div>` : ""}</div>`;
+}
+
+async function loadRun() {
+  if (!state.run) return;
+  const r = state.runData = await get(`/api/run/${encodeURIComponent(state.run)}`);
+  const rounds = {};
+  for (const n of r.nodes) (rounds[n.round] = rounds[n.round] || []).push(n);
+  const pipeline = Object.keys(rounds).sort((a, b) => a - b).map(k => `
+    <div class="round"><div class="label">${r.kind === "loop" ? "Round " + k : ""}</div>
+      ${rounds[k].map(nodeHtml).join('<div class="arrow">→</div>')}</div>`).join("") || `<div class="muted">Nothing has started yet.</div>`;
+  const live = r.state === "running" || r.state === "waiting";
+  let html = `<div class="card runhead">
+      <h2><span class="dot ${r.state}" style="display:inline-block"></span> ${esc(r.ticket)} <span class="badge">${esc(r.kind)}</span></h2>
+      <div class="muted">${esc(r.id)} · started ${ago(r.started)} · ${live ? "running for " + elapsed(r.started) : "took " + elapsed(r.started, r.updated)} · spent $${r.spent.toFixed(2)}</div>
+      <div style="margin-top:6px">${esc(r.status)}</div>
+      ${r.header ? `<div class="muted" style="margin-top:4px">${esc(r.header)}</div>` : ""}
+      ${r.state === "waiting" ? `<div class="banner">Waiting for a human: factory.sh show ${esc(r.id)}, then factory.sh judge ${esc(r.id)} pass|fail &lt;why&gt;</div>` : ""}
+    </div>
+    <div class="card"><b>Pipeline</b>${pipeline}</div>
+    <div class="card" id="detail">${state.node ? '<div class="muted">Loading…</div>' : '<div class="muted">Click a station for its details.</div>'}</div>`;
+  if (r.handback) html += `<div class="card"><b>Hand-back</b><pre style="margin-top:8px">${esc(r.handback)}</pre></div>`;
+  html += `<div class="card events"><b>Last events</b><div style="margin-top:6px">${r.events.slice().reverse().map(e => `<div><b>${esc(e.t.slice(11, 19))}</b> ${esc(e.msg)}</div>`).join("")}</div></div>`;
+  if (html !== state.lastRun || !$("#detail")) { $("#main").innerHTML = html; state.lastRun = html; state.lastNode = null; }
+  for (const el of document.querySelectorAll(".node")) el.onclick = () => { state.node = el.dataset.key; state.tab = null; state.lastRun = null; writeHash(); loadRun(); };
+  if (state.node) await loadNode();
+}
+
+async function loadNode() {
+  const box = $("#detail");
+  if (!box || !state.node) return;
+  const d = await get(`/api/run/${encodeURIComponent(state.run)}/node/${encodeURIComponent(state.node)}`);
+  const n = (state.runData?.nodes || []).find(x => x.key === state.node) || { title: state.node };
+  const tabs = [];
+  if (d.steps && d.steps.length) tabs.push(["activity", `Activity (${d.steps.length})`]);
+  if (d.changes) tabs.push(["changes", "Changes"]);
+  if (d.report) tabs.push(["report", "Report"]);
+  if (d.shots && d.shots.length) tabs.push(["shots", `Screenshots (${d.shots.length})`]);
+  if (d.result) tabs.push(["result", "Answer"]);
+  if (d.output) tabs.push(["output", "Output"]);
+  if (d.prompt) tabs.push(["prompt", "Prompt"]);
+  if (d.stderr && d.stderr.trim()) tabs.push(["stderr", "Stderr"]);
+  if (d.files && d.files.length) tabs.push(["files", "Files"]);
+  const running = n.state === "running" || n.state === "preparing";
+  if (!state.tab || !tabs.some(t => t[0] === state.tab)) state.tab = running && tabs.some(t => t[0] === "activity") ? "activity" : running && d.changes ? "changes" : tabs[0]?.[0];
+  const body = {
+    activity: () => `<ul class="steps">${d.steps.map(s => `<li class="${s.kind}">${esc(s.text)}</li>`).join("")}</ul>
+      ${d.live ? `<div class="muted" style="margin-top:6px">${d.live.turns} turns${d.live.cost != null ? " · $" + d.live.cost.toFixed(2) : ""}</div>` : ""}`,
+    report: () => `<pre>${esc(d.report)}</pre>`,
+    changes: () => `<pre>${esc(d.changes)}</pre>`,
+    shots: () => `<div class="shots">${d.shots.slice().reverse().map(u => `<figure data-src="${esc(u)}"><img loading="lazy" src="${esc(u)}"><figcaption>${esc(u.split("/").pop())}</figcaption></figure>`).join("")}</div>`,
+    result: () => `<pre>${esc(d.result)}</pre>`,
+    output: () => `<pre>${esc(d.output)}</pre>`,
+    prompt: () => `<pre>${esc(d.prompt)}</pre>`,
+    stderr: () => `<pre>${esc(d.stderr)}</pre>`,
+    files: () => d.files.map(f => `<div><a href="${esc(f)}" target="_blank">${esc(f.split("/").slice(4).join("/"))}</a></div>`).join(""),
+  };
+  const waitingText = running ? (d.steps ? "Working… (no steps yet)" : "Working… (this run predates live steps: details appear when the station ends)") : "No details recorded.";
+  const nodeHtml2 = `<b>${esc(n.title)}</b> <span class="muted">${esc(state.node)} · ${esc(n.state || "")}</span>
+    ${n.outcome ? `<div style="margin-top:4px">${esc(n.outcome)}</div>` : ""}
+    ${tabs.length ? `<div class="tabs">${tabs.map(([k, l]) => `<div class="tab ${k === state.tab ? "on" : ""}" data-tab="${k}">${l}</div>`).join("")}</div>${body[state.tab]()}` : `<div class="muted" style="margin-top:8px">${waitingText}</div>`}`;
+  if (nodeHtml2 === state.lastNode) return;
+  state.lastNode = nodeHtml2;
+  box.innerHTML = nodeHtml2;
+  for (const el of box.querySelectorAll(".tab")) el.onclick = () => { state.tab = el.dataset.tab; state.lastNode = null; writeHash(); loadNode(); };
+  for (const el of box.querySelectorAll("figure")) el.onclick = () => {
+    const z = document.createElement("div"); z.className = "zoom"; z.innerHTML = `<img src="${el.dataset.src}">`; z.onclick = () => z.remove(); document.body.append(z); };
+  if (state.tab === "activity") { const ul = $(".steps", box); if (ul) ul.lastElementChild?.scrollIntoView({ block: "nearest" }); }
+}
+
+async function refresh() {
+  try { await loadRuns(); await loadRun(); $("#clock").textContent = "updated " + new Date().toLocaleTimeString(); }
+  catch (e) { $("#clock").textContent = "server not answering (" + e.message + ")"; }
+}
+readHash();
+refresh();
+setInterval(() => { if (!document.querySelector(".zoom")) refresh(); }, 4000);
+</script>
+</body>
+</html>

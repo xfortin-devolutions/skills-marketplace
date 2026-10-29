@@ -58,7 +58,8 @@ The agents' system prompts, in this skill's `agents/`: `factory-reviewer.md`, `f
 | "make DEVEX-123 agent-ready", "spec it", a Jira key with no ticket file yet | **spec** |
 | "run the loop / factory on DEVEX-123" | **run** (needs an approved spec) |
 | "test DEVEX-123 in a VM", "is the runtime check red on base?" | **qa** |
-| "how is the run going?", "what happened?" | **status** |
+| "how is the run going?", "what happened?" | **status**, and offer the **dashboard** |
+| "show me the dashboard", "where are we at?" | **dashboard** |
 | "show me the VM", "let me see it", "I want to take over" | **show** (+ **human**) |
 | "it's fine / it's broken" while a run waits | **judge** |
 | "stop it" | **stop** |
@@ -129,6 +130,15 @@ The QA stage alone, on a commit: `bash $F/run-loop.sh <KEY> --qa-only <ref>` (ba
 (spec step 5), to re-test a branch, or to answer a judge's "does it really work?". It needs no builder and spends only
 the QA budget. `--explore` adds the exploratory QA after a PASS, for the change `<base>..<ref>` (`--base`, default the
 merge-base with `PR_BASE`, or `<ref>~1` when `<ref>` is already on it); its section is `qa-1/exploratory.md` in the run.
+
+## dashboard
+
+`bash $F/factory.sh dashboard` (Bash tool with `run_in_background`: it serves until stopped) opens a live, read-only page
+on `127.0.0.1` in the browser: every run with its state and spend; per run, a pipeline of its stations round by round
+(builder, verify, reviewer, charter, runtime QA, exploratory QA, re-check), each with its outcome, time and cost; a
+station's details on click: the agent's live steps (what it reads, runs, edits), the builder's changes in its worktree,
+the QA report and screenshots (live, as the agent takes them), the answer, the prompt and stderr. Nothing leaves the Mac.
+Offer it when a run starts, and whenever the user asks how things are going. `--port N`, `--no-open`.
 
 ## status [run] · show [run] · human [run] · judge [run] pass|fail <why> · stop [run] · down [run]
 

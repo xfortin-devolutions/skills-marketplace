@@ -127,6 +127,8 @@ BUILD_VM_UP=no X_STATUS="" X_FINDINGS="" X_NEW="" X_LINES="" RC_STATUS="not need
 CHARTER_TOOLS=("${REVIEW_TOOLS[@]}")
 
 ev() { echo "$(date -u +%FT%TZ) $*" | tee -a "$EV"; }
+# The runner's PID: the dashboard tells a live run from one that died without its end line.
+echo $$ > "$RUN/runner.pid"
 # A host sleep freezes the VMs and every station waits on them (GAPS V43): keep the Mac awake while this runner lives.
 # -s only holds on AC power; a lid closed on battery still sleeps the Mac, so say so up front.
 caffeinate -ims -w $$ 2> /dev/null &
@@ -146,13 +148,20 @@ section() { # section <file> <heading>: the body of one "## <heading>" section
 }
 
 # run_claude <name> <minutes> <dir> <claude args...>: one headless run in <dir>, time-boxed; writes <name>.json.
+# The session streams its steps to <name>.jsonl as it works (what the dashboard shows live); <name>.json is its final
+# result line, the same object --output-format json gives, so everything that reads it is unchanged.
 run_claude() {
   local name=$1 mins=$2 dir=$3; shift 3
-  local t0 t1 rc
+  local t0 t1 rc a args=() prev=""
+  for a in "$@"; do
+    [ "$prev" = --output-format ] && a=stream-json
+    args+=("$a"); prev=$a
+  done
   t0=$(date +%s)
   ev "start $name (time box $mins min)"
-  ( cd "$dir" && timebox $((mins * 60)) claude "$@" > "$RUN/$name.json" 2> "$RUN/$name.err" < /dev/null )
+  ( cd "$dir" && timebox $((mins * 60)) claude "${args[@]}" --verbose > "$RUN/$name.jsonl" 2> "$RUN/$name.err" < /dev/null )
   rc=$?
+  jq -c 'select(.type == "result")' "$RUN/$name.jsonl" 2> /dev/null | tail -1 > "$RUN/$name.json"
   t1=$(date +%s)
   echo "$t0 $t1 $rc" > "$RUN/$name.time"
   ev "end $name exit=$rc after $((t1 - t0)) s"
