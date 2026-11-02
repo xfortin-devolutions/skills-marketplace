@@ -319,11 +319,11 @@ negative_run() {
     return
   fi
   ev "negative run: $ACCEPT_TEST on the base $BASE" > /dev/null
-  git -C "$WT" switch -q --detach "$BASE" 2>> "$1" || { NEG="error: could not switch the worktree to the base $BASE"; return; }
+  wtgit switch -q --detach "$BASE" 2>> "$1" || { NEG="error: could not switch the worktree to the base $BASE"; return; }
   $ACCEPT_CMD > "$1.last" 2>&1
   rc=$?
   { echo "== negative run on $BASE: exit $rc"; cat "$1.last"; } >> "$1"
-  git -C "$WT" switch -q "$BRANCH" 2>> "$1" || { NEG="error: could not switch the worktree back to $BRANCH"; return; }
+  wtgit switch -q "$BRANCH" 2>> "$1" || { NEG="error: could not switch the worktree back to $BRANCH"; return; }
   NEG_OUT=$(grep -E '^ *Failed |Passed!|Failed!|EXIT CODE' "$1.last" | head -12)
   case $rc in
     1) NEG="expected fail: accept fails without the change: $(counts "$1.last")"
@@ -378,8 +378,8 @@ except OSError:
     sys.exit(0)
 open(p, "w").write(re.sub(r"^- Verification record: .*$", lambda m: "- Verification record: " + line, hb, count=1, flags=re.M))
 PY
-  git -C "$WT" add "$HANDBACK"
-  git -C "$WT" commit -q -m "handback: $TICKET verification record"
+  wtgit add "$HANDBACK"
+  wtgit commit -q -m "handback: $TICKET verification record"
 }
 
 # ensure_handback <name>: what a builder stopped early (time box, budget) left undone and the runner can do for it, so
@@ -403,7 +403,7 @@ PY
     ev "$1 wrote no hand-back: the runner started one from the template"
   fi
   if [ -n "$(git -C "$WT" status --porcelain -- "$HANDBACK")" ]; then
-    git -C "$WT" add "$HANDBACK" && git -C "$WT" commit -q -m "handback: $TICKET builder sections (committed by the runner)"
+    wtgit add "$HANDBACK" && wtgit commit -q -m "handback: $TICKET builder sections (committed by the runner)"
   fi
   return 0
 }
@@ -439,6 +439,22 @@ git_settle() {
   rm -f "$lock" && ev "removed a stale git index.lock in ${WT#$REPO/} (left by a killed git)"
 }
 
+# wtgit <git args>: git in the worktree, waiting out another process's index.lock instead of failing on it. Builder
+# sessions load the user's plugins, whose hooks can still run git in the worktree after the session exits.
+wtgit() {
+  local i rc err
+  err=$(mktemp)
+  for i in 1 2 3; do
+    git -C "$WT" "$@" 2> "$err"
+    rc=$?
+    [ "$rc" -ne 0 ] && grep -q 'index\.lock' "$err" || break
+    git_settle > /dev/null
+  done
+  cat "$err" >&2
+  rm -f "$err"
+  return "$rc"
+}
+
 dot_docs() { # dot_docs: the DOC_PATHS under .claude/, one a line: the builder stages those, the runner applies them
   local d
   for d in $DOC_PATHS; do case "$d" in .claude/*) echo "$d" ;; esac; done
@@ -455,10 +471,10 @@ apply_docs() {
     for d in $(dot_docs); do case "$rel" in "$d"*) ok=yes ;; esac; done
     case "$rel" in *..*) ok="" ;; esac
     [ -n "$ok" ] || { ev "staged doc $rel is not under DOC_PATHS ($(echo $(dot_docs))): ignored"; continue; }
-    mkdir -p "$(dirname "$WT/$rel")" && cp "$f" "$WT/$rel" && git -C "$WT" add -- "$rel"
+    mkdir -p "$(dirname "$WT/$rel")" && cp "$f" "$WT/$rel" && wtgit add -- "$rel"
   done < <(find "$st" -type f)
   git -C "$WT" diff --cached --quiet && return 0
-  git -C "$WT" commit -q -m "$TICKET: Updated the docs the builder staged under $HANDBACK/docs" \
+  wtgit commit -q -m "$TICKET: Updated the docs the builder staged under $HANDBACK/docs" \
     && ev "applied the builder's staged docs: $(echo $(git -C "$WT" diff --name-only HEAD~1 HEAD))"
 }
 
@@ -831,8 +847,8 @@ write_qa() {
     printf -- '- Explorer: not run in round %s: the runtime QA verdict was not PASS\n- Findings: none\n- Base re-check: not needed\n- Tour for the judge: none\n' "$n" > "$RUN/qa-$n/explore-section.md"
     write_section "Exploratory QA" "$RUN/qa-$n/explore-section.md"
   fi
-  git -C "$WT" add "$HANDBACK"
-  git -C "$WT" commit -q -m "handback: $TICKET runtime check $n"
+  wtgit add "$HANDBACK"
+  wtgit commit -q -m "handback: $TICKET runtime check $n"
 }
 
 finish() {
@@ -924,7 +940,7 @@ elif [ -n "$RESUME" ]; then
   # The judge's send back: the ticket branch (its updated spec) merges in, the Decision goes in the Judge section, and
   # rounds go on from the last one so qa-<n> folders don't collide. The caps count this run's rounds only.
   ev "loop resume: $TICKET on $BRANCH (worktree ${WT#$REPO/}), merging $BASE; judge: $JUDGE_REASON"
-  git -C "$WT" merge -q --no-edit "$BASE" || { git -C "$WT" merge --abort; echo "merging $BASE into $BRANCH conflicts" >&2; exit 1; }
+  wtgit merge -q --no-edit "$BASE" || { wtgit merge --abort; echo "merging $BASE into $BRANCH conflicts" >&2; exit 1; }
   [ "$CONTINUE" = yes ] || python3 - "$WT/$HANDBACK/hand-back.md" "$JUDGE_REASON, $(git config user.name), $(date +%F)" <<'PY'
 import re, sys
 p, why = sys.argv[1], sys.argv[2]
@@ -932,7 +948,7 @@ hb = open(p).read()
 hb = re.sub(r"^Decision: .*$", lambda m: "Decision: send back: " + why, hb, count=1, flags=re.M)
 open(p, "w").write(hb)
 PY
-  [ "$CONTINUE" = yes ] || git -C "$WT" commit -q -am "handback: $TICKET judge sent back"
+  [ "$CONTINUE" = yes ] || wtgit commit -q -am "handback: $TICKET judge sent back"
   builds=$(ls -d "$WT/$HANDBACK"/qa-* 2> /dev/null | sed 's/.*qa-//' | sort -n | tail -1)
   builds=${builds:-0}
   reason="the human judge sent it back: $JUDGE_REASON. The ticket's spec was updated for it (merged into this branch)."
@@ -979,7 +995,7 @@ while :; do
     # next round would see an empty branch. Going back to the branch loses nothing it committed.
     if [ "$(git -C "$WT" symbolic-ref -q --short HEAD)" != "$BRANCH" ]; then
       ev "$name left the worktree off $BRANCH ($(git -C "$WT" rev-parse --short HEAD)): switching back"
-      git -C "$WT" switch -q "$BRANCH" 2>> "$EV" || ev "could not switch $WT back to $BRANCH"
+      wtgit switch -q "$BRANCH" 2>> "$EV" || ev "could not switch $WT back to $BRANCH"
     fi
     # A builder stopped by its time box after its code commit is not a failed round: the runner commits what it left
     # and verifies the commit like any other.
@@ -1031,8 +1047,8 @@ while :; do
     fi
     { grep '^- ' "$RUN/$rname.md"; echo "- Written back to the harness: none"; } > "$RUN/$rname.section.md"
     write_section "Review (reviewer)" "$RUN/$rname.section.md"
-    git -C "$WT" add "$HANDBACK/hand-back.md"
-    git -C "$WT" commit -q -m "handback: $TICKET review"
+    wtgit add "$HANDBACK/hand-back.md"
+    wtgit commit -q -m "handback: $TICKET review"
     row "$builds" reviewer "$rname" "Recommend: $rec"
     ev "$rname recommend='$rec' spent=\$$SPENT"
     case "$rec" in

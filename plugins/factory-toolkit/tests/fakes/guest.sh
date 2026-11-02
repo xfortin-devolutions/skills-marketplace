@@ -2,6 +2,7 @@
 # Fake guest tool for tests/run-loop.test.sh: "builds" and "tests" the shared worktree by looking at it.
 #   build: fails when <worktree>/BROKEN exists. test Accept.Tests: passes when src/feature.txt holds "done" (or always,
 #   with $FAKE_STATE/accept-always-passes). Flaky.Tests fails its first run, Broken.Tests always fails.
+#   With $FAKE_STATE/lock-on-test, the first test run holds the worktree's index.lock for 4 s.
 D=$1 CMD=$2; shift 2
 . "$D/guest.conf"
 echo "$CMD $*" >> "$FAKE_STATE/guest.log"
@@ -12,6 +13,11 @@ case "$CMD" in
          echo "    0 Error(s)"; echo "BUILD EXIT CODE: 0"; exit 0 ;;
   test)
     k=$(($(cat "$FAKE_STATE/test-$1.n" 2> /dev/null || echo 0) + 1)); echo "$k" > "$FAKE_STATE/test-$1.n"
+    # Another process (a plugin hook) holding the worktree's index.lock for a few seconds, on the first test run.
+    if [ -e "$FAKE_STATE/lock-on-test" ] && [ "$k" = 1 ]; then
+      l=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-path index.lock)
+      touch "$l"; ( sleep 4; rm -f "$l" ) > /dev/null 2>&1 &
+    fi
     case "$1" in
       Accept.Tests) { grep -q '^done' "$WORKTREE/src/feature.txt" 2> /dev/null || [ -e "$FAKE_STATE/accept-always-passes" ]; } && pass "$1" || fail "$1" ;;
       Flaky.Tests) [ "$k" -gt 1 ] && pass "$1" || fail "$1" ;;
