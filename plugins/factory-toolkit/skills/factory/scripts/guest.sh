@@ -2,7 +2,8 @@
 # guest.sh: builds and tests the shared worktree inside a factory VM, through the target's scripts.
 #   guest.sh <vm run dir> build [<project>] [--clean]   the target's build (default: what the target builds); --clean first
 #                                                       deletes the worktree's ignored files (bin/, obj/) from the Mac
-#   guest.sh <vm run dir> test <project> [<filter>]     the target's test script on one test project
+#   guest.sh <vm run dir> test [--no-build] <project> [<filter>]   the target's test script on one test project;
+#                                                       --no-build runs what the last build left (no rebuild)
 #   guest.sh <vm run dir> info                          the guest's OS and SDK versions (for a verification record)
 # Exit: 0 green, 1 the build or tests fail, 3 the harness failed (no exit code: time box, SSH, share; restore or SDK
 # errors), 2 usage. It prints the errors and the summary; the full log is <vm run dir>/build.log or test.log.
@@ -12,7 +13,7 @@
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,6p' "$0" >&2; exit 2; }
+usage() { sed -n '3,7p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2
@@ -61,8 +62,10 @@ case "$CMD" in
     run "$D/build.log" "$GUEST_BUILD" "\$Project = $(ps_str "$proj")"
     report "$D/build.log" BUILD ;;
   test)
+    nob='$false'
+    [ "${1:-}" = --no-build ] && { nob='$true'; shift; }
     [ $# -ge 1 ] && [ $# -le 2 ] || usage
-    run "$D/test.log" "$GUEST_TEST" "\$Project = $(ps_str "$1"); \$Filter = $(ps_str "${2:-}")"
+    run "$D/test.log" "$GUEST_TEST" "\$Project = $(ps_str "$1"); \$Filter = $(ps_str "${2:-}"); \$NoBuild = $nob"
     report "$D/test.log" TEST ;;
   info)
     "$X/vm/vmssh" '"guest: {0} {1} {2}; dotnet {3}" -f (Get-CimInstance Win32_OperatingSystem).Caption, [Environment]::OSVersion.Version, $env:PROCESSOR_ARCHITECTURE, (dotnet --version)' ;;

@@ -250,13 +250,16 @@ verify() {
   esac
   i=$((i + 1)); rec_row $i "$GUEST build" $rc "$what" "" "$out"
   if [ -z "${rv:-}" ]; then
+    # The whole build just compiled every test project it covers: each test runs on it without rebuilding its project
+    # alone, which recompiled the project's graph (10 to 16 min a test on RDM).
+    T_NOBUILD=--no-build
     # The acceptance test, then the tests the builder asks for ($HANDBACK/tests.txt: "<test project> [<filter>]" a line).
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       proj=${line%% *} filt=""
       [ "$proj" != "$line" ] && filt=${line#* }
-      guest_test "$out" "$proj" "$filt"
-      i=$((i + 1)); rec_row $i "$GUEST test $line" $T_RC "$T_WHAT" "" "$out"
+      if [ -n "$filt" ]; then guest_test "$out" "$proj" "$filt"; else guest_test "$out" "$proj"; fi
+      i=$((i + 1)); rec_row $i "$T_CMD" $T_RC "$T_WHAT" "" "$out"
       case $T_RC in
         0) [ "$T_FAILS" -gt 0 ] && flaky="$flaky; $line: failed $T_FAILS of $T_RUNS runs" ;;
         1) fails="$fails; $line: $(first_errors "$out.last")" ;;
@@ -272,16 +275,23 @@ verify() {
 
 # guest_test <log> <project> [<filter>]: one test command in the build VM, re-run up to FLAKY_RERUNS times while it
 # fails. A test that passes on a re-run is flaky: green, and listed in the record for the judge. Sets T_RC (0 pass,
-# 1 fail, 3 harness), T_RUNS, T_FAILS and T_WHAT (the result for the record); the last run's output is in <log>.last.
+# 1 fail, 3 harness), T_RUNS, T_FAILS, T_WHAT (the result for the record) and T_CMD (the command as run); the last run's
+# output is in <log>.last. With T_NOBUILD=--no-build it runs on what the last build left.
 guest_test() {
-  local log=$1 rc
+  local log=$1 rc nob=${T_NOBUILD:-}
   shift
   T_RUNS=0 T_FAILS=0 T_RC=1
   while :; do
     T_RUNS=$((T_RUNS + 1))
-    if [ -n "${2:-}" ]; then "$GUEST" test "$1" "$2" > "$log.last" 2>&1 < /dev/null; else "$GUEST" test "$1" > "$log.last" 2>&1 < /dev/null; fi
+    "$GUEST" test $nob "$@" > "$log.last" 2>&1 < /dev/null
     rc=$?
-    { echo "== $GUEST test $*, run $T_RUNS: exit $rc"; cat "$log.last"; } >> "$log"
+    { echo "== $GUEST test $nob $*, run $T_RUNS: exit $rc"; cat "$log.last"; } >> "$log"
+    # A test project the whole build doesn't cover has nothing to run without a build: build it, once.
+    if [ -n "$nob" ] && [ $rc -ne 0 ] && ! grep -qE 'Passed!|Failed!' "$log.last"; then
+      echo "== no tests ran without a build: running it again with one" >> "$log"
+      nob="" T_RUNS=$((T_RUNS - 1))
+      continue
+    fi
     case $rc in
       0) T_RC=0; break ;;
       1) T_FAILS=$((T_FAILS + 1)) ;;
@@ -289,6 +299,7 @@ guest_test() {
     esac
     [ "$T_RUNS" -le "$FLAKY_RERUNS" ] || break
   done
+  T_CMD="$GUEST test${nob:+ $nob} $*"
   T_WHAT=$(counts "$log.last")
   [ $T_RC -eq 0 ] && [ "$T_FAILS" -gt 0 ] && T_WHAT="$T_WHAT; flaky: failed $T_FAILS of $T_RUNS runs"
   [ $T_RC -eq 1 ] && [ "$T_RUNS" -gt 1 ] && T_WHAT="$T_WHAT; failed all $T_RUNS runs"
@@ -730,7 +741,12 @@ recheck_stage() {
     RC_STATUS="could not run: $APP_WHY"
   else
     { fill "$SKILL/prompts/recheck.txt" | sed -e "s|@QA_DIR@|$rd|g" -e "s|@SHA@|$base|g"
-      echo; echo "## Findings"; printf '%s\n' "$X_FINDINGS" | sed 's/; evidence: .*$//'; } > "$RUN/recheck-$n.prompt"
+      echo; echo "## Findings"; printf '%s\n' "$X_FINDINGS" | sed 's/; evidence: .*$//'
+      # The explorer's way there, setup included (a registry value it set over vmssh unlocked the demos): without it
+      # the base re-check couldn't reach the screen, and answered can't tell.
+      echo; echo "## How the explorer got there (its tour, on the build with the change)"
+      awk '/^Tour:/ { f = 1; next } /^Findings:/ { f = 0 } f' "$QA_ROOT/explore-$n/report.md" | sed 's/; evidence: .*$//'
+    } > "$RUN/recheck-$n.prompt"
     run_claude "recheck-$n" "$RC_MIN" "$rd" -p "$(cat "$RUN/recheck-$n.prompt")" --model "$X_MODEL" --max-budget-usd "$RC_USD" \
       --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-explorer.md")" \
       --tools Read Bash --allowedTools "${QA_TOOLS[@]}" --output-format json
@@ -745,9 +761,10 @@ recheck_stage() {
   recheck_classify "$([ $rc -eq 0 ] && echo "$rd/report.md")"
 }
 
-# recheck_classify <recheck report | "">: X_LINES, one "  F<n> (<blocker|minor>, <new|pre-existing|not rechecked>): …"
-# per finding, and X_NEW, the blockers the base doesn't show (what may send the change back). "can't tell" on the base
-# (the feature isn't there) counts as new.
+# recheck_classify <recheck report | "">: X_LINES, one "  F<n> (<blocker|minor>, <new|pre-existing|unconfirmed|not
+# rechecked>): …" per finding, and X_NEW, the blockers the base doesn't show (what may send the change back). "absent"
+# (the screen the repro needs is what the change adds) counts as new; "can't tell" (the re-check couldn't get there or
+# couldn't tell) is unconfirmed: for the judge, never a send back.
 recheck_classify() {
   local line id sev r tag
   X_LINES="" X_NEW=""
@@ -756,10 +773,11 @@ recheck_classify() {
     id=$(echo "$line" | sed -E 's/^- (F[0-9]+) .*/\1/')
     sev=$(echo "$line" | sed -E 's/^- F[0-9]+ \((blocker|minor)\).*/\1/')
     r=""
-    [ -n "${1:-}" ] && r=$(grep -m1 -E "^- $id: " "$1" | sed -E "s/^- $id: *(same|different|can't tell).*/\1/")
+    [ -n "${1:-}" ] && r=$(grep -m1 -E "^- $id: " "$1" | sed -E "s/^- $id: *(same|different|absent|can't tell).*/\1/")
     case "$r" in
       same) tag=pre-existing ;;
-      different|"can't tell") tag=new ;;
+      different|absent) tag=new ;;
+      "can't tell") tag=unconfirmed ;;
       *) tag="not rechecked" ;;
     esac
     X_LINES="$X_LINES  $id ($sev, $tag): $(echo "$line" | sed -E 's/^- F[0-9]+ \([a-z]+\): *//; s/; evidence: .*$//')
@@ -1034,7 +1052,13 @@ while :; do
     if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file (verified, not reviewed)"; break; fi
     if over "$SPENT + $R_USD" "$LOOP_USD"; then STATUS="verified, not reviewed (loop budget)"; break; fi
     rname=review-$builds
-    fill "$SKILL/prompts/review.txt" > "$RUN/$rname.prompt"
+    # A re-review (an earlier review is in the hand-back, from this run or the one it continues) starts from what changed
+    # since the code that review saw, and says so: a re-review that only restates the last one checks nothing.
+    rev_code=$(git -C "$WT" log -1 --format=%h -- . ':(exclude)handback')
+    rev_prev=$(section "$WT/$HANDBACK/hand-back.md" "Review (reviewer)" 2> /dev/null | sed -n 's/^- Reviewed code: *\([0-9a-f]*\).*/\1/p' | head -1)
+    { fill "$SKILL/prompts/review.txt"
+      [ -n "$rev_prev" ] && sed -e "s|@PREV@|$rev_prev|g" -e "s|@CODE@|$rev_code|g" "$SKILL/prompts/re-review.txt"
+    } > "$RUN/$rname.prompt"
     run_claude "$rname" "$R_MIN" "$WT" -p "$(cat "$RUN/$rname.prompt")" --model "$R_MODEL" \
       --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-reviewer.md")" --add-dir "$PROFILE_DIR" --add-dir "$SPEC_DIR" \
       --max-budget-usd "$R_USD" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools Edit Write \
@@ -1045,7 +1069,13 @@ while :; do
       row "$builds" reviewer "$rname" "no usable review output"
       STATUS="verified, review missing"; break
     fi
-    { grep '^- ' "$RUN/$rname.md"; echo "- Written back to the harness: none"; } > "$RUN/$rname.section.md"
+    since=""
+    if [ -n "$rev_prev" ] && ! grep -m1 '^- Design:' "$RUN/$rname.md" | grep -qi "since $rev_prev"; then
+      since="- Re-review: the Design line doesn't say what changed since $rev_prev, the code the last review saw"
+      ev "$rname: a re-review that doesn't name the changes since $rev_prev"
+    fi
+    { grep '^- ' "$RUN/$rname.md"; [ -n "$since" ] && echo "$since"
+      echo "- Reviewed code: $rev_code"; echo "- Written back to the harness: none"; } > "$RUN/$rname.section.md"
     write_section "Review (reviewer)" "$RUN/$rname.section.md"
     wtgit add "$HANDBACK/hand-back.md"
     wtgit commit -q -m "handback: $TICKET review"

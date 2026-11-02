@@ -82,7 +82,7 @@ verdict:
 | Script | Inputs | Must | Ends with |
 |---|---|---|---|
 | `build` | `$Project` (empty: build what ships) | stop the running app first (it locks its files on the share) | `BUILD EXIT CODE: <n>` |
-| `test` | `$Project`, `$Filter` (may be empty) | run that test project only | `TEST EXIT CODE: <n>` |
+| `test` | `$Project`, `$Filter` (may be empty), `$NoBuild` | run that test project only; with `$NoBuild`, on what the last whole build left (`dotnet test --no-build`): verify sets it after its build | `TEST EXIT CODE: <n>` |
 | `launch` | none | stop any running instance; start the built app in the signed-in desktop session (run again to restart it for the exploratory QA, and on a base build for its re-check). A server or web app: deploy or start it, wait until it answers, then open the browser at its URL in the desktop session | `LAUNCH OK` once it is starting (a server: once its page answers) |
 
 Exit code rules: a non-zero code with restore or SDK errors (`NU…`, `NETSDK…`, `MSB4236`) is a harness error; any other

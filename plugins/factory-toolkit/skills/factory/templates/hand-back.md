@@ -20,15 +20,16 @@
 - Verification record: <path> @ <short SHA verified> → <PASS | PARTIAL | FAIL> (the factory's runner writes this line)
 
 ## Review (reviewer)
-<!-- Read the diff (`git diff <base>..<SHA verified>`) and the verification record. Do not edit code. Harness fix: commit it alone (`docs(harness): ...`), write its SHA below, then commit this section. Harness commits (`docs(harness):`) are listed under outside scope as `harness: <file>` and do not count as outside the ticket for judge Q1. The builder lists harness commits already on the branch; on a first pass the reviewer adds the `harness: <file>` entry to Files, the one exception to "fill only your section". On a re-review, read the previous Open findings first and say whether each is fixed. A (blocking) finding means Recommend: send back. -->
+<!-- Read the diff (`git diff <base>..<SHA verified>`) and the verification record. Do not edit code. Harness fix: commit it alone (`docs(harness): ...`), write its SHA below, then commit this section. Harness commits (`docs(harness):`) are listed under outside scope as `harness: <file>` and do not count as outside the ticket for judge Q1. The builder lists harness commits already on the branch; on a first pass the reviewer adds the `harness: <file>` entry to Files, the one exception to "fill only your section". On a re-review, read the previous Open findings first and say whether each is fixed; the Design line starts with `since <the last Reviewed code>: <what changed>`. A (blocking) finding means Recommend: send back. -->
 - Reviewer: <tool>, <model ID>; fresh session: <yes | no>; re-ran the Run command: <yes: result | no>
-- Design: <OK | finding | n/a>: <one line>
+- Design: <OK | finding | n/a>: <one line; a re-review starts it with `since <SHA>: <what changed>`>
 - Dependencies: <OK | finding | n/a>: <one line>
 - Schema: <OK | finding | n/a>: <one line>
 - Data flows: <OK | finding | n/a>: <one line>
 - Duplication: <OK | finding | n/a>: <one line>
 - Docs: <OK | finding | n/a>: <one line>
 - Open findings: <"none", or one per line, each marked (blocking) or (non-blocking)>
+- Reviewed code: <short SHA of the last code commit this review saw> (the runner writes this line; a re-review starts from it)
 - Written back to the harness: <file (AGENTS.md / CLAUDE.md, a skill, a hook) and commit SHA, this round only | none if nothing new>
 - Recommend: <merge | send back>
 
@@ -42,7 +43,7 @@
 ## Exploratory QA
 <!-- Written by the runner after a runtime QA PASS: a second blind agent explored around the change on the same VM, led by a charter written from the diff by a separate session (never the builder's notes). Each finding was then re-tried on a build of the base commit. A blocker the base doesn't show sends the change back once; every other finding is for the judge. Not filled: no runtime QA PASS, or exploration was off. -->
 - Explorer: <tool, model, blind; charter by <model>: <path>>
-- Findings: <none | count, then one per line, indented two spaces: F<n> (<blocker | minor>, <new | pre-existing | not rechecked>): <what was seen>>
+- Findings: <none | count, then one per line, indented two spaces: F<n> (<blocker | minor>, <new | pre-existing | unconfirmed | not rechecked>): <what was seen>>
 - Base re-check: <not needed | build of <short SHA>: <path> | could not run: <why>>
 - Tour for the judge: <path>; evidence: <screenshots>
 
