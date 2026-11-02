@@ -204,6 +204,12 @@ t_stale_lock() {
   expect_end '^ready for the judge'
 }
 
+t_busy_lock() {
+  touch "$FAKE_STATE/lock-on-test"
+  loop
+  expect_end '^ready for the judge'
+}
+
 t_explore_blocker() {
   cat > "$T/scenario.sh" <<'EOF'
 explorer_1() { printf 'Tour:\n1. clicked twice\nFindings:\n- F1 (blocker): the second click empties the grid; evidence: 03.png\n'; }
@@ -217,7 +223,7 @@ EOF
 }
 
 ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix stall same_binaries iteration_cap flaky
-  failing_listed_test accept_passes_on_base build_fails pause_resume stop_then_resume stale_lock explore_blocker"
+  failing_listed_test accept_passes_on_base build_fails pause_resume stop_then_resume stale_lock busy_lock explore_blocker"
 for t in ${*:-$ALL}; do
   ok=yes
   setup
