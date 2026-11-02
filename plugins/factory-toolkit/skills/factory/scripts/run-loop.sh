@@ -232,6 +232,16 @@ verify() {
   rm -f "$out.test"
 }
 
+# git_settle: after a builder session, wait for the worktree's index.lock to go. A background shell the builder started
+# can outlive the time box's kill and still be in a git command; a lock left after a minute is stale (a killed git).
+git_settle() {
+  local lock i
+  lock=$(git -C "$WT" rev-parse --git-path index.lock)
+  case "$lock" in /*) ;; *) lock=$WT/$lock ;; esac
+  for i in $(seq 30); do [ -e "$lock" ] || return 0; sleep 2; done
+  rm -f "$lock" && ev "removed a stale git index.lock in ${WT#$REPO/} (left by a killed git)"
+}
+
 dot_docs() { # dot_docs: the DOC_PATHS under .claude/, one a line: the builder stages those, the runner applies them
   local d
   for d in $DOC_PATHS; do case "$d" in .claude/*) echo "$d" ;; esac; done
@@ -754,6 +764,7 @@ while :; do
     --allowedTools "${BUILD_TOOLS[@]}" --output-format json
   read -r st _ _ _ <<< "$(fields "$RUN/$name.json")"
   read -r _ _ rc < "$RUN/$name.time"
+  git_settle
   # A builder stopped mid negative run (time box, budget) leaves the worktree detached on the base: the next round would
   # see an empty branch. Its record steps never leave changes behind, so going back to the branch loses nothing.
   if [ "$(git -C "$WT" symbolic-ref -q --short HEAD)" != "$BRANCH" ]; then
