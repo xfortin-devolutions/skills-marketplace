@@ -19,7 +19,10 @@
 #                                                                    then the loop continues in that run's worktree
 #   run-loop.sh <TICKET> --continue <run branch> "<why>"            the same after the runner stopped for a human who
 #                                                                    sends it on: no Decision line, the reason goes as is
-# Any time: touch <run dir>/STOP (stops before the next station), touch <run dir>/HUMAN (a human judges the next QA).
+#   run-loop.sh <TICKET> --resume-run <run id>                       the same run again, from the station it was paused
+#                                                                    or stopped before (factory.sh resume): its state.sh
+# Any time: touch <run dir>/STOP (stops before the next station), <run dir>/PAUSE (the same, resumable: factory.sh pause),
+# touch <run dir>/HUMAN (a human judges the next QA).
 # Config (lib/config.sh): the project (config.sh, profiles/<profile>/), in the skill's projects/ or the repo's .factory/;
 # the ticket's spec <TICKET>.md + .sh in ~/.factory/tickets/<repo>/ (TICKETS_DIR), copied into the run at its start.
 # bash 3.2 compatible (macOS default): no associative arrays, no ${x,,}.
@@ -27,11 +30,11 @@ set -u
 # One block: bash parses it whole before running it, so editing this file during a run can't break that run.
 {
 
-usage() { sed -n '9,22p' "$0" >&2; exit 2; }
+usage() { sed -n '9,25p' "$0" >&2; exit 2; }
 TICKET=${1:-}
 [ -n "$TICKET" ] && [ "${TICKET#-}" = "$TICKET" ] || usage
 shift
-OPEN_PR=no QA=auto KEEP_VM=no QA_ONLY="" TEST_ONLY="" RESUME="" JUDGE_REASON="" CONTINUE=no EXPLORE_CLI="" QA_BASE=""
+OPEN_PR=no QA=auto KEEP_VM=no QA_ONLY="" TEST_ONLY="" RESUME="" JUDGE_REASON="" CONTINUE=no EXPLORE_CLI="" QA_BASE="" RESUME_RUN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --open-pr) OPEN_PR=yes ;;
@@ -45,13 +48,16 @@ while [ $# -gt 0 ]; do
     --test-only) TEST_ONLY=${2:-}; [ -n "$TEST_ONLY" ] || usage; shift ;;
     --resume) RESUME=${2:-} JUDGE_REASON=${3:-}; [ -n "$RESUME" ] && [ -n "$JUDGE_REASON" ] || usage; shift 2 ;;
     --continue) RESUME=${2:-} JUDGE_REASON=${3:-} CONTINUE=yes; [ -n "$RESUME" ] && [ -n "$JUDGE_REASON" ] || usage; shift 2 ;;
+    --resume-run) RESUME_RUN=${2:-}; [ -n "$RESUME_RUN" ] || usage; shift ;;
     *) usage ;;
   esac
   shift
 done
 
 X=$(cd "$(dirname "$0")" && pwd)
-VM=$X/vm
+# The engine's own tests (tests/run-loop.test.sh) swap the VM layer and the guest tool for fakes.
+VM=${FACTORY_VM_DIR:-$X/vm}
+GUEST_SH=${FACTORY_GUEST_SH:-$X/guest.sh}
 # The repo is the one the command runs from: the engine is installed apart from it (a plugin), never inside it.
 REPO=$(git rev-parse --show-toplevel 2> /dev/null) || { echo "factory: run this from inside the repo (no git repo here)" >&2; exit 2; }
 SKILL=$(cd "$X/.." && pwd)
@@ -88,19 +94,34 @@ if [ "$QA" = yes ]; then
 fi
 
 T=$(echo "$TICKET" | tr '[:upper:]' '[:lower:]')
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-ID=$T-$STAMP
-[ -n "$QA_ONLY" ] && ID=$T-qa-$STAMP
-[ -n "$TEST_ONLY" ] && ID=$T-test-$STAMP
-# mkdir is atomic: two runs started in the same second get distinct ids (-2, -3, …).
-mkdir -p "$FACTORY_RUNS"
-i=1; base_id=$ID
-until mkdir "$FACTORY_RUNS/$ID" 2> /dev/null; do i=$((i + 1)); ID=$base_id-$i; STAMP=${STAMP%%-*}-$i; done
-RUN=$FACTORY_RUNS/$ID
+SKIP=""
+if [ -n "$RESUME_RUN" ]; then
+  # The same run again: its folder, worktree, branch, base and loop state come from its state.sh (save_state), and the
+  # loop starts at the station it saved. Its spec copy stays the one it started with.
+  ID=$RESUME_RUN RUN=$FACTORY_RUNS/$RESUME_RUN
+  [ -f "$RUN/state.sh" ] || { echo "no $RUN/state.sh: only a loop run that reached its first station resumes" >&2; exit 2; }
+  if [ -s "$RUN/runner.pid" ] && kill -0 "$(cat "$RUN/runner.pid")" 2> /dev/null; then
+    echo "$ID is still running (pid $(cat "$RUN/runner.pid")): factory.sh pause it first" >&2; exit 2
+  fi
+  . "$RUN/state.sh"
+  [ "$S_TICKET" = "$TICKET" ] || { echo "$ID is a run of $S_TICKET, not $TICKET" >&2; exit 2; }
+  STAMP=$S_STAMP SKIP=$S_NEXT
+  rm -f "$RUN/PAUSE" "$RUN/STOP"
+else
+  STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+  ID=$T-$STAMP
+  [ -n "$QA_ONLY" ] && ID=$T-qa-$STAMP
+  [ -n "$TEST_ONLY" ] && ID=$T-test-$STAMP
+  # mkdir is atomic: two runs started in the same second get distinct ids (-2, -3, …).
+  mkdir -p "$FACTORY_RUNS"
+  i=1; base_id=$ID
+  until mkdir "$FACTORY_RUNS/$ID" 2> /dev/null; do i=$((i + 1)); ID=$base_id-$i; STAMP=${STAMP%%-*}-$i; done
+  RUN=$FACTORY_RUNS/$ID
+fi
 # The run's own copy of the spec: what its agents read (a later edit of the ticket doesn't change a run in flight, and a
 # --resume takes the updated one), in a folder of its own so they get it and nothing else of the run.
 SPEC_DIR=$RUN/spec
-mkdir -p "$SPEC_DIR" && cp "$TICKET_FILE" "$TICKETS_DIR/$TICKET.sh" "$SPEC_DIR/"
+[ -n "$RESUME_RUN" ] || { mkdir -p "$SPEC_DIR" && cp "$TICKET_FILE" "$TICKETS_DIR/$TICKET.sh" "$SPEC_DIR/"; }
 TICKET_FILE=$SPEC_DIR/$TICKET.md
 # VM disks and the QA agent's folder live outside the repo: the QA agent must not find CLAUDE.md or the source above it.
 QA_ROOT=$FACTORY_VM_HOME/runs/$ID
@@ -112,8 +133,13 @@ if [ -n "$RESUME" ]; then
   [ -n "$WT" ] || { echo "no worktree has branch $RESUME checked out" >&2; rmdir "$RUN"; exit 2; }
   [ -z "$(git -C "$WT" status --porcelain)" ] || { echo "$WT has uncommitted changes" >&2; rmdir "$RUN"; exit 2; }
 fi
+if [ -n "$RESUME_RUN" ]; then
+  BRANCH=$S_BRANCH WT=$S_WT QA=$S_QA EXPLORE=$S_EXPLORE KEEP_VM=$S_KEEP_VM OPEN_PR=$S_OPEN_PR
+  [ -d "$WT" ] || { echo "the run's worktree $WT is gone" >&2; exit 2; }
+fi
 HANDBACK=handback/$(echo "$BRANCH" | tr '/' '-')
 BASE=$(git -C "$REPO" rev-parse --short HEAD)
+[ -n "$RESUME_RUN" ] && BASE=$S_BASE
 # The run's build VM, and the tool the builder and the reviewer call to build and test in it (scripts/guest.sh).
 BUILD_VM=$QA_ROOT/vm-build
 GUEST=$RUN/guest
@@ -184,52 +210,233 @@ row() { # row <run> <role> <name> <outcome>
   add_usd "$co"
 }
 
-# verify <n>: the runner's own checks, never the agent's word. Echoes "green" or "red: <why>".
+# verify <n>: the runner's own checks and its own verification record, never the agent's word: scope, the negative run
+# on the base, the build, the acceptance test and the tests the builder listed, all in the build VM. Writes and commits
+# $HANDBACK/verification-record.md. Echoes "green", "red: <why>" or "error: <why>" (the harness, or the spec, failed).
 verify() {
-  local out="$RUN/verify-$1.log" rec="$WT/$HANDBACK/verification-record.md" hb="$WT/$HANDBACK/hand-back.md"
-  local sha later touched outside c rc
-  : > "$out"
-  [ -f "$rec" ] || { echo "red: no verification record"; return; }
-  [ -f "$hb" ] || { echo "red: no hand-back"; return; }
-  sha=$(grep -m1 '^- Commit:' "$rec" | grep -oE '@ *[0-9a-f]{7,40}' | grep -oE '[0-9a-f]{7,40}')
-  [ -n "$sha" ] || { echo "red: record has no Commit SHA"; return; }
-  # Not merges, nor what the base brought (a --resume merges the ticket branch in after the record): the builder's only.
-  # Nor the runner's own docs commit (apply_docs).
-  later=$(git -C "$WT" log --oneline --no-merges "$sha..HEAD" "^$BASE" -- . ':(exclude)handback' $(dot_docs | sed 's/^/:(exclude)/') 2>> "$out")
-  [ -z "$later" ] || { echo "red: code commit after the record's Commit line"; return; }
-  grep -qE '^- Verdict: *PASS' "$rec" || { echo "red: record Verdict is not PASS"; return; }
+  local n=$1 out="$RUN/verify-$1.log"
+  local sha touched outside rc i line proj filt what flaky="" fails="" rv=""
+  : > "$out"; : > "$out.rows"; : > "$out.ex"
+  [ -z "$(git -C "$WT" status --porcelain -- . ':(exclude)handback')" ] \
+    || { echo "red: uncommitted changes left in the worktree (the builder stopped before committing them; they are still there)"; return; }
+  [ -n "$(git -C "$WT" diff --name-only "$BASE" HEAD -- . ':(exclude)handback')" ] || { echo "red: no code change"; return; }
   touched=$(git -C "$WT" diff --name-only "$BASE" HEAD -- $PROTECTED_PATHS)
   [ -z "$touched" ] || { echo "red: protected files changed: $(echo $touched)"; return; }
   outside=$(git -C "$WT" diff --name-only "$BASE" HEAD -- . ':(exclude)handback' | grep -vE "$SCOPE_REGEX" | not_docs)
   [ -z "$outside" ] || { echo "red: files outside the ticket scope: $(echo $outside)"; return; }
-  [ -n "$(git -C "$WT" diff --name-only "$BASE" HEAD -- . ':(exclude)handback')" ] || { echo "red: no code change"; return; }
-  [ -z "$(git -C "$WT" status --porcelain)" ] || { echo "red: uncommitted changes left in the worktree"; return; }
-  # The target's whole build, in the build VM. Output left from an earlier build can break an incremental one (GAPS
-  # V28): a red build gets one clean rebuild before it counts against the change.
-  "$GUEST" build >> "$out" 2>&1
+  sha=$(git -C "$WT" log -1 --format=%h -- . ':(exclude)handback')
+  i=0
+  negative_run "$out"
+  case "$NEG" in
+    error*) echo "error: negative run: ${NEG#error: }"; return ;;
+    passes*) echo "error: the acceptance test passes on the base $BASE, so it doesn't test the change: the spec needs a human"; return ;;
+  esac
+  i=$((i + 1)); rec_row $i "git switch --detach $BASE; $ACCEPT_CMD; git switch $BRANCH" 1 "$NEG" "$NEG_OUT" "$out"
+  # The target's whole build. Output left from an earlier build can break an incremental one (GAPS V28): a red build
+  # gets one clean rebuild before it counts against the change.
+  "$GUEST" build > "$out.last" 2>&1
   rc=$?
   if [ $rc -eq 1 ]; then
-    echo "== red: one clean rebuild" >> "$out"
-    "$GUEST" build --clean >> "$out" 2>&1
+    cat "$out.last" >> "$out"; echo "== red: one clean rebuild" >> "$out"
+    "$GUEST" build --clean > "$out.last" 2>&1
     rc=$?
   fi
-  cp "$BUILD_VM/build.log" "$RUN/verify-$1-build.log" 2> /dev/null
+  cp "$BUILD_VM/build.log" "$RUN/verify-$n-build.log" 2> /dev/null
+  # bash 3.2 misparses a case inside $(...): the result goes through a variable.
   case $rc in
-    0) ;;
-    1) echo "red: the $GUEST_DESC build fails: $(first_errors "$out")"; return ;;
-    *) echo "error: guest build: $(harness_why "$out")"; return ;;
+    0) what=green ;;
+    1) what="fails: $(first_errors "$out.last")"; rv="red: the $GUEST_DESC build fails: $(first_errors "$out.last")" ;;
+    *) what="harness error"; rv="error: guest build: $(harness_why "$out.last")" ;;
   esac
-  : > "$out.test"
-  $ACCEPT_CMD >> "$out.test" 2>&1
+  i=$((i + 1)); rec_row $i "$GUEST build" $rc "$what" "" "$out"
+  if [ -z "${rv:-}" ]; then
+    # The acceptance test, then the tests the builder asks for ($HANDBACK/tests.txt: "<test project> [<filter>]" a line).
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      proj=${line%% *} filt=""
+      [ "$proj" != "$line" ] && filt=${line#* }
+      guest_test "$out" "$proj" "$filt"
+      i=$((i + 1)); rec_row $i "$GUEST test $line" $T_RC "$T_WHAT" "" "$out"
+      case $T_RC in
+        0) [ "$T_FAILS" -gt 0 ] && flaky="$flaky; $line: failed $T_FAILS of $T_RUNS runs" ;;
+        1) fails="$fails; $line: $(first_errors "$out.last")" ;;
+        *) rv="error: guest test: $(harness_why "$out.last")"; break ;;
+      esac
+    done < <(echo "$ACCEPT_TEST${ACCEPT_FILTER:+ $ACCEPT_FILTER}"; grep -vE '^[[:space:]]*(#|$)' "$WT/$HANDBACK/tests.txt" 2> /dev/null)
+    cp "$BUILD_VM/test.log" "$RUN/verify-$n-test.log" 2> /dev/null
+    [ -z "${rv:-}" ] && [ -n "$fails" ] && rv="red: tests fail in the guest${fails#;}"
+  fi
+  write_record "$sha" "${rv:-green}" "${flaky#; }" "$out"
+  echo "${rv:-green}"
+}
+
+# guest_test <log> <project> [<filter>]: one test command in the build VM, re-run up to FLAKY_RERUNS times while it
+# fails. A test that passes on a re-run is flaky: green, and listed in the record for the judge. Sets T_RC (0 pass,
+# 1 fail, 3 harness), T_RUNS, T_FAILS and T_WHAT (the result for the record); the last run's output is in <log>.last.
+guest_test() {
+  local log=$1 rc
+  shift
+  T_RUNS=0 T_FAILS=0 T_RC=1
+  while :; do
+    T_RUNS=$((T_RUNS + 1))
+    if [ -n "${2:-}" ]; then "$GUEST" test "$1" "$2" > "$log.last" 2>&1 < /dev/null; else "$GUEST" test "$1" > "$log.last" 2>&1 < /dev/null; fi
+    rc=$?
+    { echo "== $GUEST test $*, run $T_RUNS: exit $rc"; cat "$log.last"; } >> "$log"
+    case $rc in
+      0) T_RC=0; break ;;
+      1) T_FAILS=$((T_FAILS + 1)) ;;
+      *) T_RC=3; break ;;
+    esac
+    [ "$T_RUNS" -le "$FLAKY_RERUNS" ] || break
+  done
+  T_WHAT=$(counts "$log.last")
+  [ $T_RC -eq 0 ] && [ "$T_FAILS" -gt 0 ] && T_WHAT="$T_WHAT; flaky: failed $T_FAILS of $T_RUNS runs"
+  [ $T_RC -eq 1 ] && [ "$T_RUNS" -gt 1 ] && T_WHAT="$T_WHAT; failed all $T_RUNS runs"
+  [ $T_RC -eq 3 ] && T_WHAT="harness error: $(harness_why "$log.last")"
+  return 0
+}
+
+counts() { # counts <guest test output>: "<p> passed, <f> failed, <s> skipped", else its summary line
+  local l
+  l=$(grep -E 'Passed!|Failed!' "$1" | tail -1)
+  if echo "$l" | grep -qE 'Failed: *[0-9]+, Passed: *[0-9]+'; then
+    echo "$l" | sed -E 's/.*Failed: *([0-9]+), Passed: *([0-9]+)(, Skipped: *([0-9]+))?.*/\2 passed, \1 failed, \4 skipped/; s/, *skipped/, 0 skipped/'
+  else
+    grep -E 'EXIT CODE|Total tests' "$1" | tail -1
+  fi
+}
+
+# negative_run <log>: the acceptance test on the base, where it must fail: the proof that it tests the change. The base
+# and the test are the same for every round of a run (and for later runs on that base), so the result is kept per base
+# tree and test in NEG_CACHE and runs once. Sets NEG ("expected fail: …", "passes: …" or "error: …") and NEG_OUT.
+negative_run() {
+  local key f rc
+  key=$(git -C "$WT" rev-parse "$BASE^{tree}")-$(printf '%s' "$ACCEPT_TEST $ACCEPT_FILTER" | git hash-object --stdin | cut -c1-12)
+  f=$NEG_CACHE/$key
+  if [ -s "$f" ]; then
+    NEG="$(sed -n 1p "$f") (kept from $(sed -n 2p "$f"))" NEG_OUT=$(tail -n +3 "$f")
+    ev "negative run: kept from $(sed -n 2p "$f")" > /dev/null
+    return
+  fi
+  ev "negative run: $ACCEPT_TEST on the base $BASE" > /dev/null
+  git -C "$WT" switch -q --detach "$BASE" 2>> "$1" || { NEG="error: could not switch the worktree to the base $BASE"; return; }
+  $ACCEPT_CMD > "$1.last" 2>&1
   rc=$?
-  cat "$out.test" >> "$out"
-  cp "$BUILD_VM/test.log" "$RUN/verify-$1-test.log" 2> /dev/null
+  { echo "== negative run on $BASE: exit $rc"; cat "$1.last"; } >> "$1"
+  git -C "$WT" switch -q "$BRANCH" 2>> "$1" || { NEG="error: could not switch the worktree back to $BRANCH"; return; }
+  NEG_OUT=$(grep -E '^ *Failed |Passed!|Failed!|EXIT CODE' "$1.last" | head -12)
   case $rc in
-    0) echo green ;;
-    1) echo "red: the acceptance test fails in the guest: $(first_errors "$out.test")" ;;
-    *) echo "error: guest test: $(harness_why "$out.test")" ;;
+    1) NEG="expected fail: accept fails without the change: $(counts "$1.last")"
+       mkdir -p "$NEG_CACHE" && printf '%s\n%s\n%s\n' "$NEG" "run $ID" "$NEG_OUT" > "$f" ;;
+    0) NEG="passes: $(counts "$1.last")" ;;
+    *) NEG="error: $(harness_why "$1.last")" ;;
   esac
-  rm -f "$out.test"
+}
+
+rec_row() { # rec_row <#> <command> <exit code> <result> <excerpt, or "" for the last output's summary> <log>
+  local ex=$5
+  [ -n "$ex" ] || ex=$(grep -E ': error |^ *Failed [^!]|Passed!|Failed!|Warning\(s\)|Error\(s\)|Time Elapsed|EXIT CODE' "$6.last" 2> /dev/null | awk '!seen[$0]++' | head -15)
+  echo "| $1 | $2 | $3 | $4 |" >> "$6.rows"
+  printf 'Output %s:\n```text\n%s\n```\n\n' "$1" "${ex:-<no output>}" >> "$6.ex"
+}
+
+# write_record <short sha> <green | red: … | error: …> <flaky tests> <log>: the verification record, from the rows
+# verify ran, committed on its own; and the Tests section's record line in the hand-back.
+write_record() {
+  local rec="$WT/$HANDBACK/verification-record.md" verdict=PASS ver
+  [ "$2" = green ] || verdict="FAIL: ${2#*: }"
+  [ -n "${GUEST_INFO:-}" ] || GUEST_INFO=$("$GUEST" info 2> /dev/null < /dev/null | tail -1)
+  ver=$(jq -r '.version // "unknown"' "$SKILL/../../.claude-plugin/plugin.json" 2> /dev/null)
+  mkdir -p "$(dirname "$rec")"
+  {
+    echo "# Verification record"
+    echo "<!-- Written by the factory's runner (run-loop.sh), not by the builder: it ran each command below itself, in the run's build VM, on the Commit. Exit codes are the commands' own; the negative run is kept per base and test, so a later round may show the first one's. -->"
+    echo
+    echo "- Change: $TICKET, $(git -C "$WT" log -1 --format=%s -- . ':(exclude)handback')"
+    echo "- Commit: $BRANCH @ $1"
+    echo "- Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "- Tool: factory runner, factory-toolkit $ver"
+    echo "- Model: none (a script)"
+    echo "- Environment: commands ran in the guest: ${GUEST_INFO:-unknown}; host: $(git --version)"
+    echo
+    echo "| # | Command (exactly as run) | Exit code | Result |"
+    echo "|---|---|---|---|"
+    cat "$4.rows"
+    echo
+    cat "$4.ex"
+    echo "- Flaky: ${3:-none}"
+    echo "- Not verified: nothing"
+    echo "- Verdict: $verdict"
+  } > "$rec"
+  rm -f "$4.rows" "$4.ex" "$4.last"
+  python3 - "$WT/$HANDBACK/hand-back.md" "$HANDBACK/verification-record.md @ $1 → ${verdict%%:*} (written by the runner)" <<'PY'
+import re, sys
+p, line = sys.argv[1], sys.argv[2]
+try:
+    hb = open(p).read()
+except OSError:
+    sys.exit(0)
+open(p, "w").write(re.sub(r"^- Verification record: .*$", lambda m: "- Verification record: " + line, hb, count=1, flags=re.M))
+PY
+  git -C "$WT" add "$HANDBACK"
+  git -C "$WT" commit -q -m "handback: $TICKET verification record"
+}
+
+# ensure_handback <name>: what a builder stopped early (time box, budget) left undone and the runner can do for it, so
+# its code commit is still verified: commit its hand-back files, and start the hand-back from the template when there
+# is none.
+ensure_handback() {
+  local hb="$WT/$HANDBACK/hand-back.md"
+  if [ ! -f "$hb" ] && [ -n "$(git -C "$WT" diff --name-only "$BASE" HEAD -- . ':(exclude)handback')" ]; then
+    mkdir -p "$(dirname "$hb")"
+    python3 - "$SKILL/templates/hand-back.md" "$hb" "$TICKET" "$(head -1 "$TICKET_FILE" | sed -e 's/^# *//' -e "s/^$TICKET *[—:-] *//")" \
+      "no PR: $BRANCH @ $(git -C "$WT" log -1 --format=%h -- . ':(exclude)handback')" \
+      "$(git -C "$WT" log -1 --format=%s -- . ':(exclude)handback'); the builder stopped before writing this section, so the runner started it from the code commit" <<'PY'
+import re, sys
+src, dst, ticket, title, pr, what = sys.argv[1:7]
+hb = open(src).read()
+hb = hb.replace("<ticket ID> <one-line title>", ticket + " " + title, 1)
+hb = re.sub(r"^- PR: .*$", lambda m: "- PR: " + pr, hb, count=1, flags=re.M)
+hb = re.sub(r"^- What changed: .*$", lambda m: "- What changed: " + what, hb, count=1, flags=re.M)
+open(dst, "w").write(hb)
+PY
+    ev "$1 wrote no hand-back: the runner started one from the template"
+  fi
+  if [ -n "$(git -C "$WT" status --porcelain -- "$HANDBACK")" ]; then
+    git -C "$WT" add "$HANDBACK" && git -C "$WT" commit -q -m "handback: $TICKET builder sections (committed by the runner)"
+  fi
+  return 0
+}
+
+# progress_sig [hand-back]: what a builder round can change that counts as progress: the code (the tree outside
+# handback/, committed or not), its disputes and the tests it asks the runner to run; with "hand-back", its hand-back
+# too (a review finding can be about the hand-back alone).
+progress_sig() {
+  { git -C "$WT" ls-tree HEAD | grep -v "$(printf '\t')handback\$"
+    git -C "$WT" diff HEAD -- . ':(exclude)handback'
+    cat "$WT/$HANDBACK/disputes.md" "$WT/$HANDBACK/tests.txt" 2> /dev/null
+    [ "${1:-}" = hand-back ] && cat "$WT/$HANDBACK/hand-back.md" 2> /dev/null
+  } | git hash-object --stdin
+}
+
+# save_state <next station: build | review | qa>: what --resume-run needs to go on from that station (factory.sh resume).
+save_state() {
+  local v
+  { for v in TICKET STAMP BRANCH WT BASE QA EXPLORE KEEP_VM OPEN_PR builds FIRST reason from xsend LAST_X last_v stall SPENT; do
+      printf 'S_%s=%q\n' "$v" "${!v:-}"
+    done
+    printf 'S_NEXT=%q\n' "$1"
+  } > "$RUN/state.sh.tmp" && mv "$RUN/state.sh.tmp" "$RUN/state.sh"
+}
+
+# git_settle: after a builder session, wait for the worktree's index.lock to go. A background shell the builder started
+# can outlive the time box's kill and still be in a git command; a lock left after a minute is stale (a killed git).
+git_settle() {
+  local lock i
+  lock=$(git -C "$WT" rev-parse --git-path index.lock)
+  case "$lock" in /*) ;; *) lock=$WT/$lock ;; esac
+  for i in $(seq $(( (GIT_SETTLE_S + 1) / 2 ))); do [ -e "$lock" ] || return 0; sleep 2; done
+  rm -f "$lock" && ev "removed a stale git index.lock in ${WT#$REPO/} (left by a killed git)"
 }
 
 dot_docs() { # dot_docs: the DOC_PATHS under .claude/, one a line: the builder stages those, the runner applies them
@@ -287,7 +494,7 @@ build_vm_up() {
   "$VM/vmctl.sh" up "$BUILD_VM" "$1" > "$RUN/build-vm.log" 2>&1 || return 1
   guest_conf "$BUILD_VM" "$1"
   printf '#!/bin/bash\n# Builds and tests this run'"'"'s worktree in its build VM: build [<project>] [--clean] | test <project> [<filter>] | info\nexec "%s" "%s" "$@"\n' \
-    "$X/guest.sh" "$BUILD_VM" > "$GUEST"
+    "$GUEST_SH" "$BUILD_VM" > "$GUEST"
   chmod +x "$GUEST"
 }
 
@@ -339,7 +546,7 @@ app_up() {
   if [ "$built" = no ]; then
     ev "$(basename "$log"): guest build (time box $GUEST_BUILD_MIN min)"
     guest_conf "$vmrun" "$share"
-    "$X/guest.sh" "$vmrun" build > "$log/guest-build.log" 2>&1
+    "$GUEST_SH" "$vmrun" build > "$log/guest-build.log" 2>&1
     rc=$?
     cp "$vmrun/build.log" "$log/guest-build-full.log" 2> /dev/null
     [ $rc -eq 1 ] && { APP_WHY="the $GUEST_DESC build fails: $(first_errors "$log/guest-build.log")"; return 1; }
@@ -690,13 +897,15 @@ if [ -n "$TEST_ONLY" ]; then
   finish
 fi
 
+if [ -z "$RESUME_RUN" ]; then
 cat > "$RUNS" <<EOF
 # Loop runs · $TICKET · $STAMP
-Base: $BASE · branch: $BRANCH · builder: $B_MODEL (\$$B_USD, $B_MIN min) · reviewer: $R_MODEL (\$$R_USD, $R_MIN min) · QA: $([ "$QA" = yes ] && echo "$QA_MODEL (\$$QA_USD, $QA_MIN min)" || echo off) · exploration: $([ "$EXPLORE" = yes ] && echo "charter $C_MODEL (\$$C_USD), explorer $X_MODEL (\$$X_USD, re-check \$$RC_USD), $EXPLORE_SENDBACKS send back(s)" || echo off) · iteration cap $ITER_CAP · loop \$$LOOP_USD
+Base: $BASE · branch: $BRANCH · builder: $B_MODEL (\$$B_USD, $B_MIN min) · reviewer: $R_MODEL (\$$R_USD, $R_MIN min) · QA: $([ "$QA" = yes ] && echo "$QA_MODEL (\$$QA_USD, $QA_MIN min)" || echo off) · exploration: $([ "$EXPLORE" = yes ] && echo "charter $C_MODEL (\$$C_USD), explorer $X_MODEL (\$$X_USD, re-check \$$RC_USD), $EXPLORE_SENDBACKS send back(s)" || echo off) · caps: $ITER_CAP builder runs, $STALL_CAP in a row without progress · loop \$$LOOP_USD
 
 | Run | Role | Min | subtype | Turns | Cost \$ | Denials | Outcome |
 |---|---|---|---|---|---|---|---|
 EOF
+fi
 
 # The builder's deny rules: every protected path (a folder denies everything under it) plus the outward-facing commands.
 for p in $PROTECTED_PATHS; do
@@ -705,11 +914,15 @@ for p in $PROTECTED_PATHS; do
 done | { cat; printf '"Edit(/%s/**)"\n"Write(/%s/**)"\n' "$SPEC_DIR" "$SPEC_DIR"; printf '"%s"\n' "${DENY_BASH[@]}"; } \
   | jq -s '{permissions: {deny: .}}' > "$RUN/builder-settings.json"
 
-builds=0
-reason=""
-if [ -n "$RESUME" ]; then
+builds=0 reason="" from="" stall=0 last_v="" xsend=0 LAST_X=""
+if [ -n "$RESUME_RUN" ]; then
+  builds=$S_builds FIRST=$S_FIRST reason=$S_reason from=$S_from xsend=$S_xsend LAST_X=$S_LAST_X last_v=$S_last_v
+  stall=$S_stall SPENT=$S_SPENT
+  ev "run resumed before $SKIP (round $builds, \$$SPENT spent)"
+  [ "$SKIP" = build ] && SKIP=""
+elif [ -n "$RESUME" ]; then
   # The judge's send back: the ticket branch (its updated spec) merges in, the Decision goes in the Judge section, and
-  # rounds go on from the last one so qa-<n> folders don't collide. The iteration cap counts this run's rounds only.
+  # rounds go on from the last one so qa-<n> folders don't collide. The caps count this run's rounds only.
   ev "loop resume: $TICKET on $BRANCH (worktree ${WT#$REPO/}), merging $BASE; judge: $JUDGE_REASON"
   git -C "$WT" merge -q --no-edit "$BASE" || { git -C "$WT" merge --abort; echo "merging $BASE into $BRANCH conflicts" >&2; exit 1; }
   [ "$CONTINUE" = yes ] || python3 - "$WT/$HANDBACK/hand-back.md" "$JUDGE_REASON, $(git config user.name), $(date +%F)" <<'PY'
@@ -724,14 +937,17 @@ PY
   builds=${builds:-0}
   reason="the human judge sent it back: $JUDGE_REASON. The ticket's spec was updated for it (merged into this branch)."
   [ "$CONTINUE" = yes ] && reason="the runner stopped this run for a human, who sends it on: $JUDGE_REASON"
+  FIRST=$builds
 else
   ev "loop start: $TICKET base $BASE worktree ${WT#$REPO/} qa=$QA"
   git -C "$REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE" || { echo "worktree add failed" >&2; exit 1; }
+  FIRST=$builds
 fi
-FIRST=$builds
-xsend=0 LAST_X=""
 BUILD_TOOLS+=("Bash($GUEST *)")
 REVIEW_TOOLS+=("Bash($GUEST test *)")
+# Each station starts with save_state, so a paused, stopped or crashed run goes on from there (--resume-run). A round
+# that changes the code, the disputes or the tests is progress: STALL_CAP rounds in a row without any stop the run, and
+# ITER_CAP rounds in all; the loop budget is the hard limit.
 while :; do
   release_kept_vms
   # Up at the start, and again after a base re-check powered it off to free its slot.
@@ -739,80 +955,97 @@ while :; do
     build_vm_up "$WT" || { STATUS="harness error: the build VM did not come up: $(tail -1 "$RUN/build-vm.log")"; break; }
     BUILD_VM_UP=yes
   fi
-  if [ $((builds - FIRST)) -ge "$ITER_CAP" ]; then STATUS="reject: iteration cap ($ITER_CAP builder runs); last reason: $reason"; break; fi
-  if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file"; break; fi
-  if over "$SPENT + $B_USD" "$LOOP_USD"; then STATUS="stopped: loop budget (\$$SPENT spent)"; break; fi
-  builds=$((builds + 1))
-  name=build-$builds
-  fill "$SKILL/prompts/goal.txt" > "$RUN/$name.prompt"
-  if [ -n "$reason" ]; then
-    { fill "$SKILL/prompts/fix.txt" | sed "s|@REASON@|$(echo "$reason" | sed 's/[|&\\]/\\&/g')|"; cat "$RUN/$name.prompt"; } > "$RUN/$name.prompt.tmp"
-    mv "$RUN/$name.prompt.tmp" "$RUN/$name.prompt"
+  if [ -z "$SKIP" ]; then
+    save_state build
+    if [ $((builds - FIRST)) -ge "$ITER_CAP" ]; then STATUS="reject: iteration cap ($ITER_CAP builder runs); last reason: $reason"; break; fi
+    if [ -e "$RUN/PAUSE" ]; then STATUS="paused before builder run $((builds + 1)): factory.sh resume $ID"; break; fi
+    if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file"; break; fi
+    if over "$SPENT + $B_USD" "$LOOP_USD"; then STATUS="stopped: loop budget (\$$SPENT spent)"; break; fi
+    builds=$((builds + 1))
+    name=build-$builds
+    fill "$SKILL/prompts/goal.txt" > "$RUN/$name.prompt"
+    if [ -n "$reason" ]; then
+      { fill "$SKILL/prompts/fix.txt" | sed "s|@REASON@|$(echo "$reason" | sed 's/[|&\\]/\\&/g')|"; cat "$RUN/$name.prompt"; } > "$RUN/$name.prompt.tmp"
+      mv "$RUN/$name.prompt.tmp" "$RUN/$name.prompt"
+    fi
+    sig0=$(progress_sig "$([ "$from" = review ] && echo hand-back)")
+    run_claude "$name" "$B_MIN" "$WT" -p "$(cat "$RUN/$name.prompt")" --model "$B_MODEL" --max-budget-usd "$B_USD" \
+      --permission-mode acceptEdits --settings "$RUN/builder-settings.json" --add-dir "$SKILL/templates" --add-dir "$SPEC_DIR" \
+      --allowedTools "${BUILD_TOOLS[@]}" --output-format json
+    read -r st _ _ _ <<< "$(fields "$RUN/$name.json")"
+    read -r _ _ rc < "$RUN/$name.time"
+    git_settle
+    # A builder stopped while it had the worktree on another commit (checking the base itself) leaves it detached: the
+    # next round would see an empty branch. Going back to the branch loses nothing it committed.
+    if [ "$(git -C "$WT" symbolic-ref -q --short HEAD)" != "$BRANCH" ]; then
+      ev "$name left the worktree off $BRANCH ($(git -C "$WT" rev-parse --short HEAD)): switching back"
+      git -C "$WT" switch -q "$BRANCH" 2>> "$EV" || ev "could not switch $WT back to $BRANCH"
+    fi
+    # A builder stopped by its time box after its code commit is not a failed round: the runner commits what it left
+    # and verifies the commit like any other.
+    ensure_handback "$name"
+    apply_docs
+    case "$rc/$st" in
+      142/*) out="time box ($B_MIN min)" ;;
+      */success) out="success" ;;
+      */error_max_budget_usd) out="cap: dollars" ;;
+      *) out="error: $st (exit $rc)" ;;
+    esac
+    v=$(verify "$builds")
+    row "$builds" builder "$name" "$out; verify $v"
+    ev "$name outcome=$out verify=$v spent=\$$SPENT"
+    if [ "$(progress_sig "$([ "$from" = review ] && echo hand-back)")" = "$sig0" ]; then stall=$((stall + 1)); else stall=0; fi
+    # After a green verify the send back came from the reviewer or QA: a run that changes nothing only sends the same
+    # binaries back.
+    if [ "$v" = green ] && [ "$last_v" = green ] && [ "$stall" -gt 0 ]; then
+      STATUS="needs a human: send back $builds changed no code and disputed nothing (${reason})"; break
+    fi
+    if [ "$stall" -ge "$STALL_CAP" ]; then
+      STATUS="needs a human: $stall builder runs in a row changed nothing (code, disputes or tests); last reason: $reason"; break
+    fi
+    last_v=$v
+    case "$v" in
+      green) ;;
+      error*) STATUS="harness error in verify: ${v#error: }"; break ;;
+      *) reason="builder run $builds: $out; runner verify $v"; from=verify; STATUS="send back: $reason"; continue ;;
+    esac
   fi
-  run_claude "$name" "$B_MIN" "$WT" -p "$(cat "$RUN/$name.prompt")" --model "$B_MODEL" --max-budget-usd "$B_USD" \
-    --permission-mode acceptEdits --settings "$RUN/builder-settings.json" --add-dir "$SKILL/templates" --add-dir "$SPEC_DIR" \
-    --allowedTools "${BUILD_TOOLS[@]}" --output-format json
-  read -r st _ _ _ <<< "$(fields "$RUN/$name.json")"
-  read -r _ _ rc < "$RUN/$name.time"
-  # A builder stopped mid negative run (time box, budget) leaves the worktree detached on the base: the next round would
-  # see an empty branch. Its record steps never leave changes behind, so going back to the branch loses nothing.
-  if [ "$(git -C "$WT" symbolic-ref -q --short HEAD)" != "$BRANCH" ]; then
-    ev "$name left the worktree off $BRANCH ($(git -C "$WT" rev-parse --short HEAD)): switching back"
-    git -C "$WT" switch -q "$BRANCH" 2>> "$EV" || ev "could not switch $WT back to $BRANCH"
-  fi
-  apply_docs
-  case "$rc/$st" in
-    142/*) out="time box ($B_MIN min)" ;;
-    */success) out="success" ;;
-    */error_max_budget_usd) out="cap: dollars" ;;
-    *) out="error: $st (exit $rc)" ;;
-  esac
-  v=$(verify "$builds")
-  row "$builds" builder "$name" "$out; verify $v"
-  ev "$name outcome=$out verify=$v spent=\$$SPENT"
-  code=$(git -C "$WT" log -1 --format=%H -- . ':(exclude)handback')
-  dsum=$(cat "$WT/$HANDBACK/disputes.md" 2> /dev/null | git hash-object --stdin)
-  # A review finding can be about the record alone (a missing negative run): there, a new record is progress too.
-  [ "${from:-}" = review ] && dsum=$dsum$(cat "$WT/$HANDBACK/verification-record.md" 2> /dev/null | git hash-object --stdin)
-  # After a green verify the send back came from the reviewer or QA: a run that changes no code and disputes nothing
-  # only sends the same binaries back. After a red verify, fixing the record alone is progress.
-  if [ "$v" = green ] && [ "${last_v:-}" = green ] && [ "$code" = "${last_code:-}" ] && [ "$dsum" = "${last_dsum:-}" ]; then
-    STATUS="needs a human: send back $builds changed no code and disputed nothing (${reason})"; break
-  fi
-  last_code=$code last_dsum=$dsum last_v=$v
-  case "$v" in
-    green) ;;
-    error*) STATUS="harness error in verify: ${v#error: }"; break ;;
-    *) reason="builder run $builds: $out; runner verify $v"; from=verify; STATUS="send back: $reason"; continue ;;
-  esac
 
-  if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file (verified, not reviewed)"; break; fi
-  if over "$SPENT + $R_USD" "$LOOP_USD"; then STATUS="verified, not reviewed (loop budget)"; break; fi
-  rname=review-$builds
-  fill "$SKILL/prompts/review.txt" > "$RUN/$rname.prompt"
-  run_claude "$rname" "$R_MIN" "$WT" -p "$(cat "$RUN/$rname.prompt")" --model "$R_MODEL" \
-    --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-reviewer.md")" --add-dir "$PROFILE_DIR" --add-dir "$SPEC_DIR" \
-    --max-budget-usd "$R_USD" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools Edit Write \
-    --output-format json
-  jq -r '.result // ""' "$RUN/$rname.json" > "$RUN/$rname.md" 2> /dev/null
-  rec=$(grep -m1 '^- Recommend:' "$RUN/$rname.md" | sed 's/^- Recommend: *//')
-  if [ -z "$rec" ]; then
-    row "$builds" reviewer "$rname" "no usable review output"
-    STATUS="verified, review missing"; break
+  if [ -z "$SKIP" ] || [ "$SKIP" = review ]; then
+    SKIP=""
+    save_state review
+    if [ -e "$RUN/PAUSE" ]; then STATUS="paused before review $builds (verified): factory.sh resume $ID"; break; fi
+    if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file (verified, not reviewed)"; break; fi
+    if over "$SPENT + $R_USD" "$LOOP_USD"; then STATUS="verified, not reviewed (loop budget)"; break; fi
+    rname=review-$builds
+    fill "$SKILL/prompts/review.txt" > "$RUN/$rname.prompt"
+    run_claude "$rname" "$R_MIN" "$WT" -p "$(cat "$RUN/$rname.prompt")" --model "$R_MODEL" \
+      --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-reviewer.md")" --add-dir "$PROFILE_DIR" --add-dir "$SPEC_DIR" \
+      --max-budget-usd "$R_USD" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools Edit Write \
+      --output-format json
+    jq -r '.result // ""' "$RUN/$rname.json" > "$RUN/$rname.md" 2> /dev/null
+    rec=$(grep -m1 '^- Recommend:' "$RUN/$rname.md" | sed 's/^- Recommend: *//')
+    if [ -z "$rec" ]; then
+      row "$builds" reviewer "$rname" "no usable review output"
+      STATUS="verified, review missing"; break
+    fi
+    { grep '^- ' "$RUN/$rname.md"; echo "- Written back to the harness: none"; } > "$RUN/$rname.section.md"
+    write_section "Review (reviewer)" "$RUN/$rname.section.md"
+    git -C "$WT" add "$HANDBACK/hand-back.md"
+    git -C "$WT" commit -q -m "handback: $TICKET review"
+    row "$builds" reviewer "$rname" "Recommend: $rec"
+    ev "$rname recommend='$rec' spent=\$$SPENT"
+    case "$rec" in
+      merge*) ;;
+      *) reason="review recommended send back: $(grep -m1 '^- Open findings:' "$RUN/$rname.md" | sed 's/^- Open findings: *//')"
+         from=review; STATUS="send back: review"; continue ;;
+    esac
   fi
-  { grep '^- ' "$RUN/$rname.md"; echo "- Written back to the harness: none"; } > "$RUN/$rname.section.md"
-  write_section "Review (reviewer)" "$RUN/$rname.section.md"
-  git -C "$WT" add "$HANDBACK/hand-back.md"
-  git -C "$WT" commit -q -m "handback: $TICKET review"
-  row "$builds" reviewer "$rname" "Recommend: $rec"
-  ev "$rname recommend='$rec' spent=\$$SPENT"
-  case "$rec" in
-    merge*) ;;
-    *) reason="review recommended send back: $(grep -m1 '^- Open findings:' "$RUN/$rname.md" | sed 's/^- Open findings: *//')"
-       from=review; STATUS="send back: review"; continue ;;
-  esac
+  SKIP=""
 
+  save_state qa
   if [ "$QA" != yes ]; then STATUS="ready for the judge (Recommend: merge; no runtime QA)"; break; fi
+  if [ -e "$RUN/PAUSE" ]; then STATUS="paused before runtime QA $builds (reviewed): factory.sh resume $ID"; break; fi
   if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file (reviewed, no runtime QA)"; break; fi
   if over "$SPENT + $QA_USD" "$LOOP_USD"; then STATUS="reviewed, no runtime QA (loop budget)"; break; fi
   head=$(git -C "$WT" rev-parse HEAD)
@@ -859,7 +1092,7 @@ fi
   echo
   echo "- Status: $STATUS"
   echo "- Branch: \`$BRANCH\` (worktree \`${WT#$REPO/}\`) · base $BASE · last commit: $(git -C "$WT" log -1 --format='%h %s')"
-  echo "- Builder runs: $((builds - FIRST))$([ -n "$RESUME" ] && echo " (resumed after round $FIRST)") · spent: \$$SPENT of \$$LOOP_USD · PR: $PR_URL"
+  echo "- Builder runs: $((builds - FIRST))$([ "$FIRST" -gt 0 ] && echo " (resumed after round $FIRST)") · spent: \$$SPENT of \$$LOOP_USD · PR: $PR_URL"
   echo "- Hand-back for the judge: \`${WT#$REPO/}/$HANDBACK/hand-back.md\`"
   [ -n "$LAST_X" ] && echo "- Last round's ${LAST_X}; tour, findings and base re-check in the hand-back's Exploratory QA section"
   [ -s "$WT/$HANDBACK/disputes.md" ] && echo "- Disputed by the builder (the judge decides): $(disputed_ids); reasons: \`${WT#$REPO/}/$HANDBACK/disputes.md\`"

@@ -15,7 +15,8 @@ spec (human-approved) ─► run: worktree ─► builder ─► verify ─► r
                                               ▲      red     │ send back  │ FAIL         │ new blocker (once)
                                               └──────────────┴────────────┴──────────────┴──────────────────┘ ≤ ITER_CAP
                               └──── build VM (one per run, shares the worktree) ────┘   └─ fresh clone, launches
-                                    builder's `guest build|test`, verify's build + test      the verified binaries
+                                    builder's `guest build|test`; verify's record:          the verified binaries
+                                    negative run, build, accept, listed tests
 ```
 
 Exploratory QA does what a human would do with a new feature: try it around the edges and show the judge around. It
@@ -118,6 +119,13 @@ bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loo
   `handback/<branch>/disputes.md` instead of changing code: the next QA round gets only the intended behaviour (never the
   reasons), reports the item as disputed, and the hand-back lists it for the judge. A send back that changes no code and
   disputes nothing stops the run for a human.
+- The builder commits code and writes its hand-back sections; **the runner writes the verification record**: verify runs
+  the negative run (the accept test on the base, kept per base and test, so once), the full build, the accept test and
+  the tests the builder lists in `handback/<branch>/tests.txt`, each in the build VM. A test that passes only on a
+  re-run (`FLAKY_RERUNS`) is green and listed as flaky for the judge. A builder stopped by its time box after its code
+  commit is verified like any other (the runner starts a missing hand-back from the template).
+- Caps: `ITER_CAP` builder runs in all (5), `STALL_CAP` in a row that change nothing (code, disputes, listed tests: 2),
+  and `LOOP_USD`, the hard limit. An accept test that passes on the base stops the run: the spec needs a human.
 - `--open-pr` pushes and opens a **draft** PR when the run is ready: outward-facing, so only when the user asked for it in
   this conversation.
 - While it runs, answer progress questions with **status**; when it ends, summarise `loop-handback.md`: status, builder
@@ -140,7 +148,7 @@ station's details on click: the agent's live steps (what it reads, runs, edits),
 the QA report and screenshots (live, as the agent takes them), the answer, the prompt and stderr. Nothing leaves the Mac.
 Offer it when a run starts, and whenever the user asks how things are going. `--port N`, `--no-open`.
 
-## status [run] · show [run] · human [run] · judge [run] pass|fail <why> · stop [run] · down [run]
+## status [run] · show [run] · human [run] · judge [run] pass|fail <why> · stop · pause · resume [run] · down [run]
 
 `bash $F/factory.sh <sub-command> …` ([run] = run id or prefix; default the newest run).
 - **show** opens the run's live VM in macOS Screen Sharing (VNC on localhost, per-run password): the QA clone during a
@@ -148,6 +156,10 @@ Offer it when a run starts, and whenever the user asks how things are going. `--
 - **human** makes the run's next QA wait for a human verdict (the agent still runs and reports first). When a run waits
   (`WAITING FOR A HUMAN` in status), it has already notified and opened Screen Sharing; the user looks, then **judge**.
 - **judge** writes the human verdict; the loop resumes: `pass` = PASS, `fail` = send back with the reason.
+- **pause** stops the run before its next station and powers its VMs off (a weekend, a reboot, a closing session: a
+  runner started from a Claude session dies with it). **resume** goes on from the station it saved (`state.sh`), in the
+  same run folder and worktree: after a pause, a **stop**, or a runner that crashed or was killed. Run it in the
+  background like the loop. No reason to write, no new run.
 - A send back on a **finished** run (the judge looked at the hand-back or the app): first update the spec on the ticket
   branch for what the judge asked (commit it), then `run-loop.sh <KEY> --resume <run branch> "<the judge's reason>"` from the
   ticket worktree. It merges the ticket branch into the run branch, writes the Decision line, and the loop goes on there.
@@ -216,7 +228,7 @@ new `targets/<os>/`, not a new profile.
 - Builder: only the ticket's scope, plus the docs the change makes wrong (`DOC_PATHS`: skills, docs, CLAUDE.md), in
   the same commit; never the oracle, the factory, or `.claude/` settings and hooks (denied anyway). Claude Code refuses a
   headless session's edits under `.claude/`, so the builder stages a skill update in `handback/<branch>/docs/claude/…`
-  and the runner commits it into place. One code commit, then record, then hand-back. The reviewer checks the docs (its Docs line). Reviewer and charter: read-only. QA and explorer: blind (no source), never "Send error report".
+  and the runner commits it into place. One code commit, then hand-back; the record is the runner's. The reviewer checks the docs (its Docs line). Reviewer and charter: read-only. QA and explorer: blind (no source), never "Send error report".
 - Nothing is pushed, no PR, no Jira write, unless the user asked for it in this conversation.
 
 ## Where things are

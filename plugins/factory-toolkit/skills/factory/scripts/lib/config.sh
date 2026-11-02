@@ -13,9 +13,10 @@ SKILL_DIR=$(cd "$X/.." && pwd)
 # Runs and build worktrees live in the main checkout, so they are found from any worktree of the repo.
 MAIN_REPO=$(cd "$(git -C "$REPO" rev-parse --git-common-dir)/.." && pwd)
 FACTORY_DIR_REL=${FACTORY_DIR#$REPO/}
-VM=$X/vm
+VM=${FACTORY_VM_DIR:-$X/vm}
 
-# Engine defaults. Caps: per run (model, budget, time box), per ticket (iteration cap), per loop (budget, STOP file).
+# Engine defaults. Caps: per run (model, budget, time box), per loop: ITER_CAP builder runs in all, STALL_CAP in a row
+# that change nothing (code, disputes, tests), LOOP_USD dollars, the STOP and PAUSE files.
 B_MODEL=claude-opus-5-5     B_USD=8    B_MIN=45
 R_MODEL=claude-sonnet-5-5   R_USD=2    R_MIN=20
 QA_MODEL=claude-opus-5-5    QA_USD=6   QA_MIN=40
@@ -23,8 +24,14 @@ QA_MODEL=claude-opus-5-5    QA_USD=6   QA_MIN=40
 C_MODEL=claude-sonnet-5-5   C_USD=1    C_MIN=10
 X_MODEL=claude-opus-5-5     X_USD=5    X_MIN=30    RC_USD=3   RC_MIN=20
 EXPLORE=yes                 EXPLORE_SENDBACKS=1
-ITER_CAP=3                  LOOP_USD=40
+ITER_CAP=5                  STALL_CAP=2               LOOP_USD=40
+# A failing test is re-run up to FLAKY_RERUNS times; passing on a re-run makes it flaky (green, listed for the judge).
+FLAKY_RERUNS=2
+# After a builder session, how long a git index.lock it left may take to go before the runner removes it as stale.
+GIT_SETTLE_S=60
 FACTORY_RUNS=${FACTORY_RUNS:-$MAIN_REPO/.claude/worktrees/factory-runs}
+# The negative runs (the acceptance test on a base, which must fail), kept per base tree and test across runs.
+NEG_CACHE=${FACTORY_NEG_CACHE:-$FACTORY_RUNS/.negative}
 FACTORY_VM_ROOT=${FACTORY_VM_ROOT:-$HOME/VMs/factory}
 VM_CPUS=8  VM_MEM=16G  VM_MAX=2  VM_BOOT_MIN=10  GUEST_BUILD_MIN=30  HUMAN_WAIT_MIN=120
 VM_XRES=1600  VM_YRES=900

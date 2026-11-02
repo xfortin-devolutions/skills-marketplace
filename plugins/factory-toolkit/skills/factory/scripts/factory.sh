@@ -7,6 +7,10 @@
 #   factory.sh human [run]               a human judges the run's next (or current) QA instead of the agent alone
 #   factory.sh judge [run] pass|fail <why>   answer a run that waits for a human; the loop resumes
 #   factory.sh stop [run]                stop the run before its next station
+#   factory.sh pause [run]               stop the run before its next station, resumable: the runner saves its state and
+#                                        exits, its VMs power off (a weekend, a reboot)
+#   factory.sh resume [run]              go on with a paused, stopped or crashed loop run from the station it saved, in the
+#                                        same run folder (runs in the foreground: start it in the background)
 #   factory.sh down [run]                power off the VMs a run kept (--keep-vm) and remove their worktrees
 #   factory.sh new-profile <name> [--skill <project>]   start profiles/<name>/ from the skill's templates, in this repo's
 #                                        project (its own .factory/, or the skill's projects/<project>/ that matches it);
@@ -69,6 +73,20 @@ case "$cmd" in
     "$X/vm/vmctl.sh" show "$v" ;;
   human) d=$(run_dir "${1:-}") || exit 1; touch "$d/HUMAN"; echo "the next QA verdict of $(basename "$d") waits for you" ;;
   stop) d=$(run_dir "${1:-}") || exit 1; touch "$d/STOP"; echo "$(basename "$d") stops before its next station" ;;
+  pause)
+    d=$(run_dir "${1:-}") || exit 1
+    touch "$d/PAUSE"
+    echo "$(basename "$d") pauses before its next station; factory.sh resume $(basename "$d") goes on from there" ;;
+  resume)
+    d=$(run_dir "${1:-}") || exit 1
+    [ -f "$d/state.sh" ] || die "$(basename "$d") has no saved state (a QA-only or test-only run, or one from before 0.5.0)"
+    if [ -s "$d/runner.pid" ] && kill -0 "$(cat "$d/runner.pid")" 2> /dev/null; then
+      [ -e "$d/PAUSE" ] || die "$(basename "$d") is running"
+      rm -f "$d/PAUSE"; echo "$(basename "$d") had not reached its pause yet: the pause is cancelled"; exit 0
+    fi
+    t=$(. "$d/state.sh"; echo "$S_TICKET") wt=$(. "$d/state.sh"; echo "$S_WT")
+    [ -d "$wt" ] || die "the run's worktree $wt is gone"
+    cd "$wt" && exec bash "$X/run-loop.sh" "$t" --resume-run "$(basename "$d")" ;;
   down)
     d=$(run_dir "${1:-}") || exit 1
     n=0

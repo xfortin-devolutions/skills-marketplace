@@ -12,4 +12,4 @@ QA_MODEL=claude-opus-5-5    QA_USD=6   QA_MIN=40
 C_MODEL=claude-sonnet-5-5   C_USD=1    C_MIN=10
 X_MODEL=claude-opus-5-5     X_USD=5    X_MIN=30    RC_USD=3   RC_MIN=20
 EXPLORE=yes                 EXPLORE_SENDBACKS=1
-ITER_CAP=3                  LOOP_USD=40
+ITER_CAP=5                  STALL_CAP=2               LOOP_USD=40

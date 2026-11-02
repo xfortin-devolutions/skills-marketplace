@@ -10,7 +10,8 @@ DEFAULT_PROFILE=rdm
 # Docs a change may always update (skills: the .claude side; .agents/ and AGENTS.md are symlinks to it).
 DOC_PATHS=".claude/skills/ docs/ CLAUDE.md"
 
-# Builder: 75 min, since its guest builds take 20 to 30 of them (build, accept, the negative run's rebuild of the base).
+# Builder: 75 min. It only checks its work in the guest (a project build, the accept test); the runner's verify does the
+# full build, the tests and the negative run after it.
 B_MODEL=claude-opus-5-5     B_USD=8    B_MIN=75
 R_MODEL=claude-sonnet-5-5   R_USD=2    R_MIN=20
 QA_MODEL=claude-opus-5-5    QA_USD=6   QA_MIN=40
@@ -18,4 +19,4 @@ QA_MODEL=claude-opus-5-5    QA_USD=6   QA_MIN=40
 C_MODEL=claude-sonnet-5-5   C_USD=1    C_MIN=10
 X_MODEL=claude-opus-5-5     X_USD=5    X_MIN=30    RC_USD=3   RC_MIN=20
 EXPLORE=yes                 EXPLORE_SENDBACKS=1
-ITER_CAP=3                  LOOP_USD=40
+ITER_CAP=5                  STALL_CAP=2               LOOP_USD=40

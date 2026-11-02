@@ -33,7 +33,9 @@ SCOPE_REGEX='<the Touches line as an extended regex over repo paths>'
 - A new feature's oracle doesn't compile until the feature exists: that is its red ("type not found"). The Runtime
   check's red-on-base then runs on the commit before the oracle (`--qa-only <oracle commit>~1`), since the target's
   build includes the test project (GAPS V32). Read the failure messages, not just the count. Assert on what the user sees
-  (DEVEX-528: `source.Rows`, not the lazy `source.Items`, which passed on the buggy code).
+  (DEVEX-528: `source.Rows`, not the lazy `source.Items`, which passed on the buggy code). For a control, drive it
+  the way the screen does: shown in a window (Avalonia headless), not only its view model or collection (DEVEX-531: the
+  oracle passed on a fix the shown grid ignored, and only runtime QA caught it, a round later).
 - Covers each Acceptance item; keeps a couple of "already works" tests as regression guards.
 - Committed before the run (the builder's worktree is cut from `HEAD`) and protected (ORACLE_PATHS).
 
