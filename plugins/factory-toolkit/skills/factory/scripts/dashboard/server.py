@@ -93,10 +93,20 @@ def handback_status(run):
     return m.group(1) if m else None
 
 
+def last_end(evs):
+    """The run's end event, unless the run was resumed after it (factory.sh resume): then it is running again."""
+    for e in reversed(evs):
+        if e["msg"].startswith("run resumed"):
+            return None
+        if e["msg"].startswith("end: "):
+            return e
+    return None
+
+
 def run_summary(run):
     run_id = os.path.basename(run)
     evs = events(run)
-    ended = next((e for e in reversed(evs) if e["msg"].startswith("end: ")), None)
+    ended = last_end(evs)
     alive = pid_alive(run)
     if ended:
         state = "done"
@@ -111,7 +121,7 @@ def run_summary(run):
         state = "waiting"
     spent = sum(as_float(r["cost"]) for r in rows(run))
     # A finished run's dot shows how it ended, not just that it ended.
-    cls = "neutral" if status.startswith("stopped") else outcome_class(status)
+    cls = "neutral" if status.startswith(("stopped", "paused")) else outcome_class(status)
     return {"id": run_id, "ticket": ticket_of(run_id), "kind": run_kind(run_id), "state": state, "status": status,
             "cls": cls,
             "started": evs[0]["t"] if evs else None, "updated": evs[-1]["t"] if evs else None,
@@ -192,7 +202,7 @@ def nodes(run):
         by.setdefault((r["role"], r["n"]), r)
     out = []
     # A session the run never saw end (killed, or the runner died) is stopped, not working.
-    over = any(e["msg"].startswith("end: ") for e in evs) or pid_alive(run) is False
+    over = last_end(evs) is not None or pid_alive(run) is False
     if kind == "test":
         test = read(os.path.join(run, "test.out"))
         end = next((e["msg"][5:] for e in evs if e["msg"].startswith("end: ")), None)
@@ -327,7 +337,7 @@ def worktree_changes(run):
             return subprocess.run(["git", "-C", wt, *a], capture_output=True, text=True, timeout=10).stdout
         except (OSError, subprocess.SubprocessError):
             return ""
-    # The run's branch, not HEAD: a builder in the middle of its negative run has HEAD detached on the base.
+    # The run's branch, not HEAD: verify in the middle of its negative run has HEAD detached on the base.
     branch = next((l.split("branch: ")[1].split(" ")[0] for l in (read(os.path.join(run, "runs.md")) or "").splitlines()
                    if "branch: " in l), None)
     tip = branch or "HEAD"
@@ -335,7 +345,7 @@ def worktree_changes(run):
     note = ""
     if branch and head != branch:
         note = (f"Note: the worktree is not on {branch} right now (HEAD {git('rev-parse', '--short', 'HEAD').strip()}"
-                f"{', detached' if not head else ', on ' + head}): the builder may be running its negative test.\n\n")
+                f"{', detached' if not head else ', on ' + head}): verify may be running its negative run.\n\n")
     log = git("log", "--oneline", "--no-decorate", f"{base}..{tip}") if base else git("log", "--oneline", "-5", tip)
     stat = git("diff", "--stat", base, tip, "--", ".", ":(exclude)handback") if base else ""
     dirty = git("status", "--short")

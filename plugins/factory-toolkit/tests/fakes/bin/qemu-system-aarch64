@@ -1,0 +1,3 @@
+#!/bin/bash
+# Only has to exist: run-loop.sh checks for QEMU on the PATH.
+exit 0

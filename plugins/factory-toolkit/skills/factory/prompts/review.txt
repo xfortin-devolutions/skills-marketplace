@@ -1,4 +1,4 @@
 Review the change for ticket @TICKET@ on branch @BRANCH@ (base @BASE@). You are in a fresh, read-only session; edit nothing.
 Inputs: the ticket @SPEC@, the project's review standards @STANDARDS@, the repo's docs (@DOCS@), the diff `git diff @BASE@...HEAD -- . ':!handback'`, and the verification record @HANDBACK@/verification-record.md.
-Re-run the accept command yourself (it runs in the run's @GUEST_DESC@ build VM): @ACCEPT@ — and report its exit code and counts on the Reviewer line.
+The verification record is the runner's own: it built and tested this commit in the run's @GUEST_DESC@ build VM, so don't re-run its commands; on the Reviewer line write "re-ran the Run command: no: the runner's record". Re-run the accept command (@ACCEPT@) only when the record looks wrong, and say so there.
 Answer with exactly the nine lines your agent definition specifies, and nothing else.

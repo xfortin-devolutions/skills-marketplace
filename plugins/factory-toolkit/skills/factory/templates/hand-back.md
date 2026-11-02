@@ -14,10 +14,10 @@
 ## Tests (builder)
 - Run: `<command>` → <passed / failed / skipped counts>
 - Added: <test name: what it catches; one per line, or "none">
-- Fails without the change: <yes: how you showed it | not checked>
+- Fails without the change: <yes: how you showed it | the runner's negative run | not checked>
 - Criteria: <docs/spec-<ticket>.md: each criterion → the test that covers it | none approved>
 - Existing tests changed or deleted: <none | which, and why>
-- Verification record: <path> @ <short SHA verified> → <PASS | PARTIAL | FAIL>
+- Verification record: <path> @ <short SHA verified> → <PASS | PARTIAL | FAIL> (the factory's runner writes this line)
 
 ## Review (reviewer)
 <!-- Read the diff (`git diff <base>..<SHA verified>`) and the verification record. Do not edit code. Harness fix: commit it alone (`docs(harness): ...`), write its SHA below, then commit this section. Harness commits (`docs(harness):`) are listed under outside scope as `harness: <file>` and do not count as outside the ticket for judge Q1. The builder lists harness commits already on the branch; on a first pass the reviewer adds the `harness: <file>` entry to Files, the one exception to "fill only your section". On a re-review, read the previous Open findings first and say whether each is fixed. A (blocking) finding means Recommend: send back. -->
@@ -56,5 +56,5 @@
 
 Decision: <merge | merge behind flag: <flag> | send back | reject>: <one-line reason>, <your first and last name>, <YYYY-MM-DD>
 <!-- send back = the builder iterates on this branch; reject = abandon the change. Send back when: "unknown" on any of questions 1 to 4; "not checked" on Q2 or Q3; Q5 "no" and no flag available; "unknown" on Q5. With no production yet (sandbox), "test" in "How we'd see it" counts as seen. Write the decision in this file; the lab sheet may mirror it as a PR comment.
-After send back: the builder commits the fix, re-runs and overwrites the record (own commit), and updates the Change and Tests sections. The reviewer re-reviews and overwrites the Review section. The judge overwrites the Judge section; the previous decision stays in `git log`.
+After send back: the builder commits the fix and updates the Change and Tests sections; the record is re-run and overwritten (own commit: the factory's runner does it). The reviewer re-reviews and overwrites the Review section. The judge overwrites the Judge section; the previous decision stays in `git log`.
 No hand-back file to write in (the run stopped before it): the judge writes the Decision line alone in `handback/<branch-dir>/judge-note.md` and commits it. The Decision commit that judges the fix run deletes the note (`git rm`), so a stale send back never merges into the target branch. -->

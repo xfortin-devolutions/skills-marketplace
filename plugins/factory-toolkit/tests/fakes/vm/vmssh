@@ -1,0 +1,4 @@
+#!/bin/bash
+# Fake vmssh for tests/run-loop.test.sh: every script it is sent is the target's launch script.
+cat > /dev/null
+echo "LAUNCH OK"

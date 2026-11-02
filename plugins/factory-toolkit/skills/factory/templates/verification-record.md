@@ -1,12 +1,5 @@
 # Verification record
-<!-- Rules for the agent filling this in. Keep this comment in the file.
-1. Order: the code change is already committed. Verify that commit, then commit this file on its own. Commit field = the code commit you verified. After a send back, overwrite this file for the new code commit.
-2. Commands come from the lab sheet; if it names none, run the project's test command. Run each one yourself now.
-3. Run each command on its own: no pipe, no `;` or `&&`, no redirect, no `$?` or `$LASTEXITCODE`, no environment-variable prefix. Headless allow-lists can refuse those forms. The exit code is the one your shell tool reports; no error reported means 0. That exit code is the evidence. If your tool never shows exit codes, write "unknown" (rule 6) and list that command under Not verified. If a form you tried (pipe, chain, redirect, prefix) is refused, run the bare command instead; that refusal is not a Not verified item. A lab-sheet command that is refused as the sheet writes it is a Not verified item. A cmdlet such as Invoke-Pester sets no exit code: run the lab sheet's command, which wraps it in `pwsh -NoProfile -File <script>` or `-Command` and exits with the failure count. `FailedCount` alone misses test files that fail to load, so the sandbox wrapper also counts blocks and containers. In the table, write the command exactly as run. The excerpt quotes the relevant lines of the output your tool shows (rule 4). If output is not in English, the person who launched you applies the README's `locale` value (Fixture map) before starting the agent; do not prefix commands. Paste the output as it is.
-4. Paste real output, 15 lines at most per command. Mark cuts with [...]; lines you pick from the output are fine; a separate `grep -n` command row keeps its prefixes. Redact tokens, user names and home paths.
-5. A deliberate negative run (new test, change removed) is its own row with Result "expected fail: ..."; it does not make the Verdict FAIL. Restore the change afterwards; then `git status --short -- . ':!handback'` must print nothing before you commit this file.
-6. A value you cannot read from a tool: write "unknown". Never guess.
-7. Verdict: PASS only if "Not verified" is "nothing"; anything listed there makes it PARTIAL. -->
+<!-- Written by the factory runner (run-loop.sh) after each builder session, never by an agent: the runner runs every command below itself, in the run's build VM, on the Commit, and pastes their exit codes and output. Kept as the reference for its format; a human filling one in by hand follows the same fields. Verdict: PASS only when every command passed (the negative run fails, as expected) and "Not verified" is "nothing"; a test that passed only on a re-run is listed under Flaky. -->
 
 - Change: <ticket ID, or "none">, <one line: what changed>
 - Commit: <branch> @ <short SHA of the code commit you verified>
@@ -24,5 +17,6 @@ Output 1:
 <excerpt>
 ```
 
+- Flaky: <none | each test command that failed and then passed on a re-run, with how many runs failed>
 - Not verified: <what you did not check, and why; or "nothing">
 - Verdict: <PASS: all passed (expected-fail rows excepted), "Not verified" is "nothing" | PARTIAL: all run passed, something not verified | FAIL>
