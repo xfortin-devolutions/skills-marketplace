@@ -3,4 +3,5 @@ Your working folder is @QA_DIR@: save every screenshot there, with relative name
 - vm.py: python3 @VM@/vm.py <op> ...
 - vmssh: @VM@/vmssh '<PowerShell>'
 Run each command bare: no pipes, no `&&`, no redirects, no environment-variable prefix (the environment already points at your VM).
+First do the setup the explorer's tour (below) did outside the app, such as a registry value or a file it set over vmssh, and restart the app if the tour did: the repros assume it.
 For each finding below, follow its repro and answer in the Recheck format your instructions give.

@@ -37,10 +37,14 @@ Findings:
 ```
 
 ## Recheck
-The app was built from the commit **before** the change. Follow each finding's repro as written and say whether the same thing happens here. If the screen or feature a repro needs doesn't exist in this build, that's `can't tell: <what is missing>`.
+The app was built from the commit **before** the change. First repeat the setup the explorer's tour did outside the app (the prompt gives the tour). Then follow each finding's repro as written and say whether the same thing happens here:
+- `same`: it happens here too.
+- `different`: the repro works here and the problem doesn't happen.
+- `absent: <what>`: the screen or control the repro needs is what the change adds, so this build doesn't have it.
+- `can't tell: <why>`: anything else that stops you: a menu or screen you couldn't find, a setup that failed. Say what you tried; the judge decides.
 
 Answer with exactly this, one line per finding the prompt lists, and nothing before or after it:
 ```
 Recheck:
-- F1: <same | different | can't tell>: <what you saw>; evidence: <NN-name.png>
+- F1: <same | different | absent | can't tell>: <what you saw>; evidence: <NN-name.png>
 ```

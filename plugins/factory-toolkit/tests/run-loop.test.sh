@@ -65,7 +65,7 @@ t_happy() {
   expect_file "$(hb)/verification-record.md" '^- Tool: factory runner'
   expect_file "$(hb)/verification-record.md" 'expected fail: accept fails without the change'
   expect_file "$(hb)/verification-record.md" '^\| 2 \| .*/guest build \| 0 \| green \|$'
-  expect_file "$(hb)/verification-record.md" '^\| 3 \| .*/guest test Accept.Tests \| 0 \| 3 passed, 0 failed, 0 skipped \|$'
+  expect_file "$(hb)/verification-record.md" '^\| 3 \| .*/guest test --no-build Accept.Tests \| 0 \| 3 passed, 0 failed, 0 skipped \|$'
   expect_file "$(hb)/hand-back.md" '^- Verification record: .* → PASS \(written by the runner\)'
   # The charter's line naming a code file never reaches the explorer.
   expect_file "$FAKE_STATE/explorer-1.prompt" 'Use the feature twice'
@@ -108,6 +108,22 @@ EOF
   expect_calls builder 2; expect_calls qa 2
   expect_file "$FAKE_STATE/builder-2.prompt" 'runtime check failed \(QA run 1\): the groups do not move'
   expect_no_event 'explore-1:'
+  # The second review is a re-review from the code the first one saw; the default fake doesn't say what changed.
+  expect_file "$FAKE_STATE/reviewer-2.prompt" 'This is a re-review: .* the code at [0-9a-f]+'
+  expect_event "review-2: a re-review that doesn't name the changes since"
+  expect_file "$(hb)/hand-back.md" '^- Reviewed code: [0-9a-f]+$'
+}
+
+t_re_review_names_changes() {
+  cat > "$T/scenario.sh" <<'EOF'
+qa_1() { printf 'Verdict: FAIL\nSummary: the groups do not move\nHuman: none\n'; }
+builder_2() { commit_code "done, groups move"; write_handback; }
+reviewer_2() { reviewer | sed "s/^- Design: OK: /- Design: OK: since $(git log --format=%h -- src | sed -n 2p): src\/feature.txt now moves the groups; /"; }
+EOF
+  loop
+  expect_end '^ready for the judge'
+  expect_no_event "a re-review that doesn't name"
+  ! grep -q '^- Re-review:' "$(hb)/hand-back.md" || fail "a re-review that named its changes was flagged"
 }
 
 t_stall() {
@@ -154,8 +170,8 @@ EOF
   loop
   expect_end '^ready for the judge'
   expect_event 'build-1 .*verify=red: tests fail in the guest Broken.Tests SomeFilter'
-  grep -q 'test Broken.Tests SomeFilter' "$FAKE_STATE/guest.log" || fail "the listed test did not run with its filter"
-  [ "$(grep -c 'test Broken.Tests' "$FAKE_STATE/guest.log")" = 3 ] || fail "a failing test runs 1 + FLAKY_RERUNS times"
+  grep -q 'test --no-build Broken.Tests SomeFilter' "$FAKE_STATE/guest.log" || fail "the listed test did not run with its filter"
+  [ "$(grep -c 'test --no-build Broken.Tests' "$FAKE_STATE/guest.log")" = 3 ] || fail "a failing test runs 1 + FLAKY_RERUNS times"
 }
 
 t_accept_passes_on_base() {
@@ -204,6 +220,15 @@ t_stale_lock() {
   expect_end '^ready for the judge'
 }
 
+t_no_build_misses() {
+  touch "$FAKE_STATE/no-build-misses"
+  loop
+  expect_end '^ready for the judge'
+  # The record shows the command that ran: the one with a build.
+  expect_file "$(hb)/verification-record.md" '^\| 3 \| .*/guest test Accept.Tests \| 0 \| 3 passed'
+  expect_file "$FAKE_STATE/guest.log" '^test --no-build Accept.Tests'
+}
+
 t_busy_lock() {
   touch "$FAKE_STATE/lock-on-test"
   loop
@@ -222,8 +247,20 @@ EOF
   expect_file "$FAKE_STATE/builder-2.prompt" 'exploratory QA \(run 1\) found blockers .* F1'
 }
 
-ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix stall same_binaries iteration_cap flaky
-  failing_listed_test accept_passes_on_base build_fails pause_resume stop_then_resume stale_lock busy_lock explore_blocker"
+t_recheck_cant_tell() {
+  cat > "$T/scenario.sh" <<'EOF2'
+explorer_1() { printf 'Tour:\n1. set the DevMode registry value over vmssh, restarted the app\n2. clicked twice\nFindings:\n- F1 (blocker): the second click empties the grid; evidence: 03.png\n'; }
+recheck_1() { echo "- F1: can't tell: no Dev menu in this build"; }
+EOF2
+  loop
+  expect_end '^ready for the judge'
+  expect_calls builder 1
+  expect_file "$(hb)/hand-back.md" 'F1 \(blocker, unconfirmed\)'
+  expect_file "$FAKE_STATE/recheck-1.prompt" 'set the DevMode registry value over vmssh'
+}
+
+ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix re_review_names_changes stall same_binaries iteration_cap flaky
+  failing_listed_test accept_passes_on_base build_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell"
 for t in ${*:-$ALL}; do
   ok=yes
   setup

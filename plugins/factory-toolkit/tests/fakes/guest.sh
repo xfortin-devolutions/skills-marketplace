@@ -2,6 +2,7 @@
 # Fake guest tool for tests/run-loop.test.sh: "builds" and "tests" the shared worktree by looking at it.
 #   build: fails when <worktree>/BROKEN exists. test Accept.Tests: passes when src/feature.txt holds "done" (or always,
 #   with $FAKE_STATE/accept-always-passes). Flaky.Tests fails its first run, Broken.Tests always fails.
+#   test --no-build fails with no tests run when $FAKE_STATE/no-build-misses exists.
 #   With $FAKE_STATE/lock-on-test, the first test run holds the worktree's index.lock for 4 s.
 D=$1 CMD=$2; shift 2
 . "$D/guest.conf"
@@ -12,6 +13,11 @@ case "$CMD" in
   build) if [ -e "$WORKTREE/BROKEN" ]; then echo "src/a.cs(1,1): error CS0001: broken"; echo "BUILD EXIT CODE: 1"; exit 1; fi
          echo "    0 Error(s)"; echo "BUILD EXIT CODE: 0"; exit 0 ;;
   test)
+    if [ "${1:-}" = --no-build ]; then
+      shift
+      # A test project the whole build doesn't cover: nothing to run without building it.
+      [ -e "$FAKE_STATE/no-build-misses" ] && { echo "error: The test source file was not found."; echo "TEST EXIT CODE: 1"; exit 1; }
+    fi
     k=$(($(cat "$FAKE_STATE/test-$1.n" 2> /dev/null || echo 0) + 1)); echo "$k" > "$FAKE_STATE/test-$1.n"
     # Another process (a plugin hook) holding the worktree's index.lock for a few seconds, on the first test run.
     if [ -e "$FAKE_STATE/lock-on-test" ] && [ "$k" = 1 ]; then
