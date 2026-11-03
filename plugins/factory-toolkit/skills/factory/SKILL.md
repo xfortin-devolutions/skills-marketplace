@@ -121,6 +121,9 @@ bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loo
   `handback/<branch>/disputes.md` instead of changing code: the next QA round gets only the intended behaviour (never the
   reasons), reports the item as disputed, and the hand-back lists it for the judge. A send back that changes no code and
   disputes nothing stops the run for a human.
+- An acceptance test the builder finds contradicts the ticket goes in `disputes.md` as `## accept: <test>`: a red verify
+  with one stops the run for a human (notified), and so do the same accept tests failing two verifies in a row. Fix the
+  oracle on the ticket branch (or overrule it in the reason), then `--continue` (below).
 - The builder commits code and writes its hand-back sections; **the runner writes the verification record**: verify runs
   the negative run (the accept test on the base, kept per base and test, so once), the full build, the accept test and
   the tests the builder lists in `handback/<branch>/tests.txt`, each in the build VM. A test that passes only on a

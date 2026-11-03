@@ -241,6 +241,29 @@ t_restore_flake_on_clean() {
   expect_file "$RUN/verify-1.log" 'harness error on the clean rebuild: one more build'
 }
 
+# A builder that disputes the acceptance test stops the run for a human instead of being sent back to the cap.
+t_accept_dispute() {
+  cat > "$T/scenario.sh" <<'EOF'
+builder() {
+  commit_code "half $(cat "$FAKE_STATE/builder.n")"; d=$(hb_dir); mkdir -p "$d"
+  printf '## accept: Accept.Tests.It\n- Contradiction: it expects the opposite of the ticket\n- Why: spec line 3\n' > "$d/disputes.md"
+  write_handback
+}
+EOF
+  loop
+  expect_end '^needs a human: the builder disputes the acceptance test \(Accept.Tests.It'
+  expect_calls builder 1
+  expect_event 'notify: the builder disputes the acceptance test'
+}
+
+# The same accept tests red in two verifies in a row stop for a human, even with no dispute and new code each round.
+t_accept_same_fails() {
+  echo 'builder() { commit_code "half $(cat "$FAKE_STATE/builder.n")"; write_handback; }' > "$T/scenario.sh"
+  loop
+  expect_end '^needs a human: the same acceptance tests failed two verifies in a row \(Accept.Tests.It\)'
+  expect_calls builder 2
+}
+
 t_pause_resume() {
   echo 'builder_1() { commit_code done; write_handback; touch "$(run_dir)PAUSE"; }' > "$T/scenario.sh"
   loop
@@ -311,7 +334,7 @@ EOF2
 }
 
 ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
-  failing_listed_test accept_passes_on_base build_fails restore_flake_on_clean pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell"
+  failing_listed_test accept_passes_on_base build_fails restore_flake_on_clean accept_dispute accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell"
 for t in ${*:-$ALL}; do
   ok=yes
   setup
