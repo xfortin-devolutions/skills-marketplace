@@ -62,7 +62,9 @@
   .tab { padding: 6px 10px; cursor: pointer; border-radius: 6px 6px 0 0; color: var(--muted); }
   .tab.on { color: var(--text); background: var(--neutral-bg); font-weight: 600; }
   pre { background: var(--code-bg); border-radius: 6px; padding: 10px; overflow: auto; max-height: 480px; white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; }
-  .steps { list-style: none; padding: 0; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .steps { list-style: none; padding: 0; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 480px; overflow-y: auto; }
+  .filter { padding: 8px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+  .filter select { font: inherit; font-size: 12px; }
   .steps li { padding: 4px 8px; border-left: 3px solid var(--line); margin-bottom: 3px; background: var(--code-bg); border-radius: 0 4px 4px 0; white-space: pre-wrap; word-break: break-word; }
   .steps li.text { border-left-color: var(--accent); font-family: inherit; }
   .steps li:last-child { border-left-color: var(--run); }
@@ -70,8 +72,12 @@
   .shots figure { margin: 0; cursor: zoom-in; }
   .shots img { width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
   .shots figcaption { font-size: 11px; color: var(--muted); margin-top: 3px; }
-  .zoom { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: flex; align-items: center; justify-content: center; z-index: 9; cursor: zoom-out; }
-  .zoom img { max-width: 96vw; max-height: 94vh; border-radius: 6px; }
+  .zoom { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; z-index: 9; cursor: zoom-out; }
+  .zoom img { max-width: 96vw; max-height: 88vh; border-radius: 6px; }
+  .zoom .cap { color: #fff; font-size: 13px; display: flex; gap: 14px; align-items: center; cursor: default; }
+  .zoom .cap b { font: 13px ui-monospace, Menlo, monospace; }
+  .zoom .nav { background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; font-size: 14px; cursor: pointer; }
+  .zoom .nav:disabled { opacity: .3; cursor: default; }
   .events div { font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); }
   .events b { color: var(--text); font-weight: 500; }
   a { color: var(--accent); }
@@ -82,7 +88,9 @@
 <body>
 <header><h1>Factory runs</h1><span class="badge">local · read-only</span><span class="muted" id="clock"></span></header>
 <div class="layout">
-  <aside id="runs"></aside>
+  <aside><div class="filter"><span class="muted">Show</span><select id="filter">
+    <option value="1">active, and finished in the last day</option><option value="7">active, and finished in the last 7 days</option>
+    <option value="0">all runs</option></select></div><div id="runs"></div><div class="muted" id="hidden" style="padding:8px 14px"></div></aside>
   <main id="main"><div class="empty">Pick a run.</div></main>
 </div>
 <script>
@@ -107,16 +115,41 @@ function writeHash() {
 }
 async function get(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(r.status); return r.json(); }
 
+// setHTML: replaces an element's content only when it changed, and keeps where each scrollable box inside it was:
+// a box scrolled to its end follows new lines (the activity of a running station), any other keeps its place.
+function setHTML(el, html) {
+  if (!el || el._html === html) return false;
+  const boxes = [...el.querySelectorAll("pre, .steps")].map(b => ({ top: b.scrollTop, end: b.scrollHeight - b.scrollTop - b.clientHeight < 4 }));
+  el.innerHTML = html;
+  el._html = html;
+  [...el.querySelectorAll("pre, .steps")].forEach((b, i) => {
+    const k = boxes[i];
+    if (!k) return;
+    b.scrollTop = k.end && b.classList.contains("steps") ? b.scrollHeight : k.top;
+  });
+  return true;
+}
+
+const live = s => s === "running" || s === "waiting";
+function filterDays() { try { return localStorage.getItem("factory.filter") ?? "7"; } catch { return "7"; } }
+
 async function loadRuns() {
-  const runs = await get("/api/runs");
-  $("#runs").innerHTML = runs.map(r => `
+  const all = await get("/api/runs");
+  const days = Number(filterDays());
+  const recent = r => !days || live(r.state) || r.id === state.run || Date.now() - Date.parse(r.updated) < days * 86400e3;
+  const runs = all.filter(recent);
+  setHTML($("#runs"), runs.map(r => `
     <div class="run ${r.id === state.run ? "sel" : ""}" data-id="${esc(r.id)}">
       <div class="top"><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}"></span><b>${esc(r.ticket)}</b><span class="badge">${esc(r.kind)}</span>
         <span class="muted" style="margin-left:auto">${r.spent ? "$" + r.spent.toFixed(2) : ""}</span></div>
       <div class="status" title="${esc(r.status)}">${esc(r.status)}</div>
       <div class="muted">${esc(r.state)} · ${ago(r.updated)}</div>
-    </div>`).join("") || `<div class="empty">No runs yet.</div>`;
-  for (const el of document.querySelectorAll(".run")) el.onclick = () => { state.run = el.dataset.id; state.node = null; state.tab = null; state.lastRun = null; writeHash(); refresh(); };
+    </div>`).join("") || `<div class="empty">No runs ${days ? "in that time" : "yet"}.</div>`);
+  const hidden = all.length - runs.length;
+  $("#hidden").textContent = hidden ? `${hidden} older finished run${hidden > 1 ? "s" : ""} hidden. factory.sh clean <KEY> deletes a ticket's runs.` : "";
+  for (const el of document.querySelectorAll(".run")) el.onclick = () => {
+    if (state.run === el.dataset.id) return;
+    state.run = el.dataset.id; state.node = null; state.tab = null; writeHash(); refresh(); };
   if (!state.run && runs.length) { state.run = runs[0].id; writeHash(); }
 }
 
@@ -129,29 +162,51 @@ function nodeHtml(n) {
     ${meta ? `<div class="m">${meta}</div>` : ""}</div>`;
 }
 
+// The run view is a fixed set of sections, built once a run: a refresh updates each one only when its content changed,
+// so the station details being read are never rebuilt because a clock or the event list moved.
+function runSkeleton() {
+  $("#main").innerHTML = `<div class="card runhead" id="s-head"></div>
+    <div class="card"><b>Pipeline</b><div id="s-pipeline"></div></div>
+    <div class="card" id="detail"></div>
+    <div class="card" id="s-handback" hidden><b>Hand-back</b><div id="s-handback-body" style="margin-top:8px"></div></div>
+    <div class="card events"><b>Last events</b><div id="s-events" style="margin-top:6px"></div></div>`;
+  state.skeleton = state.run;
+}
+
 async function loadRun() {
   if (!state.run) return;
   const r = state.runData = await get(`/api/run/${encodeURIComponent(state.run)}`);
+  if (state.skeleton !== state.run || !$("#detail")) runSkeleton();
   const rounds = {};
   for (const n of r.nodes) (rounds[n.round] = rounds[n.round] || []).push(n);
-  const pipeline = Object.keys(rounds).sort((a, b) => a - b).map(k => `
-    <div class="round"><div class="label">${r.kind === "loop" ? "Round " + k : ""}</div>
-      ${rounds[k].map(nodeHtml).join('<div class="arrow">→</div>')}</div>`).join("") || `<div class="muted">Nothing has started yet.</div>`;
-  const live = r.state === "running" || r.state === "waiting";
-  let html = `<div class="card runhead">
+  const isLive = r.state === "running" || r.state === "waiting";
+  setHTML($("#s-head"), `
       <h2><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}" style="display:inline-block"></span> ${esc(r.ticket)} <span class="badge">${esc(r.kind)}</span></h2>
-      <div class="muted">${esc(r.id)} · started ${ago(r.started)} · ${live ? "running for " + elapsed(r.started) : "took " + elapsed(r.started, r.updated)} · spent $${r.spent.toFixed(2)}</div>
+      <div class="muted">${esc(r.id)} · started ${ago(r.started)} · ${isLive ? "running for " + elapsed(r.started) : "took " + elapsed(r.started, r.updated)} · spent $${r.spent.toFixed(2)}</div>
       <div style="margin-top:6px">${esc(r.status)}</div>
       ${r.header ? `<div class="muted" style="margin-top:4px">${esc(r.header)}</div>` : ""}
-      ${r.state === "waiting" ? `<div class="banner">Waiting for a human: factory.sh show ${esc(r.id)}, then factory.sh judge ${esc(r.id)} pass|fail &lt;why&gt;</div>` : ""}
-    </div>
-    <div class="card"><b>Pipeline</b>${pipeline}</div>
-    <div class="card" id="detail">${state.node ? '<div class="muted">Loading…</div>' : '<div class="muted">Click a station for its details.</div>'}</div>`;
-  if (r.handback) html += `<div class="card"><b>Hand-back</b><pre style="margin-top:8px">${esc(r.handback)}</pre></div>`;
-  html += `<div class="card events"><b>Last events</b><div style="margin-top:6px">${r.events.slice().reverse().map(e => `<div><b>${esc(e.t.slice(11, 19))}</b> ${esc(e.msg)}</div>`).join("")}</div></div>`;
-  if (html !== state.lastRun || !$("#detail")) { $("#main").innerHTML = html; state.lastRun = html; state.lastNode = null; }
-  for (const el of document.querySelectorAll(".node")) el.onclick = () => { state.node = el.dataset.key; state.tab = null; state.lastRun = null; writeHash(); loadRun(); };
+      ${r.state === "waiting" ? `<div class="banner">Waiting for a human: factory.sh show ${esc(r.id)}, then factory.sh judge ${esc(r.id)} pass|fail &lt;why&gt;</div>` : ""}`);
+  if (setHTML($("#s-pipeline"), Object.keys(rounds).sort((a, b) => a - b).map(k => `
+    <div class="round"><div class="label">${r.kind === "loop" ? "Round " + k : ""}</div>
+      ${rounds[k].map(nodeHtml).join('<div class="arrow">→</div>')}</div>`).join("") || `<div class="muted">Nothing has started yet.</div>`)) {
+    for (const el of document.querySelectorAll(".node")) el.onclick = () => {
+      if (state.node === el.dataset.key) return;
+      state.node = el.dataset.key; state.tab = null; writeHash(); loadRun().then(revealDetail); };
+  }
+  $("#s-handback").hidden = !r.handback;
+  if (r.handback) setHTML($("#s-handback-body"), `<pre>${esc(r.handback)}</pre>`);
+  setHTML($("#s-events"), r.events.slice().reverse().map(e => `<div><b>${esc(e.t.slice(11, 19))}</b> ${esc(e.msg)}</div>`).join(""));
   if (state.node) await loadNode();
+  else setHTML($("#detail"), '<div class="muted">Click a station for its details.</div>');
+}
+
+// A click on a station shows its details without moving the page, unless the details start below the screen: then the
+// page scrolls just enough to show their top, never to their end.
+function revealDetail() {
+  const box = $("#detail"), main = $("#main");
+  if (!box || !main) return;
+  const top = box.getBoundingClientRect().top, view = main.getBoundingClientRect();
+  if (top > view.bottom - 80) main.scrollBy({ top: top - view.top - 16, behavior: "smooth" });
 }
 
 async function loadNode() {
@@ -184,16 +239,48 @@ async function loadNode() {
     files: () => d.files.map(f => `<div><a href="${esc(f)}" target="_blank">${esc(f.split("/").slice(4).join("/"))}</a></div>`).join(""),
   };
   const waitingText = running ? (d.steps ? "Working… (no steps yet)" : "Working… (this run predates live steps: details appear when the station ends)") : "No details recorded.";
-  const nodeHtml2 = `<b>${esc(n.title)}</b> <span class="muted">${esc(state.node)} · ${esc(n.state || "")}</span>
+  const key = state.node + "|" + state.tab;
+  const fresh = box._key !== key;
+  // The header and the tab row, then the tab's body, each kept apart: a new step only touches the body.
+  if (fresh) { box.innerHTML = `<div id="d-head"></div><div id="d-body"></div>`; box._key = key; box._html = null; }
+  setHTML($("#d-head", box), `<b>${esc(n.title)}</b> <span class="muted">${esc(state.node)} · ${esc(n.state || "")}</span>
     ${n.outcome ? `<div style="margin-top:4px">${esc(n.outcome)}</div>` : ""}
-    ${tabs.length ? `<div class="tabs">${tabs.map(([k, l]) => `<div class="tab ${k === state.tab ? "on" : ""}" data-tab="${k}">${l}</div>`).join("")}</div>${body[state.tab]()}` : `<div class="muted" style="margin-top:8px">${waitingText}</div>`}`;
-  if (nodeHtml2 === state.lastNode) return;
-  state.lastNode = nodeHtml2;
-  box.innerHTML = nodeHtml2;
-  for (const el of box.querySelectorAll(".tab")) el.onclick = () => { state.tab = el.dataset.tab; state.lastNode = null; writeHash(); loadNode(); };
-  for (const el of box.querySelectorAll("figure")) el.onclick = () => {
-    const z = document.createElement("div"); z.className = "zoom"; z.innerHTML = `<img src="${el.dataset.src}">`; z.onclick = () => z.remove(); document.body.append(z); };
-  if (state.tab === "activity") { const ul = $(".steps", box); if (ul) ul.lastElementChild?.scrollIntoView({ block: "nearest" }); }
+    ${tabs.length ? `<div class="tabs">${tabs.map(([k, l]) => `<div class="tab ${k === state.tab ? "on" : ""}" data-tab="${k}">${l}</div>`).join("")}</div>` : ""}`);
+  for (const el of box.querySelectorAll(".tab")) el.onclick = () => { if (state.tab === el.dataset.tab) return; state.tab = el.dataset.tab; writeHash(); loadNode(); };
+  const changed = setHTML($("#d-body", box), tabs.length ? body[state.tab]() : `<div class="muted" style="margin-top:8px">${waitingText}</div>`);
+  if (changed) for (const el of box.querySelectorAll("figure")) el.onclick = () => zoom(d.shots, d.shots.indexOf(el.dataset.src));
+  // A newly opened activity starts at its latest step, scrolled inside its own box (never the page).
+  if (fresh && state.tab === "activity") { const ul = $(".steps", box); if (ul) ul.scrollTop = ul.scrollHeight; }
+}
+
+// zoom: one screenshot full size, with its name; ← → (or the buttons) step through them in step order, Esc closes.
+function zoom(shots, i) {
+  const z = document.createElement("div");
+  z.className = "zoom";
+  const show = k => {
+    i = Math.max(0, Math.min(shots.length - 1, k));
+    z.innerHTML = `<img src="${esc(shots[i])}" alt="">
+      <div class="cap"><button class="nav" data-go="-1" ${i ? "" : "disabled"}>←</button>
+        <b>${esc(shots[i].split("/").pop())}</b><span>${i + 1} of ${shots.length}</span>
+        <button class="nav" data-go="1" ${i < shots.length - 1 ? "" : "disabled"}>→</button>
+        <span style="opacity:.6">← → to step, Esc to close</span></div>`;
+  };
+  const close = () => { z.remove(); document.removeEventListener("keydown", key); };
+  const key = e => {
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") { show(i + 1); e.preventDefault(); }
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { show(i - 1); e.preventDefault(); }
+    else if (e.key === "Home") { show(0); e.preventDefault(); }
+    else if (e.key === "End") { show(shots.length - 1); e.preventDefault(); }
+    else if (e.key === "Escape") close();
+  };
+  z.onclick = e => {
+    const go = e.target.closest(".nav");
+    if (go) { if (!go.disabled) show(i + Number(go.dataset.go)); return; }
+    if (!e.target.closest(".cap")) close();
+  };
+  document.addEventListener("keydown", key);
+  show(i);
+  document.body.append(z);
 }
 
 async function refresh() {
@@ -201,6 +288,8 @@ async function refresh() {
   catch (e) { $("#clock").textContent = "server not answering (" + e.message + ")"; }
 }
 readHash();
+$("#filter").value = filterDays();
+$("#filter").onchange = e => { try { localStorage.setItem("factory.filter", e.target.value); } catch {} loadRuns(); };
 refresh();
 setInterval(() => { if (!document.querySelector(".zoom")) refresh(); }, 4000);
 </script>
