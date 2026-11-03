@@ -37,6 +37,7 @@
 <!-- Written by the runner after the blind QA agent ran the ticket's Runtime check in a throwaway VM. Not filled: the ticket has no Runtime check, or QA was off. -->
 - QA: <tool, model, blind; VM; build of <short SHA>>
 - Verdict: <PASS | FAIL | NEEDS-HUMAN>: <one line>
+- Defects: <none | what QA saw go wrong beyond the expectations, one per line; one in the tested behaviour makes the verdict FAIL>
 - Disputed by the builder: <none | the expectations, and the file with the builder's reasons: the judge decides them>
 - Report: <path>; evidence: <screenshots>
 

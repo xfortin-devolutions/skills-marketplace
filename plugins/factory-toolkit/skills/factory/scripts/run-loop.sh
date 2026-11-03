@@ -845,6 +845,9 @@ write_qa() {
   {
     echo "- QA: Claude Code, $QA_MODEL, blind; throwaway $GUEST_DESC VM; the verified Debug build of $(git -C "$WT" rev-parse --short HEAD)"
     echo "- Verdict: $QA_VERDICT"
+    # What QA saw go wrong beyond the expectations: the judge reads these even on a PASS.
+    awk '/^Defects:/ { f = 1; sub(/^Defects: */, ""); if ($0 != "") print "- Defects: " $0; else print "- Defects:"; next }
+         f && /^  / { print; next } { f = 0 }' "$RUN/qa-$n/report.md" 2> /dev/null | grep . || echo "- Defects: not reported"
     d=$(disputed_ids)
     [ "$d" = none ] && echo "- Disputed by the builder: none" \
       || echo "- Disputed by the builder: $d; reasons for the judge: \`$HANDBACK/disputes.md\`"

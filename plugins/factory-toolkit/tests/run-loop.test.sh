@@ -67,6 +67,7 @@ t_happy() {
   expect_file "$(hb)/verification-record.md" '^\| 2 \| .*/guest build \| 0 \| green \|$'
   expect_file "$(hb)/verification-record.md" '^\| 3 \| .*/guest test --no-build Accept.Tests \| 0 \| 3 passed, 0 failed, 0 skipped \|$'
   expect_file "$(hb)/hand-back.md" '^- Verification record: .* → PASS \(written by the runner\)'
+  expect_file "$(hb)/hand-back.md" '^- Defects: not reported$'
   # The charter's line naming a code file never reaches the explorer.
   expect_file "$FAKE_STATE/explorer-1.prompt" 'Use the feature twice'
   ! grep -q OtherWindow "$FAKE_STATE/explorer-1.prompt" || fail "a charter line naming code reached the explorer"
@@ -124,6 +125,16 @@ EOF
   expect_end '^ready for the judge'
   expect_no_event "a re-review that doesn't name"
   ! grep -q '^- Re-review:' "$(hb)/hand-back.md" || fail "a re-review that named its changes was flagged"
+}
+
+t_qa_defects() {
+  cat > "$T/scenario.sh" <<'EOF'
+qa_1() { printf 'Verdict: PASS\nSummary: works\nSteps:\n1. looked\nDefects:\n  a notification covered the grid; 1 of 2 tries; elsewhere; evidence: 04.png\nHuman: none\n'; }
+EOF
+  loop
+  expect_end '^ready for the judge'
+  expect_file "$(hb)/hand-back.md" '^- Defects:$'
+  expect_file "$(hb)/hand-back.md" '^  a notification covered the grid; 1 of 2 tries; elsewhere'
 }
 
 t_stall() {
@@ -259,7 +270,7 @@ EOF2
   expect_file "$FAKE_STATE/recheck-1.prompt" 'set the DevMode registry value over vmssh'
 }
 
-ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix re_review_names_changes stall same_binaries iteration_cap flaky
+ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix re_review_names_changes qa_defects stall same_binaries iteration_cap flaky
   failing_listed_test accept_passes_on_base build_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell"
 for t in ${*:-$ALL}; do
   ok=yes
