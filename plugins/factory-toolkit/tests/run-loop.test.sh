@@ -54,6 +54,7 @@ expect_no_event() { ! grep -qE "$1" "$RUN/events.log" || fail "unexpected event 
 expect_calls() { local n; n=$(grep -c "^$1 " "$FAKE_STATE/calls.log" 2> /dev/null); [ "${n:-0}" = "$2" ] || fail "$1 sessions: wanted $2, got ${n:-0}"; }
 hb() { echo "$(ls -d "$R"/.claude/worktrees/demo-1-build-*/ | head -1)handback/factory-demo-1-build-$(basename "$RUN" | sed 's/^demo-1-//')"; }
 expect_file() { grep -qE "$2" "$1" 2> /dev/null || fail "$(basename "$1"): no /$2/"; }
+one_vm() { [ "$(cat "$FAKE_STATE/vms-max" 2> /dev/null)" = 1 ] || fail "the run held $(cat "$FAKE_STATE/vms-max" 2> /dev/null) VMs at once"; }
 
 # The scenarios. Each writes the agents it changes into $T/scenario.sh (see fakes/agents.sh for the defaults).
 
@@ -76,6 +77,7 @@ t_happy() {
   loop
   expect_end '^ready for the judge'
   expect_event 'negative run: kept from run demo-1-'
+  one_vm
 }
 
 t_timebox_after_commit() {
@@ -113,6 +115,7 @@ EOF
   expect_file "$FAKE_STATE/reviewer-2.prompt" 'This is a re-review: .* the code at [0-9a-f]+'
   expect_event "review-2: a re-review that doesn't name the changes since"
   expect_file "$(hb)/hand-back.md" '^- Reviewed code: [0-9a-f]+$'
+  one_vm
 }
 
 t_re_review_names_changes() {
@@ -256,6 +259,7 @@ EOF
   expect_end '^ready for the judge \(Recommend: merge; runtime QA PASS; exploratory QA: 0 finding'
   expect_calls builder 2; expect_calls recheck 1
   expect_file "$FAKE_STATE/builder-2.prompt" 'exploratory QA \(run 1\) found blockers .* F1'
+  one_vm
 }
 
 t_recheck_cant_tell() {

@@ -14,7 +14,7 @@ description: "[EXPERIMENTAL] Software factory for Jira tickets, run from a Mac, 
 spec (human-approved) ─► run: worktree ─► builder ─► verify ─► reviewer ─► runtime QA ─► exploratory QA ─► hand-back ─► judge
                                               ▲      red     │ send back  │ FAIL         │ new blocker (once)
                                               └──────────────┴────────────┴──────────────┴──────────────────┘ ≤ ITER_CAP
-                              └──── build VM (one per run, shares the worktree) ────┘   └─ fresh clone, launches
+                              └── build VM (powered off after verify, shares the worktree) ─┘   └─ fresh clone, launches
                                     builder's `guest build|test`; verify's record:          the verified binaries
                                     negative run, build, accept, listed tests
 ```
@@ -104,9 +104,10 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
 ## run <KEY> [--open-pr] [--qa | --no-qa] [--no-explore] [--keep-vm]
 
 Preconditions: run from the ticket's worktree (`factory.sh start`), with the spec written and the oracle committed: the run
-cuts its own branch and worktree from that `HEAD`, and nothing builds in your checkout. It also needs the target's VM image (**setup**). The run holds two VM slots while QA runs: the build VM
-and the QA clone. A base re-check (findings to re-try) powers the build VM off for its own VM, and the loop boots it
-again if a send back follows.
+cuts its own branch and worktree from that `HEAD`, and nothing builds in your checkout. It also needs the target's VM image (**setup**). A run holds one VM slot at a time: the build VM
+for the builder and verify, powered off once verify is green; then the QA clone; then, for findings to re-try, the
+base re-check's VM. A send back boots a fresh build VM (the build output lives in the worktree, so it builds
+incrementally). When every slot (`VM_MAX`) is taken, a VM waits up to `VM_SLOT_WAIT_MIN` for one instead of failing.
 ```
 bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loop takes minutes to an hour
 ```
@@ -152,7 +153,7 @@ Offer it when a run starts, and whenever the user asks how things are going. `--
 
 `bash $F/factory.sh <sub-command> …` ([run] = run id or prefix; default the newest run).
 - **show** opens the run's live VM in macOS Screen Sharing (VNC on localhost, per-run password): the QA clone during a
-  QA stage, else the build VM, which lives as long as the run. With `--keep-vm` the last QA VM stays until **down**.
+  QA stage, else the build VM while the builder or verify works. With `--keep-vm` the last QA VM stays until **down**.
 - **human** makes the run's next QA wait for a human verdict (the agent still runs and reports first). When a run waits
   (`WAITING FOR A HUMAN` in status), it has already notified and opened Screen Sharing; the user looks, then **judge**.
 - **judge** writes the human verdict; the loop resumes: `pass` = PASS, `fail` = send back with the reason.

@@ -59,7 +59,8 @@ python3 $S/vm.py shot $R/check.png                         # the desktop
 $S/vmctl.sh show $R                                        # Screen Sharing opens on it
 $S/vmctl.sh down $R                                        # overlay deleted; base.qcow2 untouched
 ```
-Two `up`s in parallel must get different slots/ports (`VM_MAX` caps how many run at once).
+Two `up`s in parallel must get different slots/ports (`VM_MAX` caps how many run at once). With every slot taken, `up`
+waits for one (`VM_SLOT_WAIT_MIN`, default 120) and says so on stderr.
 
 ## Notes
 - Screen: clones and `start.sh` use `virtio-gpu-pci` at `VM_XRES`×`VM_YRES` (default 1600×900; override in `~/.factory/config.sh`) with the
