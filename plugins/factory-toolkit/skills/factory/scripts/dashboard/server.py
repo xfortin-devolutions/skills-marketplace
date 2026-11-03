@@ -239,15 +239,22 @@ def nodes(run):
                     text = v.group(1) if v else b["outcome"]
                     out.append(node(st, n, "done", text, "good" if text.startswith("green") else outcome_class(text)))
                 elif session_state(run, f"build-{n}") == "done":
+                    base = any(e["msg"].startswith(f"verify-{n}: listed tests red") for e in evs)
                     out.append(node(st, n, "stopped", "stopped: the run ended first", "neutral") if over
-                               else node(st, n, "running", "building and testing in the build VM", "neutral"))
+                               else node(st, n, "running", "running the red listed tests on the base, in a VM of their own" if base
+                                         else "building and testing in the build VM", "neutral"))
                 continue
             state = session_state(run, name)
-            if st == "qa" and state is None:
-                prep = [e["msg"] for e in evs if e["msg"].startswith(f"qa-{n}:")]
+            # QA and the base re-check boot a VM and build or launch before their agent starts: shown as preparing,
+            # with the runner's last event, so a station isn't missing for those minutes.
+            if st in ("qa", "recheck") and state is None:
+                pre = f"{st}-{n}: "
+                prep = [e["msg"] for e in evs if e["msg"].startswith(pre)]
                 if prep:
-                    last = prep[-1][len(f"qa-{n}: "):]
-                    done = any(e["msg"].startswith(f"qa-{n}: ") and re.match(r"(PASS|FAIL|ERROR|NEEDS)", e["msg"][len(f"qa-{n}: "):]) for e in evs)
+                    last = prep[-1][len(pre):]
+                    finished = (lambda m: re.match(r"(PASS|FAIL|ERROR|NEEDS)", m)) if st == "qa" \
+                        else (lambda m: not m.startswith("VM up"))
+                    done = any(e["msg"].startswith(pre) and finished(e["msg"][len(pre):]) for e in evs)
                     if not done and over:
                         out.append(node(st, n, "stopped", "stopped: the run ended first", "neutral"))
                     else:
