@@ -100,7 +100,10 @@ One golden image per guest OS (`<FACTORY_VM_ROOT>/<os>/base.qcow2`, references/v
 Disk is the limit: never an image per scenario or per ticket. Software a product needs on the machine (servers,
 databases, services) goes in a **layer**: a qcow2 overlay on `base.qcow2` that stores only its own changes (the
 Console's IIS, SQL Server Express, PostgreSQL and four DVLS instances: 6 GB). State one ticket needs belongs in a fixture
-run inside the throwaway clone, where it costs time, not disk.
+run inside the throwaway clone, where it costs time, not disk: `fixtures/<name>/` in the profile (`fixture.md` with What
+and Use, `apply.ps1`, data files; `templates/fixture/`), which the runner applies in each QA VM before the app starts when
+a ticket's assessment names it ([test-needs.md](test-needs.md)). What only a human can provide (a real server, an
+account) is not a fixture: it lives on the machine, `factory.sh provide <name>`.
 
 `layer/layer.conf` (bash, read with `FACTORY_VM_HOME` set):
 

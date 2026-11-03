@@ -33,6 +33,10 @@
 - Written back to the harness: <file (AGENTS.md / CLAUDE.md, a skill, a hook) and commit SHA, this round only | none if nothing new>
 - Recommend: <merge | send back>
 
+## Test needs (runner)
+<!-- Written by the runner from the ticket's assessment: what the app had to contain for QA to test the ticket, and how each need was met. A need "not met" means what needs it went untested: the QA verdict doesn't cover it. -->
+- Needs: <none beyond what QA creates in the app | from the assessment, then one per line, indented two spaces: N<n> <need>: <fixture <name> | provided by a human: <name> (<access>) | set up by QA in the app | not met, untested: <why>>>
+
 ## Runtime check (QA)
 <!-- Written by the runner after the blind QA agent ran the ticket's Runtime check in a throwaway VM. Not filled: the ticket has no Runtime check, or QA was off. -->
 - QA: <tool, model, blind; VM; build of <short SHA>>

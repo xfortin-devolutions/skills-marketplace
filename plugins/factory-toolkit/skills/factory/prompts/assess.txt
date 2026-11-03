@@ -1,0 +1,2 @@
+Assess ticket @TICKET@ for the factory: its spec is @SPEC@, and the repo is the working directory at the commit the run starts from. Edit nothing. Run each command bare: no loops, pipes, `&&` or redirects.
+Answer in the exact format your instructions give, and nothing else.

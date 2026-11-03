@@ -12,6 +12,7 @@ case "$prompt" in
   "Write the exploratory test charter"*) role=charter ;;
   "Job: Explore"*) role=explorer ;;
   "Job: Recheck"*) role=recheck ;;
+  "Assess ticket"*) role=assessor ;;
   *) role=unknown ;;
 esac
 n=$(($(cat "$FAKE_STATE/$role.n" 2> /dev/null || echo 0) + 1))

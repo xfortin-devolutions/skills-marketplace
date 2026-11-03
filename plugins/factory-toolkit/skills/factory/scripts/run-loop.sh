@@ -21,6 +21,11 @@
 #                                                                    sends it on: no Decision line, the reason goes as is
 #   run-loop.sh <TICKET> --resume-run <run id>                       the same run again, from the station it was paused
 #                                                                    or stopped before (factory.sh resume): its state.sh
+#   run-loop.sh <TICKET> --assess-only                               the assessor alone: size and test needs, written to
+#                                                                    <TICKET>.assessment.md next to the spec
+#   run-loop.sh <TICKET> --limits-only                               the limits a run would use, and where each comes from
+# Limits (any mode): --size <class> picks a size class, --set NAME=VALUE (repeatable) sets one limit, for this run only;
+# both beat the ticket .sh and the assessment, and may go above SIZE_CEILING (lib/sizing.sh).
 # Any time: touch <run dir>/STOP (stops before the next station), <run dir>/PAUSE (the same, resumable: factory.sh pause),
 # touch <run dir>/HUMAN (a human judges the next QA).
 # Config (lib/config.sh): the project (config.sh, profiles/<profile>/), in the skill's projects/ or the repo's .factory/;
@@ -30,11 +35,12 @@ set -u
 # One block: bash parses it whole before running it, so editing this file during a run can't break that run.
 {
 
-usage() { sed -n '9,25p' "$0" >&2; exit 2; }
+usage() { sed -n '9,31p' "$0" >&2; exit 2; }
 TICKET=${1:-}
 [ -n "$TICKET" ] && [ "${TICKET#-}" = "$TICKET" ] || usage
 shift
 OPEN_PR=no QA=auto KEEP_VM=no QA_ONLY="" TEST_ONLY="" RESUME="" JUDGE_REASON="" CONTINUE=no EXPLORE_CLI="" QA_BASE="" RESUME_RUN=""
+ASSESS_ONLY="" LIMITS_ONLY="" CLI_SIZE="" CLI_SETS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --open-pr) OPEN_PR=yes ;;
@@ -49,6 +55,10 @@ while [ $# -gt 0 ]; do
     --resume) RESUME=${2:-} JUDGE_REASON=${3:-}; [ -n "$RESUME" ] && [ -n "$JUDGE_REASON" ] || usage; shift 2 ;;
     --continue) RESUME=${2:-} JUDGE_REASON=${3:-} CONTINUE=yes; [ -n "$RESUME" ] && [ -n "$JUDGE_REASON" ] || usage; shift 2 ;;
     --resume-run) RESUME_RUN=${2:-}; [ -n "$RESUME_RUN" ] || usage; shift ;;
+    --assess-only) ASSESS_ONLY=yes ;;
+    --limits-only) LIMITS_ONLY=yes ;;
+    --size) CLI_SIZE=${2:-}; [ -n "$CLI_SIZE" ] || usage; shift ;;
+    --set) [ -n "${2:-}" ] || usage; CLI_SETS="$CLI_SETS $2"; shift ;;
     *) usage ;;
   esac
   shift
@@ -64,9 +74,19 @@ SKILL=$(cd "$X/.." && pwd)
 case "$SKILL/" in "$REPO"/*) SKILL_REL=${SKILL#$REPO/} SKILL_IN_REPO=$SKILL_REL ;; *) SKILL_REL=$SKILL SKILL_IN_REPO="" ;; esac
 . "$X/lib/config.sh" || exit 2
 . "$X/lib/timebox.sh"
+. "$X/lib/sizing.sh"
+. "$X/lib/needs.sh"
 TICKET_FILE=$TICKETS_DIR/$TICKET.md
 [ -f "$TICKET_FILE" ] || { echo "no ticket file $TICKETS_DIR/$TICKET.md" >&2; exit 2; }
 [ -n "$PROFILE" ] || { echo "no ticket inputs $TICKETS_DIR/$TICKET.sh (PROFILE, ACCEPT_TEST, ORACLE_PATHS, SCOPE_REGEX)" >&2; exit 2; }
+
+ASSESSMENT=$TICKETS_DIR/$TICKET.assessment.md
+if [ -n "$LIMITS_ONLY" ]; then
+  resolve_limits "$([ -f "$ASSESSMENT" ] && echo "$ASSESSMENT")" "$CLI_SIZE" "$CLI_SETS" || exit 2
+  echo "size $SIZE, from $SIZE_FROM${SIZE_NOTE:+ ($SIZE_NOTE)}"
+  printf '%s' "$LIMITS_LOG"
+  exit 0
+fi
 
 for c in claude git jq perl python3; do
   command -v "$c" > /dev/null || { echo "run-loop.sh needs $c on the PATH" >&2; exit 2; }
@@ -75,8 +95,8 @@ if [ -n "$(git -C "$REPO" status --porcelain -- "$FACTORY_DIR_REL" $SKILL_IN_REP
   echo "commit the acceptance tests (and the project, when it is in the repo) first: the worktree is cut from HEAD" >&2; exit 2
 fi
 
-# Every build and test runs in the guest, so every mode needs the target's image and scripts.
-[ -f "$FACTORY_VM_HOME/$GOLDEN_IMAGE" ] && command -v qemu-system-aarch64 > /dev/null \
+# Every build and test runs in the guest, so every mode but the assessor's needs the target's image and scripts.
+[ -n "$ASSESS_ONLY" ] || [ -f "$FACTORY_VM_HOME/$GOLDEN_IMAGE" ] && command -v qemu-system-aarch64 > /dev/null \
   || { echo "no $GOLDEN_IMAGE in $FACTORY_VM_HOME (or no QEMU): see $SKILL_REL/references/vm-setup.md" >&2; exit 2; }
 [ -n "${GUEST_BUILD:-}" ] && [ -n "${GUEST_TEST:-}" ] || { echo "profile $PROFILE, target '$PLATFORM': no GUEST_BUILD/GUEST_TEST" >&2; exit 2; }
 [ -n "${ACCEPT_TEST:-}" ] || { echo "no ACCEPT_TEST in $TICKETS_DIR/$TICKET.sh" >&2; exit 2; }
@@ -86,6 +106,7 @@ grep -q '^## Runtime check' "$TICKET_FILE" && HAS_RC=yes || HAS_RC=no
 [ "$QA" = auto ] && QA=$HAS_RC
 [ -n "$QA_ONLY" ] && QA=yes
 [ -n "$TEST_ONLY" ] && QA=no
+[ -n "$ASSESS_ONLY" ] && QA=no
 # Exploration follows a runtime QA PASS: on in the loop (EXPLORE), off in --qa-only unless --explore.
 [ -n "$QA_ONLY" ] && EXPLORE=no
 [ -n "$EXPLORE_CLI" ] && EXPLORE=$EXPLORE_CLI
@@ -114,6 +135,7 @@ else
   ID=$T-$STAMP
   [ -n "$QA_ONLY" ] && ID=$T-qa-$STAMP
   [ -n "$TEST_ONLY" ] && ID=$T-test-$STAMP
+  [ -n "$ASSESS_ONLY" ] && ID=$T-assess-$STAMP
   # mkdir is atomic: two runs started in the same second get distinct ids (-2, -3, …).
   mkdir -p "$FACTORY_RUNS"
   i=1; base_id=$ID
@@ -123,8 +145,11 @@ fi
 # The run's own copy of the spec: what its agents read (a later edit of the ticket doesn't change a run in flight, and a
 # --resume takes the updated one), in a folder of its own so they get it and nothing else of the run.
 SPEC_DIR=$RUN/spec
-[ -n "$RESUME_RUN" ] || { mkdir -p "$SPEC_DIR" && cp "$TICKET_FILE" "$TICKETS_DIR/$TICKET.sh" "$SPEC_DIR/"; }
+[ -n "$RESUME_RUN" ] || { mkdir -p "$SPEC_DIR" && cp "$TICKET_FILE" "$TICKETS_DIR/$TICKET.sh" "$SPEC_DIR/"
+  [ -f "$ASSESSMENT" ] && [ -z "$ASSESS_ONLY" ] && cp "$ASSESSMENT" "$SPEC_DIR/"; }
 TICKET_FILE=$SPEC_DIR/$TICKET.md
+# The run's assessment: its copy of the ticket's, or the one its assessor writes (assess_stage).
+RUN_ASSESSMENT=$SPEC_DIR/$TICKET.assessment.md
 # VM disks and the QA agent's folder live outside the repo: the QA agent must not find CLAUDE.md or the source above it.
 QA_ROOT=$FACTORY_VM_HOME/runs/$ID
 BRANCH=$BRANCH_PREFIX$T-build-$STAMP
@@ -449,7 +474,7 @@ progress_sig() {
 # save_state <next station: build | review | qa>: what --resume-run needs to go on from that station (factory.sh resume).
 save_state() {
   local v
-  { for v in TICKET STAMP BRANCH WT BASE QA EXPLORE KEEP_VM OPEN_PR builds FIRST reason from xsend LAST_X last_v last_af stall SPENT; do
+  { for v in TICKET STAMP BRANCH WT BASE QA EXPLORE KEEP_VM OPEN_PR builds FIRST reason from xsend LAST_X last_v last_af stall SPENT CLI_SIZE CLI_SETS; do
       printf 'S_%s=%q\n' "$v" "${!v:-}"
     done
     printf 'S_NEXT=%q\n' "$1"
@@ -586,8 +611,9 @@ release_kept_vms() {
 app_launch() { "$VM/vmssh" - < "$GUEST_LAUNCH" > "$1" 2>&1 && grep -q '^LAUNCH OK' "$1"; }
 
 # app_up <vm run dir> <share> <built: yes|no> <log dir>: boots a QA VM sharing <share>, builds it there unless <built>,
-# and launches the app; the VM's environment (vm.py, vmssh) is exported. Returns 0 when the app runs, 1 when the guest
-# build fails, 2 when the harness fails; APP_WHY says why.
+# puts the ticket's test needs in place and launches the app; the VM's environment (vm.py, vmssh) is exported. Returns
+# 0 when the app runs, 1 when the guest build fails, 2 when the harness fails, 4 when a provided resource needs a human;
+# APP_WHY says why.
 app_up() {
   local vmrun=$1 share=$2 built=$3 log=$4 rc
   APP_WHY=""
@@ -601,6 +627,12 @@ app_up() {
     cp "$vmrun/build.log" "$log/guest-build-full.log" 2> /dev/null
     [ $rc -eq 1 ] && { APP_WHY="the $GUEST_DESC build fails: $(first_errors "$log/guest-build.log")"; return 1; }
     [ $rc -ne 0 ] && { APP_WHY="guest build: $(harness_why "$log/guest-build.log")"; return 2; }
+  fi
+  # The ticket's fixtures and provided resources, before the app starts (it reads its data and settings at startup).
+  if [ -n "$(needs_lines "$RUN_ASSESSMENT")" ]; then
+    needs_apply "$RUN_ASSESSMENT" "$log/needs.log"
+    rc=$?
+    [ $rc -eq 0 ] || { APP_WHY=$NEEDS_WHY; return $rc; }
   fi
   app_launch "$log/launch.log" || { APP_WHY="$APP_NAME did not start in the guest: $(tail -1 "$log/launch.log")"; return 2; }
   return 0
@@ -630,7 +662,9 @@ qa_stage() {
   case $? in
     1) QA_VERDICT="FAIL: $APP_WHY" ;;
     2) QA_VERDICT="ERROR: $APP_WHY" ;;
+    4) QA_VERDICT="NEEDS-INPUT: $APP_WHY" ;;
     *) { fill "$SKILL/prompts/qa.txt" | sed -e "s|@QA_DIR@|$q|g" -e "s|@SHA@|$ref|g"; echo; section "$TICKET_FILE" "Runtime check"
+         needs_prompt "$RUN_ASSESSMENT"
          [ -n "$built" ] && disputes_for_qa; } > "$RUN/qa-$n.prompt"
        run_claude "qa-$n" "$QA_MIN" "$q" -p "$(cat "$RUN/qa-$n.prompt")" --model "$QA_MODEL" --max-budget-usd "$QA_USD" \
          --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-qa.md")" \
@@ -641,12 +675,15 @@ qa_stage() {
          PASS*) QA_VERDICT="PASS: $(grep -m1 '^Summary:' "$q/report.md" | sed 's/^Summary: *//')" ;;
          FAIL*) QA_VERDICT="FAIL: $(grep -m1 '^Summary:' "$q/report.md" | sed 's/^Summary: *//')" ;;
          NEEDS-HUMAN*) QA_VERDICT="NEEDS-HUMAN: $(grep -m1 '^Human:' "$q/report.md" | sed 's/^Human: *//')" ;;
+         NEEDS-INPUT*) QA_VERDICT="NEEDS-INPUT: $(grep -m1 '^Input:' "$q/report.md" | sed 's/^Input: *//')" ;;
          *) QA_VERDICT="ERROR: no usable QA report (qa-$n.json)" ;;
        esac
        row "$n" qa "qa-$n" "$QA_VERDICT" ;;
   esac
 
-  if [ "${QA_VERDICT#ERROR}" = "$QA_VERDICT" ] && { [ "${QA_VERDICT#NEEDS-HUMAN}" != "$QA_VERDICT" ] || [ -e "$RUN/HUMAN" ]; }; then
+  # A verdict that needs input (a resource only a human provides) pauses the run instead: there is nothing to judge yet.
+  if [ "${QA_VERDICT#ERROR}" = "$QA_VERDICT" ] && [ "${QA_VERDICT#NEEDS-INPUT}" = "$QA_VERDICT" ] \
+     && { [ "${QA_VERDICT#NEEDS-HUMAN}" != "$QA_VERDICT" ] || [ -e "$RUN/HUMAN" ]; }; then
     rm -f "$RUN/HUMAN"
     echo "$vmrun" > "$RUN/WAITING-FOR-HUMAN"
     notify "QA needs you: ${QA_VERDICT#*: }"
@@ -679,6 +716,7 @@ qa_stage() {
   else
     "$VM/vmctl.sh" down "$vmrun" >> "$EV" 2>&1
     [ -n "$qwt" ] && git -C "$REPO" worktree remove --force "$qwt" 2>> "$EV"
+    provided_release
   fi
 }
 
@@ -698,7 +736,7 @@ charter_stage() {
   local raw="$RUN/charter-$n.raw"
   CHARTER="" CHARTER_WHY=""
   if over "$SPENT + $C_USD" "$LOOP_USD"; then CHARTER_WHY="loop budget"; return; fi
-  fill "$SKILL/prompts/charter.txt" | sed "s|@SHA@|$sha|g" > "$RUN/charter-$n.prompt"
+  { fill "$SKILL/prompts/charter.txt" | sed "s|@SHA@|$sha|g"; needs_prompt "$RUN_ASSESSMENT"; } > "$RUN/charter-$n.prompt"
   run_claude "charter-$n" "$C_MIN" "$dir" -p "$(cat "$RUN/charter-$n.prompt")" --model "$C_MODEL" \
     --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-charter.md")" \
     --max-budget-usd "$C_USD" --tools Read Grep Glob Bash --allowedTools "${CHARTER_TOOLS[@]}" --add-dir "$SPEC_DIR" \
@@ -727,7 +765,7 @@ explore_stage() {
   app_launch "$out/launch.log" || { X_STATUS="not run: $APP_NAME did not restart: $(tail -1 "$out/launch.log")"; return; }
   { fill "$SKILL/prompts/explore.txt" | sed -e "s|@QA_DIR@|$xd|g" -e "s|@SHA@|$ref|g"
     echo; echo "## Acceptance check (passed)"; section "$TICKET_FILE" "Runtime check" | awk '/^Red on base/ { exit } 1'
-    echo "## Charter"; cat "$CHARTER"; } > "$RUN/explore-$n.prompt"
+    echo "## Charter"; cat "$CHARTER"; needs_prompt "$RUN_ASSESSMENT"; } > "$RUN/explore-$n.prompt"
   run_claude "explore-$n" "$X_MIN" "$xd" -p "$(cat "$RUN/explore-$n.prompt")" --model "$X_MODEL" --max-budget-usd "$X_USD" \
     --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-explorer.md")" \
     --tools Read Bash --allowedTools "${QA_TOOLS[@]}" --output-format json
@@ -769,6 +807,7 @@ recheck_stage() {
       # the base re-check couldn't reach the screen, and answered can't tell.
       echo; echo "## How the explorer got there (its tour, on the build with the change)"
       awk '/^Tour:/ { f = 1; next } /^Findings:/ { f = 0 } f' "$QA_ROOT/explore-$n/report.md" | sed 's/; evidence: .*$//'
+      needs_prompt "$RUN_ASSESSMENT"
     } > "$RUN/recheck-$n.prompt"
     run_claude "recheck-$n" "$RC_MIN" "$rd" -p "$(cat "$RUN/recheck-$n.prompt")" --model "$X_MODEL" --max-budget-usd "$RC_USD" \
       --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-explorer.md")" \
@@ -779,6 +818,7 @@ recheck_stage() {
     row "$n" recheck "recheck-$n" "$(grep -cE '^- F[0-9]+: same' "$rd/report.md") of $(printf '%s\n' "$X_FINDINGS" | grep -c .) on the base too"
   fi
   "$VM/vmctl.sh" down "$vmrun" >> "$EV" 2>&1
+  provided_release
   git -C "$REPO" worktree remove --force "$bwt" 2>> "$EV"
   ev "recheck-$n: $RC_STATUS"
   recheck_classify "$([ $rc -eq 0 ] && echo "$rd/report.md")"
@@ -882,6 +922,8 @@ write_qa() {
     echo "- Report: \`$HANDBACK/qa-$n/report.md\`; evidence: $(cd "$dir" && ls *.png 2> /dev/null | tr '\n' ' ')"
   } > "$RUN/qa-$n/section.md"
   write_section "Runtime check (QA)" "$RUN/qa-$n/section.md"
+  needs_section "$RUN_ASSESSMENT" > "$RUN/qa-$n/needs-section.md"
+  write_section "Test needs (runner)" "$RUN/qa-$n/needs-section.md"
   if [ -n "$X_STATUS" ]; then
     for sub in explore recheck; do
       [ -d "$RUN/qa-$n/$sub" ] || continue
@@ -900,16 +942,116 @@ write_qa() {
   wtgit commit -q -m "handback: $TICKET runtime check $n"
 }
 
+# calibrate: one line a finished loop run in $FACTORY_RUNS/.calibration.tsv, what its size bought against what it used,
+# to tune the size table on (the dashboard shows it).
+calibrate() {
+  local f=$FACTORY_RUNS/.calibration.tsv longest=0 t0 t1 x mins
+  for x in "$RUN"/build-*.time; do
+    [ -f "$x" ] || continue
+    read -r t0 t1 _ < "$x"; [ $((t1 - t0)) -gt "$longest" ] && longest=$((t1 - t0))
+  done
+  mins=$(python3 - "$EV" <<'PY'
+import sys, datetime
+ts = [l.split(" ", 1)[0] for l in open(sys.argv[1]) if l[:2] == "20"]
+p = lambda t: datetime.datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ")
+print(round((p(ts[-1]) - p(ts[0])).total_seconds() / 60) if ts else 0)
+PY
+)
+  [ -f "$f" ] || printf 'ended\tticket\trun\tsize\tsize_from\tlimits_set\trounds\tspent\tloop_usd\tminutes\tlongest_builder_min\tstatus\n' > "$f"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$TICKET" "$ID" "$SIZE" "$SIZE_FROM" \
+    "$(limits_changed)" "$((builds - FIRST))" "$SPENT" "$LOOP_USD" "$mins" "$((longest / 60))" "$(echo "$STATUS" | cut -c1-120)" >> "$f"
+}
+
+# assess_stage <dir>: the assessor, a fresh read-only session in <dir> (the repo at the run's base): the ticket's size
+# class and its test needs, written to $RUN_ASSESSMENT. It sees the fixture and provided catalogs' descriptions, never a
+# provided resource's files. Its row waits in ASSESS_ROW for runs.md's header.
+assess_stage() {
+  local dir=$1 raw="$RUN/assess.raw" c e out t0 t1 st tu co de
+  ASSESS_ROW=""
+  { fill "$SKILL/prompts/assess.txt"
+    echo; echo "## Size classes"
+    echo "Each class sets the limits it names; the others keep the defaults: builder \$$B_USD and $B_MIN min a round, $ITER_CAP rounds, reviewer \$$R_USD, QA \$$QA_USD, \$$LOOP_USD a run."
+    for c in $SIZE_CLASSES; do eval "e=\${SIZE_$c:-}"; echo "- $c: ${e:-the defaults}"; done
+    echo; echo "## Fixture catalog (profile $PROFILE)"
+    catalog "$PROFILE_DIR/fixtures" fixture.md | grep . || echo "none yet"
+    echo; echo "## Provided catalog (resources a human set up on this machine)"
+    catalog "$FACTORY_PROVIDED" provided.md | grep . || echo "none yet"
+  } > "$RUN/assess.prompt"
+  run_claude assess "$A_MIN" "$dir" -p "$(cat "$RUN/assess.prompt")" --model "$A_MODEL" \
+    --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-assessor.md")" \
+    --max-budget-usd "$A_USD" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --add-dir "$SPEC_DIR" \
+    --disallowedTools Edit Write --output-format json
+  jq -r '.result // ""' "$RUN/assess.json" > "$raw" 2> /dev/null
+  if grep -qE '^Size: ' "$raw"; then
+    { echo "<!-- The factory's assessment of $TICKET, by $A_MODEL on $(date -u +%F), from $BASE. Edit it to overrule the assessor: Size sets the run's limits (SIZE in $TICKET.sh, --size and --set beat it), each Needs line what QA gets. -->"
+      sed -n '/^Size: /,$p' "$raw"; } > "$RUN_ASSESSMENT"
+    out="size $(assessment_field "$RUN_ASSESSMENT" Size), $(needs_lines "$RUN_ASSESSMENT" | grep -c .) test need(s)"
+  else
+    out="no usable assessment (assess.json): size $SIZE_DEFAULT, no test needs"
+  fi
+  read -r t0 t1 _ < "$RUN/assess.time"
+  read -r st tu co de <<< "$(fields "$RUN/assess.json")"
+  ASSESS_ROW="| 0 | assessor | $(python3 -c "print(round(($t1-$t0)/60,1))") | $st | $tu | $co | $de | $out |"
+  add_usd "$co"
+  ev "assess: $out"
+}
+
 finish() {
+  provided_release
   ev "end: $STATUS · spent \$$SPENT"
   rmdir "$QA_ROOT" 2> /dev/null
   exit 0
 }
 
+TABLE_HEAD='| Run | Role | Min | subtype | Turns | Cost $ | Denials | Outcome |
+|---|---|---|---|---|---|---|---|'
+if [ -n "$ASSESS_ONLY" ]; then
+  printf '# Assess only · %s · %s\nRef: %s\n\n%s\n' "$TICKET" "$STAMP" "$BASE" "$TABLE_HEAD" > "$RUNS"
+  assess_stage "$REPO"
+  echo "$ASSESS_ROW" >> "$RUNS"
+  if [ -s "$RUN_ASSESSMENT" ]; then
+    # The ticket's last assessment, edits and all, stays next to it.
+    [ -f "$ASSESSMENT" ] && cp "$ASSESSMENT" "$ASSESSMENT.prev"
+    cp "$RUN_ASSESSMENT" "$ASSESSMENT"
+    STATUS="assessed: size $(assessment_field "$ASSESSMENT" Size), $(needs_lines "$ASSESSMENT" | grep -c .) test need(s)"
+    cat "$ASSESSMENT"
+    echo "written: $ASSESSMENT$([ -f "$ASSESSMENT.prev" ] && echo " (the one before: $TICKET.assessment.md.prev)")"
+  else
+    STATUS="error: no usable assessment ($RUN/assess.json)"
+    echo "$STATUS"
+  fi
+  finish
+fi
+
+# The run's assessment (a loop run without one gets one first, from the base), then its limits and test needs.
+if [ -z "$RESUME_RUN$QA_ONLY$TEST_ONLY" ] && [ ! -s "$RUN_ASSESSMENT" ] && [ "$ASSESS" = yes ]; then
+  assess_stage "$REPO"
+  [ -s "$RUN_ASSESSMENT" ] && [ ! -f "$ASSESSMENT" ] && cp "$RUN_ASSESSMENT" "$ASSESSMENT"
+fi
+# A resumed run keeps the --size and --set it started with; the ones given to the resume win.
+if [ -n "$RESUME_RUN" ]; then CLI_SIZE=${CLI_SIZE:-${S_CLI_SIZE:-}}; CLI_SETS="${S_CLI_SETS:-}$CLI_SETS"; fi
+resolve_limits "$([ -s "$RUN_ASSESSMENT" ] && echo "$RUN_ASSESSMENT")" "$CLI_SIZE" "$CLI_SETS" \
+  || { STATUS="error: the limits don't resolve (see above)"; finish; }
+printf '%s' "$LIMITS_LOG" > "$RUN/limits.txt"
+# QA's limits grow with what the Runtime check asks (steps and expectations), unless set on purpose.
+QA_ITEMS=$(section "$TICKET_FILE" "Runtime check" | grep -cE '^ *([0-9]+\.|- E[0-9]+)')
+f=$(scale_factor "${QA_ITEMS:-0}" "$QA_SCALE_ITEMS")
+QA_MIN=$(scaled QA_MIN "$f") QA_USD=$(scaled QA_USD "$f")
+[ -z "$TEST_ONLY" ] && ev "limits: size $SIZE from $SIZE_FROM${SIZE_NOTE:+ ($SIZE_NOTE)}; set: $(limits_changed)$([ "$f" -gt 1 ] && echo "; QA x$f for $QA_ITEMS steps and expectations: \$$QA_USD, $QA_MIN min")"
+if [ "$QA" = yes ]; then
+  needs_preflight "$RUN_ASSESSMENT"
+  if [ -n "$NEEDS_MISSING" ]; then
+    printf '%s' "$NEEDS_MISSING" > "$RUN/needs-missing.txt"
+    STATUS="needs input before the run: $(printf '%s' "$NEEDS_MISSING" | paste -sd ';' - | sed 's/;/; /g'); then run it again"
+    notify "the run needs input: $(printf '%s' "$NEEDS_MISSING" | head -1)"
+    echo "$STATUS"
+    finish
+  fi
+fi
+
 if [ -n "$QA_ONLY" ]; then
   REF=$(git -C "$REPO" rev-parse --verify "$QA_ONLY^{commit}") || { echo "unknown ref $QA_ONLY" >&2; exit 2; }
-  printf '# QA only · %s · %s\nRef: %s\n\n| Run | Role | Min | subtype | Turns | Cost $ | Denials | Outcome |\n|---|---|---|---|---|---|---|---|\n' \
-    "$TICKET" "$STAMP" "$REF" > "$RUNS"
+  printf '# QA only · %s · %s\nRef: %s\n\n%s\n' "$TICKET" "$STAMP" "$REF" "$TABLE_HEAD" > "$RUNS"
   ev "qa only: $TICKET on $REF"
   if [ "$EXPLORE" = yes ]; then
     if [ -n "$QA_BASE" ]; then
@@ -966,10 +1108,11 @@ if [ -z "$RESUME_RUN" ]; then
 cat > "$RUNS" <<EOF
 # Loop runs · $TICKET · $STAMP
 Base: $BASE · branch: $BRANCH · builder: $B_MODEL (\$$B_USD, $B_MIN min) · reviewer: $R_MODEL (\$$R_USD, $R_MIN min) · QA: $([ "$QA" = yes ] && echo "$QA_MODEL (\$$QA_USD, $QA_MIN min)" || echo off) · exploration: $([ "$EXPLORE" = yes ] && echo "charter $C_MODEL (\$$C_USD), explorer $X_MODEL (\$$X_USD, re-check \$$RC_USD), $EXPLORE_SENDBACKS send back(s)" || echo off) · caps: $ITER_CAP builder runs, $STALL_CAP in a row without progress · loop \$$LOOP_USD
+Size: $SIZE, from $SIZE_FROM${SIZE_NOTE:+ ($SIZE_NOTE)} · set: $(limits_changed) · all limits: \`limits.txt\`
 
-| Run | Role | Min | subtype | Turns | Cost \$ | Denials | Outcome |
-|---|---|---|---|---|---|---|---|
+$TABLE_HEAD
 EOF
+[ -n "${ASSESS_ROW:-}" ] && echo "$ASSESS_ROW" >> "$RUNS"
 fi
 
 # The builder's deny rules: every protected path (a folder denies everything under it) plus the outward-facing commands.
@@ -1046,17 +1189,30 @@ while :; do
       ev "$name left the worktree off $BRANCH ($(git -C "$WT" rev-parse --short HEAD)): switching back"
       wtgit switch -q "$BRANCH" 2>> "$EV" || ev "could not switch $WT back to $BRANCH"
     fi
-    # A builder stopped by its time box after its code commit is not a failed round: the runner commits what it left
-    # and verifies the commit like any other.
-    ensure_handback "$name"
-    apply_docs
     case "$rc/$st" in
       142/*) out="time box ($B_MIN min)" ;;
       */success) out="success" ;;
       */error_max_budget_usd) out="cap: dollars" ;;
       *) out="error: $st (exit $rc)" ;;
     esac
-    v=$(verify "$builds")
+    # A builder stopped by its limit before its code commit leaves its work in the worktree: the runner commits it as a
+    # checkpoint, and the next round goes on from there instead of starting over (the round is sent back, unverified).
+    ckpt=""
+    if { [ "$rc" = 142 ] || [ "$st" = error_max_budget_usd ]; } && [ -n "$(git -C "$WT" status --porcelain -- . ':(exclude)handback')" ]; then
+      wtgit add -A -- . ':(exclude)handback' \
+        && wtgit commit -q -m "$TICKET: Work in progress, checkpointed by the runner ($name stopped: $out)" \
+        && ckpt=$(git -C "$WT" rev-parse --short HEAD) && ev "$name: its unfinished work checkpointed as $ckpt"
+    fi
+    # A builder stopped by its time box after its code commit is not a failed round: the runner commits what it left
+    # and verifies the commit like any other.
+    ensure_handback "$name"
+    apply_docs
+    if [ -n "$ckpt" ]; then
+      : > "$RUN/verify-$builds.accept-fails"
+      v="red: stopped by its limit before committing; the runner committed the unfinished work as checkpoint $ckpt, on the branch: go on from it, don't redo it (raise the limit if a round is too short: SIZE or B_MIN in the ticket .sh, --set B_MIN=<min>)"
+    else
+      v=$(verify "$builds")
+    fi
     row "$builds" builder "$name" "$out; verify $v"
     ev "$name outcome=$out verify=$v spent=\$$SPENT"
     if [ "$(progress_sig "$([ "$from" = review ] && echo hand-back)")" = "$sig0" ]; then stall=$((stall + 1)); else stall=0; fi
@@ -1100,8 +1256,14 @@ while :; do
     save_state review
     if [ -e "$RUN/PAUSE" ]; then STATUS="paused before review $builds (verified): factory.sh resume $ID"; break; fi
     if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file (verified, not reviewed)"; break; fi
-    if over "$SPENT + $R_USD" "$LOOP_USD"; then STATUS="verified, not reviewed (loop budget)"; break; fi
     rname=review-$builds
+    # The reviewer's limits grow with the diff, unless set on purpose.
+    lines=$(git -C "$WT" diff --shortstat "$BASE" HEAD -- . ':(exclude)handback' \
+      | awk '{ for (i = 1; i < NF; i++) if ($(i + 1) ~ /^(insertion|deletion)/) n += $i } END { print n + 0 }')
+    f=$(scale_factor "$lines" "$R_SCALE_LINES")
+    r_min=$(scaled R_MIN "$f") r_usd=$(scaled R_USD "$f")
+    [ "$f" -gt 1 ] && ev "$rname: $lines changed lines: reviewer x$f, \$$r_usd, $r_min min"
+    if over "$SPENT + $r_usd" "$LOOP_USD"; then STATUS="verified, not reviewed (loop budget)"; break; fi
     # A re-review (an earlier review is in the hand-back, from this run or the one it continues) starts from what changed
     # since the code that review saw, and says so: a re-review that only restates the last one checks nothing.
     rev_code=$(git -C "$WT" log -1 --format=%h -- . ':(exclude)handback')
@@ -1109,9 +1271,9 @@ while :; do
     { fill "$SKILL/prompts/review.txt"
       [ -n "$rev_prev" ] && sed -e "s|@PREV@|$rev_prev|g" -e "s|@CODE@|$rev_code|g" "$SKILL/prompts/re-review.txt"
     } > "$RUN/$rname.prompt"
-    run_claude "$rname" "$R_MIN" "$WT" -p "$(cat "$RUN/$rname.prompt")" --model "$R_MODEL" \
+    run_claude "$rname" "$r_min" "$WT" -p "$(cat "$RUN/$rname.prompt")" --model "$R_MODEL" \
       --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-reviewer.md")" --add-dir "$PROFILE_DIR" --add-dir "$SPEC_DIR" \
-      --max-budget-usd "$R_USD" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools Edit Write \
+      --max-budget-usd "$r_usd" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools Edit Write \
       --output-format json
     jq -r '.result // ""' "$RUN/$rname.json" > "$RUN/$rname.md" 2> /dev/null
     rec=$(grep -m1 '^- Recommend:' "$RUN/$rname.md" | sed 's/^- Recommend: *//')
@@ -1169,6 +1331,9 @@ while :; do
            STATUS="$STATUS)"
            break ;;
     NEEDS-HUMAN*) STATUS="reviewed; runtime QA waiting for a human: ${QA_VERDICT#NEEDS-HUMAN: }"; break ;;
+    # A resource only a human can provide: the run pauses before QA (its state says so) and goes on once it is there.
+    NEEDS-INPUT*) STATUS="needs input for runtime QA: ${QA_VERDICT#NEEDS-INPUT: }; provide it (factory.sh provide <name>), then factory.sh resume $ID"
+                  notify "QA needs input: ${QA_VERDICT#NEEDS-INPUT: }"; break ;;
     *) reason="runtime check failed (QA run $builds): ${QA_VERDICT#FAIL: }. QA report and screenshots: $HANDBACK/qa-$builds/"
        from=qa; STATUS="send back: runtime QA" ;;
   esac
@@ -1189,11 +1354,13 @@ fi
   echo "- Status: $STATUS"
   echo "- Branch: \`$BRANCH\` (worktree \`${WT#$REPO/}\`) · base $BASE · last commit: $(git -C "$WT" log -1 --format='%h %s')"
   echo "- Builder runs: $((builds - FIRST))$([ "$FIRST" -gt 0 ] && echo " (resumed after round $FIRST)") · spent: \$$SPENT of \$$LOOP_USD · PR: $PR_URL"
+  echo "- Size: $SIZE, from $SIZE_FROM · limits set: $(limits_changed) · test needs: $(needs_lines "$RUN_ASSESSMENT" | grep -c .)"
   echo "- Hand-back for the judge: \`${WT#$REPO/}/$HANDBACK/hand-back.md\`"
   [ -n "$LAST_X" ] && echo "- Last round's ${LAST_X}; tour, findings and base re-check in the hand-back's Exploratory QA section"
   [ -s "$WT/$HANDBACK/disputes.md" ] && echo "- Disputed by the builder (the judge decides): $(disputed_ids); reasons: \`${WT#$REPO/}/$HANDBACK/disputes.md\`"
   echo "- Run log: \`$RUNS\` · events: \`$EV\` · every run's JSON, stderr and prompt: \`$RUN/\`"
 } > "$RUN/loop-handback.md"
 cat "$RUN/loop-handback.md"
+calibrate
 finish
 }

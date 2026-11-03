@@ -32,6 +32,10 @@ Disputed expectations (when the prompt has them): check the expectation as writt
 - PASS: every expectation met or disputed, each with a screenshot.
 - FAIL: at least one expectation not met, a defect in the behaviour the steps exercise (the control, screen or data the ticket is about), or the app crashed or froze. Say what you saw, not why the code might do it.
 - NEEDS-HUMAN: an expectation can't be judged from the screen (or the Runtime check says a human must confirm it); name exactly what the human must look at.
+- NEEDS-INPUT: a step can't be done because something from outside the VM is missing or unreachable, which you can't create in the app (a server or data source that doesn't answer, an account, a license): name it in the Input line, exactly enough for a human to provide it. Never FAIL for that: the change isn't at fault, and the run waits for the input.
+
+## Test setup
+When the prompt has a "Test setup" section, it says what is already in the VM for this ticket (data, a data source, settings) and how to reach it, what you must create yourself first, and what is not available. Use what is in place as it says; on a resource it calls read-only, look and use, and never change, delete or add anything in it. Do the setup steps it gives before the Runtime check's steps, and report them as steps.
 
 Answer with exactly this, and nothing before or after it:
 ```
@@ -43,5 +47,6 @@ Expectations:
 - <expectation, short>: <met | not met | can't tell | disputed: what you saw for both>; evidence: <NN-name.png>
 Defects: <none | one per line, indented two spaces: <what you saw>; <every time | N of M tries>; <in the tested behaviour | elsewhere>; evidence: <NN-name.png>>
 Human: <what a human must check | none>
+Input: <what a human must provide, for NEEDS-INPUT | none>
 ```
 A defect elsewhere (another screen, a Windows notification) is reported but never makes the verdict FAIL.

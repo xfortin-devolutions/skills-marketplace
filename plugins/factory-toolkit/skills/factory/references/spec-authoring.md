@@ -26,6 +26,13 @@ ORACLE_PATHS="<test file(s) and test csproj the builder must not edit>"
 SCOPE_REGEX='<the Touches line as an extended regex over repo paths>'
 ```
 
+## <KEY>.assessment.md
+Written by `factory.sh assess <KEY>` once the spec is: the size class (the run's limits) and the test needs (what QA's
+VM must contain, and how each is met). Edit it to overrule; `SIZE` or any limit in `<KEY>.sh` beats its Size line.
+[test-needs.md](test-needs.md). Write the Runtime check's steps as if their data were there, and make sure each thing
+they need is a need line: a fixture, a resource the user provides, a `qa-setup` step, or `unmet` (then QA can't check
+it, and the hand-back says so).
+
 ## The oracle
 - Runs in the target's guest (the target's `test.ps1`), like every build and test: any test project of the product,
   Windows-only ones included. Avalonia headless for controls.

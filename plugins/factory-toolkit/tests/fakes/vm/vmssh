@@ -1,4 +1,10 @@
 #!/bin/bash
-# Fake vmssh for tests/run-loop.test.sh: every script it is sent is the target's launch script.
-cat > /dev/null
+# Fake vmssh for tests/run-loop.test.sh: logs each script it is sent. A launch script answers LAUNCH OK; a fixture or
+# provided script fails when it contains FAKE-FAIL (and the file $FAKE_STATE/fail-<word after it> exists, if any).
+body=$([ "${1:-}" = - ] && cat || echo "$*")
+printf '%s\n--\n' "$body" >> "$FAKE_STATE/vmssh.log"
+if echo "$body" | grep -q 'FAKE-FAIL'; then
+  w=$(echo "$body" | sed -n 's/.*FAKE-FAIL *\([a-z-]*\).*/\1/p' | head -1)
+  if [ -z "$w" ] || [ -e "$FAKE_STATE/fail-$w" ]; then echo "PS ERROR: the lab server does not answer"; exit 1; fi
+fi
 echo "LAUNCH OK"

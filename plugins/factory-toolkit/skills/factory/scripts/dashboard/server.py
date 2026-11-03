@@ -21,7 +21,7 @@ ROLES = {"build": "builder", "review": "reviewer", "charter": "charter", "qa": "
          "recheck": "recheck"}
 # Stations of one round, in the order the runner goes through them.
 ROUND = ["build", "verify", "review", "charter", "qa", "explore", "recheck"]
-TITLES = {"build": "Builder", "verify": "Verify", "review": "Reviewer", "charter": "Charter", "qa": "Runtime QA",
+TITLES = {"assess": "Assessor", "build": "Builder", "verify": "Verify", "review": "Reviewer", "charter": "Charter", "qa": "Runtime QA",
           "explore": "Exploratory QA", "recheck": "Base re-check", "test": "Acceptance test"}
 
 ARGS = None
@@ -80,6 +80,8 @@ def run_kind(run_id):
         return "qa"
     if re.search(r"-test-\d{8}T", run_id):
         return "test"
+    if re.search(r"-assess-\d{8}T", run_id):
+        return "assess"
     return "loop"
 
 
@@ -187,7 +189,7 @@ def outcome_class(text):
         return "neutral"
     if re.search(r"\b(fail|red|send back|error|harness|not met|blocker)", t) and "verify green" not in t:
         return "bad"
-    if re.search(r"needs-human|waiting|can't tell|disputed", t):
+    if re.search(r"needs-human|needs input|needs-input|waiting|can't tell|disputed", t):
         return "warn"
     return "good"
 
@@ -210,6 +212,15 @@ def nodes(run):
                     "outcome": end or (evs[-1]["msg"] if evs else ""), "cls": outcome_class(end),
                     "has_detail": test is not None})
         return out
+    # The assessor runs once, before the first round (round 0).
+    a = session_state(run, "assess")
+    if a:
+        r = by.get(("assessor", "0"))
+        text = r["outcome"] if r else (last_event(evs, "assess") or ("working" if a == "running" else ""))
+        if a == "running" and over:
+            a, text = "stopped", "stopped: the run ended first"
+        out.append(node("assess", 0, a, text, "neutral" if not r else ("warn" if "no usable" in text else "good"),
+                        cost=r["cost"] if r else None, minutes=r["min"] if r else None))
     rounds = set()
     for f in os.listdir(run):
         m = re.match(r"^(build|review|charter|qa|explore|recheck)-(\d+)\.(prompt|time|jsonl|json)$", f)
@@ -271,7 +282,8 @@ def run_detail(run):
     s = run_summary(run)
     rm = read(os.path.join(run, "runs.md")) or ""
     header = next((l for l in rm.splitlines() if l.startswith(("Base:", "Ref:"))), "")
-    s.update({"header": header, "nodes": nodes(run), "events": events(run)[-30:],
+    size = next((l for l in rm.splitlines() if l.startswith("Size:")), "")
+    s.update({"header": header, "size": size, "limits": read(os.path.join(run, "limits.txt")), "nodes": nodes(run), "events": events(run)[-30:],
               "handback": read(os.path.join(run, "loop-handback.md")),
               "spec": os.path.exists(os.path.join(run, "spec"))})
     return s
@@ -290,6 +302,11 @@ def node_detail(run, key):
             if os.path.exists(os.path.join(run, f)):
                 d["files"].append(f"/file/run/{run_id}/{f}")
         return d
+    # The assessor's files have no round number: assess.prompt, assess.json, ...
+    if st == "assess":
+        key = "assess"
+        for f in glob.glob(os.path.join(run, "spec", "*.assessment.md")):
+            d["files"].append(f"/file/run/{run_id}/spec/{os.path.basename(f)}")
     d["prompt"] = read(os.path.join(run, f"{key}.prompt"), 20000)
     if st == "build":
         d["changes"] = worktree_changes(run)
@@ -353,6 +370,15 @@ def worktree_changes(run):
             f"Uncommitted in the worktree:\n{dirty or '  nothing'}")
 
 
+def calibration():
+    """factory-runs/.calibration.tsv, newest first: what each finished loop run's size bought against what it used."""
+    lines = (read(os.path.join(ARGS.runs, ".calibration.tsv")) or "").splitlines()
+    if len(lines) < 2:
+        return []
+    keys = lines[0].split("\t")
+    return [dict(zip(keys, l.split("\t"))) for l in reversed(lines[1:]) if l.strip()]
+
+
 def safe_join(root, rel):
     path = os.path.realpath(os.path.join(root, rel))
     return path if path.startswith(os.path.realpath(root) + os.sep) else None
@@ -377,6 +403,8 @@ class Handler(BaseHTTPRequestHandler):
             if not parts:
                 with open(os.path.join(HERE, "index.html"), "rb") as f:
                     return self.send(200, f.read(), "text/html; charset=utf-8")
+            if parts == ["api", "calibration"]:
+                return self.send(200, calibration())
             if parts == ["api", "runs"]:
                 runs = [r for r in glob.glob(os.path.join(ARGS.runs, "*")) if os.path.exists(os.path.join(r, "events.log"))]
                 runs.sort(key=lambda r: os.path.getmtime(os.path.join(r, "events.log")), reverse=True)

@@ -23,8 +23,11 @@ Red on base: <which expectation fails on the base commit, and how>   (confirmed 
 ## Rules
 - **Observable.** "The row appears in the grid" is checkable; "the source is rebuilt" is not. Counters, titles, rows,
   dialogs, colours, a value in a field.
-- **Self-contained data.** The VM has no data source, no network shares and no accounts. Use what is in the guest
-  (`127.0.0.1`, its open ports, its files) or have a step create it (a new entry with host 127.0.0.1).
+- **Data the check needs.** A QA VM starts with the app freshly installed: no network shares, no accounts, no servers.
+  Write the steps as if the data were there, and list what they need in the ticket's assessment (`factory.sh assess`,
+  [test-needs.md](test-needs.md)): a fixture puts it in place, a resource you provide brings what only a human has (a real
+  data source), or a setup step creates it in the app (a new entry with host 127.0.0.1). QA gets a Test setup section
+  that says which.
 - **Timing.** Say when to look ("while the scan runs", "after 10 s") and what "still running" looks like.
 - **Side effects too.** Add an expectation for what must *not* change (selection, scroll, focus, no error dialog): the
   reviewer of DEVEX-528 missed exactly that.

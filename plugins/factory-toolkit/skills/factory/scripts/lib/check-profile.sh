@@ -92,6 +92,16 @@ if [ -d "$D/layer" ]; then
   fi
 fi
 
+# Fixtures (fixtures/<name>/): the assessor matches tickets' needs on What, QA reads Use, the runner runs apply.ps1.
+for f in "$D"/fixtures/*/; do
+  [ -d "$f" ] || continue
+  n=$(basename "$f")
+  [ -f "$f/fixture.md" ] || { err "fixture $n: no fixture.md"; continue; }
+  grep -q '^What: [^<]' "$f/fixture.md" || err "fixture $n: fixture.md has no What: line"
+  grep -q '^Use: [^<]' "$f/fixture.md" || err "fixture $n: fixture.md has no Use: line"
+  [ -f "$f/apply.ps1" ] || warn "fixture $n: no apply.ps1 (its files are copied into the guest, nothing runs)"
+done
+
 for k in "$TICKETS_DIR"/*.sh; do
   [ -f "$k" ] || continue
   (
@@ -109,6 +119,14 @@ for k in "$TICKETS_DIR"/*.sh; do
     [ -n "$SCOPE_REGEX" ] || err "ticket $n: SCOPE_REGEX is empty"
     [ -z "$BUILD_PROJ" ] || err "ticket $n: BUILD_PROJ is gone (verify builds what the target ships)"
     [ -z "${PLATFORM:-}" ] || [ -f "$D/targets/$PLATFORM/target.sh" ] || err "ticket $n: PLATFORM $PLATFORM is not a target of $P"
+    a=$TICKETS_DIR/$n.assessment.md
+    if [ -f "$a" ]; then
+      grep -E '^- N[0-9]+: .*\| *fixture: ' "$a" | sed -E 's/.*\| *fixture: *([a-z0-9-]+).*/\1/' | while read -r fx; do
+        [ -f "$D/fixtures/$fx/fixture.md" ] || echo "  WARN  ticket $n: its assessment needs fixture $fx, which $P doesn't have"
+      done
+      grep -E '^- N[0-9]+: ' "$a" | grep -vqE '\| *(fixture|provided|qa-setup|unmet): ' \
+        && echo "  WARN  ticket $n: an assessment need line says neither fixture, provided, qa-setup nor unmet"
+    fi
     exit $(( errs > 0 ? 2 : 0 ))
   )
   [ $? -eq 2 ] && errs=$((errs + 1))
