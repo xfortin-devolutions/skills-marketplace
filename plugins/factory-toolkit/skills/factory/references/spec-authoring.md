@@ -36,6 +36,10 @@ SCOPE_REGEX='<the Touches line as an extended regex over repo paths>'
   (DEVEX-528: `source.Rows`, not the lazy `source.Items`, which passed on the buggy code). For a control, drive it
   the way the screen does: shown in a window (Avalonia headless), not only its view model or collection (DEVEX-531: the
   oracle passed on a fix the shown grid ignored, and only runtime QA caught it, a round later).
+  Drive the user's input, not the method it ends in: a header click goes through the control's own state before it calls
+  `SortBy` (DEVEX-531 round 2: a click from ascending did nothing, and a test that called `SortBy` passed). When the test
+  project can't render the control (no theme, no templates: RDM's Core.Tests), say so in the spec and put the input in
+  the Runtime check as its own expectation ("each single click flips the order").
 - Covers each Acceptance item; keeps a couple of "already works" tests as regression guards.
 - Committed before the run (the builder's worktree is cut from `HEAD`) and protected (ORACLE_PATHS).
 
