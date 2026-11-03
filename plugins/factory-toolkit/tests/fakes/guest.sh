@@ -3,6 +3,7 @@
 #   build: fails when <worktree>/BROKEN exists. test Accept.Tests: passes when src/feature.txt holds "done" (or always,
 #   with $FAKE_STATE/accept-always-passes). Flaky.Tests fails its first run, Broken.Tests always fails.
 #   test --no-build fails with no tests run when $FAKE_STATE/no-build-misses exists.
+#   With $FAKE_STATE/restore-flake, the build is red, then its clean rebuild a harness error, then green.
 #   With $FAKE_STATE/lock-on-test, the first test run holds the worktree's index.lock for 4 s.
 D=$1 CMD=$2; shift 2
 . "$D/guest.conf"
@@ -10,7 +11,13 @@ echo "$CMD $*" >> "$FAKE_STATE/guest.log"
 pass() { echo "Passed!  - Failed:     0, Passed:     3, Skipped:     0, Total:     3, Duration: 1 ms - $1.dll"; echo "TEST EXIT CODE: 0"; exit 0; }
 fail() { echo "  Failed $1.It [1 ms]"; echo "Failed!  - Failed:     1, Passed:     2, Skipped:     0, Total:     3, Duration: 1 ms - $1.dll"; echo "TEST EXIT CODE: 1"; exit 1; }
 case "$CMD" in
-  build) if [ -e "$WORKTREE/BROKEN" ]; then echo "src/a.cs(1,1): error CS0001: broken"; echo "BUILD EXIT CODE: 1"; exit 1; fi
+  build) # $FAKE_STATE/restore-flake: the first build is red, the clean rebuild after it fails its restore (the harness).
+         if [ -e "$FAKE_STATE/restore-flake" ]; then
+           b=$(($(cat "$FAKE_STATE/build.n" 2> /dev/null || echo 0) + 1)); echo "$b" > "$FAKE_STATE/build.n"
+           [ "$b" = 1 ] && { echo "    1 Error(s)"; echo "BUILD EXIT CODE: 1"; exit 1; }
+           [ "$b" = 2 ] && { echo "NuGet.RestoreEx.targets(19,5): error : Could not find a part of the path"; echo "HARNESS ERROR: restore or SDK failure in the guest"; exit 3; }
+         fi
+         if [ -e "$WORKTREE/BROKEN" ]; then echo "src/a.cs(1,1): error CS0001: broken"; echo "BUILD EXIT CODE: 1"; exit 1; fi
          echo "    0 Error(s)"; echo "BUILD EXIT CODE: 0"; exit 0 ;;
   test)
     if [ "${1:-}" = --no-build ]; then

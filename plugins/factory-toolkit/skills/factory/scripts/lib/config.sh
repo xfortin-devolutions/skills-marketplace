@@ -107,7 +107,9 @@ BUILD_TOOLS=(
   "Read" "Edit" "Write" "Glob" "Grep" "Skill"
   "Bash(git --version)" "Bash(claude --version)" "Bash(date *)"
   "Bash(git add *)" "Bash(git commit *)" "Bash(git switch *)" "Bash(git log *)" "Bash(git diff *)"
-  "Bash(git status *)" "Bash(git rev-parse *)" "Bash(git show *)")
+  "Bash(git status *)" "Bash(git rev-parse *)" "Bash(git show *)"
+  # Drops an experiment it won't commit: left in the worktree, it turns the round's verify red. The oracle is re-checked.
+  "Bash(git restore *)")
 
 REVIEW_TOOLS=(
   "Read" "Glob" "Grep"

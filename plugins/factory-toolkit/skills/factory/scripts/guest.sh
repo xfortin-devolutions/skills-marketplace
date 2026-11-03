@@ -35,7 +35,7 @@ run() {
 report() {
   local code errs
   code=$(grep -oE "$2 EXIT CODE: -?[0-9]+" "$1" | tail -1 | grep -oE -- '-?[0-9]+$')
-  errs=$(grep -E ': error |^ *Failed [^!]' "$1" | sed -E 's/ \[[^]]*\]$//' | awk '!seen[$0]++' | head -40)
+  errs=$(grep -E ': ([A-Za-z]+ )?error |^ *Failed [^!]' "$1" | sed -E 's/ \[[^]]*\]$//' | awk '!seen[$0]++' | head -40)
   [ -n "$errs" ] && printf '%s\n' "$errs"
   grep -E 'Warning\(s\)|Error\(s\)|Passed!|Failed!|Total tests|Time Elapsed|EXIT CODE' "$1" | tail -6
   echo "full log: $1"
@@ -43,7 +43,8 @@ report() {
     echo "HARNESS ERROR: no $2 EXIT CODE (time box, SSH or share): $(grep -v '^[[:space:]]*$' "$1" | tail -1)"
     exit 3
   fi
-  if [ "$code" != 0 ] && grep -qE 'error (NU[0-9]|NETSDK|MSB4236)' "$1"; then
+  # NuGet's restore task can fail with no NU code (an I/O error writing obj/ over the share): still not the change.
+  if [ "$code" != 0 ] && grep -qE 'error (NU[0-9]|NETSDK|MSB4236)|NuGet\.[A-Za-z]*\.?targets\([0-9,]+\): error ' "$1"; then
     echo "HARNESS ERROR: restore or SDK failure in the guest"
     exit 3
   fi
