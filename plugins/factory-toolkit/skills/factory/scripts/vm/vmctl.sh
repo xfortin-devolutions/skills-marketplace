@@ -25,6 +25,7 @@ VM_MEM=${VM_MEM:-16G}
 VM_XRES=${VM_XRES:-1600}
 VM_YRES=${VM_YRES:-900}
 VM_BOOT_MIN=${VM_BOOT_MIN:-10}
+VM_SLOT_WAIT_MIN=${VM_SLOT_WAIT_MIN:-120}
 
 die() { echo "vmctl: $*" >&2; exit 1; }
 alive() { [ -f "$1/qemu.pid" ] && kill -0 "$(cat "$1/qemu.pid")" 2> /dev/null; }
@@ -54,10 +55,16 @@ up() {
   alive "$d" && die "a VM is already running for $run"
   share=$(cd "$wt" && pwd)
 
-  n=1
-  while ! mkdir "$SLOTS/$n" 2> /dev/null; do
-    n=$((n + 1))
-    [ "$n" -le "$VM_MAX" ] || die "all $VM_MAX VM slots are busy (vmctl.sh list; vmctl.sh gc frees dead ones)"
+  # A busy machine is a queue, not an error: wait for a slot (another run's VM going down) up to VM_SLOT_WAIT_MIN.
+  local waited=0
+  while :; do
+    n=1
+    while [ "$n" -le "$VM_MAX" ] && ! mkdir "$SLOTS/$n" 2> /dev/null; do n=$((n + 1)); done
+    [ "$n" -le "$VM_MAX" ] && break
+    [ "$waited" -ge $((VM_SLOT_WAIT_MIN * 60)) ] && die "all $VM_MAX VM slots stayed busy for $VM_SLOT_WAIT_MIN min (vmctl.sh list; vmctl.sh gc frees dead ones)"
+    [ "$waited" = 0 ] && echo "vmctl: all $VM_MAX VM slots are busy: waiting up to $VM_SLOT_WAIT_MIN min for one" >&2
+    sleep 10; waited=$((waited + 10))
+    gc > /dev/null
   done
   echo "$d" > "$SLOTS/$n/vm"
   # Until QEMU runs, the slot looks dead: the marker keeps a parallel up's gc from deleting this VM's files mid-start.

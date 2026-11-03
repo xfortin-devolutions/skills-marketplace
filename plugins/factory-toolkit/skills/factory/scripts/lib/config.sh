@@ -33,7 +33,7 @@ FACTORY_RUNS=${FACTORY_RUNS:-$MAIN_REPO/.claude/worktrees/factory-runs}
 # The negative runs (the acceptance test on a base, which must fail), kept per base tree and test across runs.
 NEG_CACHE=${FACTORY_NEG_CACHE:-$FACTORY_RUNS/.negative}
 FACTORY_VM_ROOT=${FACTORY_VM_ROOT:-$HOME/VMs/factory}
-VM_CPUS=8  VM_MEM=16G  VM_MAX=2  VM_BOOT_MIN=10  GUEST_BUILD_MIN=30  HUMAN_WAIT_MIN=120
+VM_CPUS=8  VM_MEM=16G  VM_MAX=2  VM_SLOT_WAIT_MIN=120  VM_BOOT_MIN=10  GUEST_BUILD_MIN=30  HUMAN_WAIT_MIN=120
 VM_XRES=1600  VM_YRES=900
 DEFAULT_PROFILE=""
 # Docs every change may update besides the ticket's scope (repo path prefixes; the project sets them). Verify doesn't count
@@ -114,5 +114,5 @@ REVIEW_TOOLS=(
   "Bash(git diff *)" "Bash(git log *)" "Bash(git show *)")
 
 export VM_IMAGE=$GOLDEN_IMAGE
-export FACTORY_VM_HOME VM_CPUS VM_MEM VM_MAX VM_BOOT_MIN VM_XRES VM_YRES
+export FACTORY_VM_HOME VM_CPUS VM_MEM VM_MAX VM_SLOT_WAIT_MIN VM_BOOT_MIN VM_XRES VM_YRES
 export VM_SHARE_CHECK=${SHARE_CHECK:-}

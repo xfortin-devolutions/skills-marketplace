@@ -1042,7 +1042,10 @@ while :; do
     fi
     last_v=$v
     case "$v" in
-      green) ;;
+      green)
+        # One VM per run at a time: review needs none and QA boots its own clean clone, so the build VM goes now and
+        # the next builder round boots a fresh one (the build output lives in the worktree, on the Mac, not in the VM).
+        if [ "$BUILD_VM_UP" = yes ]; then "$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1; BUILD_VM_UP=no; fi ;;
       error*) STATUS="harness error in verify: ${v#error: }"; break ;;
       *) reason="builder run $builds: $out; runner verify $v"; from=verify; STATUS="send back: $reason"; continue ;;
     esac
