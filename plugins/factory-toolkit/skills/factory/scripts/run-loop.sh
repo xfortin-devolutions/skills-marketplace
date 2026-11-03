@@ -217,8 +217,8 @@ row() { # row <run> <role> <name> <outcome>
 # $HANDBACK/verification-record.md. Echoes "green", "red: <why>" or "error: <why>" (the harness, or the spec, failed).
 verify() {
   local n=$1 out="$RUN/verify-$1.log"
-  local sha touched outside rc i line proj filt what flaky="" fails="" rv=""
-  : > "$out"; : > "$out.rows"; : > "$out.ex"
+  local sha touched outside rc i line proj filt what flaky="" fails="" rv="" acc=yes
+  : > "$out"; : > "$out.rows"; : > "$out.ex"; : > "$RUN/verify-$n.accept-fails"
   [ -z "$(git -C "$WT" status --porcelain -- . ':(exclude)handback')" ] \
     || { echo "red: uncommitted changes left in the worktree (the builder stopped before committing them; they are still there)"; return; }
   [ -n "$(git -C "$WT" diff --name-only "$BASE" HEAD -- . ':(exclude)handback')" ] || { echo "red: no code change"; return; }
@@ -271,6 +271,11 @@ verify() {
       [ "$proj" != "$line" ] && filt=${line#* }
       if [ -n "$filt" ]; then guest_test "$out" "$proj" "$filt"; else guest_test "$out" "$proj"; fi
       i=$((i + 1)); rec_row $i "$T_CMD" $T_RC "$T_WHAT" "" "$out"
+      # The accept test's failing tests, for the loop (verify runs in a subshell): the same ones red round after round
+      # point at the oracle, not the builder.
+      [ "$acc" = yes ] && [ $T_RC -eq 1 ] && grep -E '^ *Failed [^!]' "$out.last" | sed -E 's/^ *Failed ([^ ]+).*/\1/' \
+        | sort -u > "$RUN/verify-$n.accept-fails"
+      acc=no
       case $T_RC in
         0) [ "$T_FAILS" -gt 0 ] && flaky="$flaky; $line: failed $T_FAILS of $T_RUNS runs" ;;
         1) fails="$fails; $line: $(first_errors "$out.last")" ;;
@@ -444,7 +449,7 @@ progress_sig() {
 # save_state <next station: build | review | qa>: what --resume-run needs to go on from that station (factory.sh resume).
 save_state() {
   local v
-  { for v in TICKET STAMP BRANCH WT BASE QA EXPLORE KEEP_VM OPEN_PR builds FIRST reason from xsend LAST_X last_v stall SPENT; do
+  { for v in TICKET STAMP BRANCH WT BASE QA EXPLORE KEEP_VM OPEN_PR builds FIRST reason from xsend LAST_X last_v last_af stall SPENT; do
       printf 'S_%s=%q\n' "$v" "${!v:-}"
     done
     printf 'S_NEXT=%q\n' "$1"
@@ -854,6 +859,11 @@ disputed_ids() {
   echo "${d:-none}"
 }
 
+# accept_disputes: the acceptance tests the builder disputes (disputes.md "## accept: <test>" headings), on one line
+accept_disputes() {
+  disputes "none-such" | sed -n 's/^## *accept: *//p' | paste -sd ';' -
+}
+
 # write_qa <n>: Runtime check section of the hand-back + evidence under handback/, committed by the runner.
 write_qa() {
   local n=$1 d
@@ -969,10 +979,10 @@ for p in $PROTECTED_PATHS; do
 done | { cat; printf '"Edit(/%s/**)"\n"Write(/%s/**)"\n' "$SPEC_DIR" "$SPEC_DIR"; printf '"%s"\n' "${DENY_BASH[@]}"; } \
   | jq -s '{permissions: {deny: .}}' > "$RUN/builder-settings.json"
 
-builds=0 reason="" from="" stall=0 last_v="" xsend=0 LAST_X=""
+builds=0 reason="" from="" stall=0 last_v="" last_af="" xsend=0 LAST_X=""
 if [ -n "$RESUME_RUN" ]; then
   builds=$S_builds FIRST=$S_FIRST reason=$S_reason from=$S_from xsend=$S_xsend LAST_X=$S_LAST_X last_v=$S_last_v
-  stall=$S_stall SPENT=$S_SPENT
+  stall=$S_stall SPENT=$S_SPENT last_af=${S_last_af:-}
   ev "run resumed before $SKIP (round $builds, \$$SPENT spent)"
   [ "$SKIP" = build ] && SKIP=""
 elif [ -n "$RESUME" ]; then
@@ -1059,6 +1069,22 @@ while :; do
       STATUS="needs a human: $stall builder runs in a row changed nothing (code, disputes or tests); last reason: $reason"; break
     fi
     last_v=$v
+    # An oracle that contradicts the spec can't be fixed by the builder, who may not edit it: a disputed acceptance
+    # test, or the same accept tests red twice in a row, stops for a human instead of sending back until the cap.
+    if [ "${v#red}" != "$v" ]; then
+      acc_d=$(accept_disputes) acc_f=$(paste -sd ';' - < "$RUN/verify-$builds.accept-fails" 2> /dev/null)
+      if [ -n "$acc_d" ]; then
+        STATUS="needs a human: the builder disputes the acceptance test ($acc_d; reasons in $HANDBACK/disputes.md): fix the oracle or overrule the dispute, then --continue"
+        notify "the builder disputes the acceptance test: $acc_d"; break
+      fi
+      if [ -n "$acc_f" ] && [ "$acc_f" = "$last_af" ]; then
+        STATUS="needs a human: the same acceptance tests failed two verifies in a row ($acc_f): the oracle may contradict the spec (the builder's hand-back says why), then --continue"
+        notify "the same acceptance tests failed twice: $acc_f"; break
+      fi
+      last_af=$acc_f
+    else
+      last_af=""
+    fi
     case "$v" in
       green)
         # One VM per run at a time: review needs none and QA boots its own clean clone, so the build VM goes now and

@@ -13,6 +13,11 @@ Change only what the ticket's Scope allows (plus those docs), and nothing its "D
 
 You have @BMIN@ minutes: the session is then stopped wherever it is. Guest builds are slow, so check your work with `@GUEST@ build <project>` and the accept test, commit, and leave the full build to the runner. Once your code commit is in, a time box loses nothing: the runner verifies that commit (and starts your hand-back from the template if you didn't write it).
 
+If an acceptance test can't pass without breaking what the ticket asks (it contradicts the ticket's own rules), don't bend the code to it and don't keep trying: you may not edit it. Record it in @HANDBACK@/disputes.md (create or update it), one section per test, in this form:
+## accept: <test name>
+- Contradiction: <what the test does and expects, and which rule of the ticket that breaks>
+- Why: <file:line evidence, for the human>
+Commit it with your hand-back. The runner then stops the run for a human, who fixes the test or overrules you; the same accept tests failing two verifies in a row stop it too, so say in the Tests section why one still fails.
 Work in this order and stop after step 4.
 1. Implement the whole ticket: every Acceptance item and everything its Scope says to change or remove (migrations, opt-ins, docs), not only what the accept test checks. The runner's checks and QA cover the rest, so a part left undone comes back as another round. Hand back with something undone only when it is impossible in this session, and then say what and why in the Change section. Drop an experiment you won't keep with `git restore <paths>`: leave nothing uncommitted. Commit the change alone with the message '@TICKET@: <what changed, past tense>'. Make exactly one code commit: if you change code again before step 3, amend it (git commit --amend --no-edit).
 2. When you added or changed tests beyond the accept test, list the commands in @HANDBACK@/tests.txt, one `<test project> [<filter>]` a line (the arguments of `@GUEST@ test`). The runner runs each one; a test that fails and then passes on a re-run is reported as flaky, not as a failure.
