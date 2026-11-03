@@ -380,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "runs"]:
                 runs = [r for r in glob.glob(os.path.join(ARGS.runs, "*")) if os.path.exists(os.path.join(r, "events.log"))]
                 runs.sort(key=lambda r: os.path.getmtime(os.path.join(r, "events.log")), reverse=True)
-                return self.send(200, [run_summary(r) for r in runs[:60]])
+                return self.send(200, [run_summary(r) for r in runs[:300]])
             if len(parts) >= 3 and parts[:2] == ["api", "run"]:
                 run = safe_join(ARGS.runs, parts[2])
                 if not run or not os.path.isdir(run):
