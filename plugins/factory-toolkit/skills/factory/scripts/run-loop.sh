@@ -242,7 +242,7 @@ row() { # row <run> <role> <name> <outcome>
 # $HANDBACK/verification-record.md. Echoes "green", "red: <why>" or "error: <why>" (the harness, or the spec, failed).
 verify() {
   local n=$1 out="$RUN/verify-$1.log"
-  local sha touched outside rc i line proj filt what flaky="" fails="" rv="" acc=yes
+  local sha touched outside rc i line proj filt what flaky="" fails="" rv="" acc=yes isacc red=""
   : > "$out"; : > "$out.rows"; : > "$out.ex"; : > "$RUN/verify-$n.accept-fails"
   [ -z "$(git -C "$WT" status --porcelain -- . ':(exclude)handback')" ] \
     || { echo "red: uncommitted changes left in the worktree (the builder stopped before committing them; they are still there)"; return; }
@@ -298,19 +298,26 @@ verify() {
       i=$((i + 1)); rec_row $i "$T_CMD" $T_RC "$T_WHAT" "" "$out"
       # The accept test's failing tests, for the loop (verify runs in a subshell): the same ones red round after round
       # point at the oracle, not the builder.
-      [ "$acc" = yes ] && [ $T_RC -eq 1 ] && grep -E '^ *Failed [^!]' "$out.last" | sed -E 's/^ *Failed ([^ ]+).*/\1/' \
-        | sort -u > "$RUN/verify-$n.accept-fails"
-      acc=no
+      [ "$acc" = yes ] && [ $T_RC -eq 1 ] && failed_tests "$out.last" > "$RUN/verify-$n.accept-fails"
+      isacc=$acc acc=no
       case $T_RC in
         0) [ "$T_FAILS" -gt 0 ] && flaky="$flaky; $line: failed $T_FAILS of $T_RUNS runs" ;;
-        1) fails="$fails; $line: $(first_errors "$out.last")" ;;
+        # A listed test red on every run waits for the base check below; the accept test is red on the base by design.
+        1) if [ "$isacc" = yes ]; then fails="$fails; $line: $(first_errors "$out.last")"
+           else red="$red$line	$(first_errors "$out.last")
+"; failed_tests "$out.last" > "$out.red-$(printf '%s' "$line" | git hash-object --stdin | cut -c1-12)"; fi ;;
         *) rv="error: guest test: $(harness_why "$out.last")"; break ;;
       esac
     done < <(echo "$ACCEPT_TEST${ACCEPT_FILTER:+ $ACCEPT_FILTER}"; grep -vE '^[[:space:]]*(#|$)' "$WT/$HANDBACK/tests.txt" 2> /dev/null)
     cp "$BUILD_VM/test.log" "$RUN/verify-$n-test.log" 2> /dev/null
+    PREF=""
+    if [ -z "${rv:-}" ] && [ -n "$red" ]; then
+      base_check "$out" "$n" "$red"
+      fails="$fails$NEWF"
+    fi
     [ -z "${rv:-}" ] && [ -n "$fails" ] && rv="red: tests fail in the guest${fails#;}"
   fi
-  write_record "$sha" "${rv:-green}" "${flaky#; }" "$out"
+  write_record "$sha" "${rv:-green}" "${flaky#; }" "$out" "${PREF#; }"
   echo "${rv:-green}"
 }
 
@@ -417,6 +424,7 @@ write_record() {
     echo
     cat "$4.ex"
     echo "- Flaky: ${3:-none}"
+    echo "- Pre-existing (red on the base too, so not this change's): ${5:-none}"
     echo "- Not verified: nothing"
     echo "- Verdict: $verdict"
   } > "$rec"
@@ -537,6 +545,70 @@ not_docs() { # not_docs: the paths on stdin that are under none of DOC_PATHS
     for d in $DOC_PATHS; do case "$p" in "$d"*) keep=no ;; esac; done
     [ "$keep" = yes ] && echo "$p"
   done
+  return 0
+}
+
+# failed_tests <guest test output>: the failed tests' names, one a line, sorted
+failed_tests() {
+  grep -E '^ *Failed [^!]' "$1" | sed -E 's/^ *Failed ([^ ]+).*/\1/' | sort -u
+}
+
+# base_check <verify log> <n> <red lines>: each listed test red on the branch ("<line><TAB><errors>" a line), run on the
+# base in a worktree and VM of their own, its failures kept per base tree and line like the negative run (NEG_CACHE).
+# A test the base fails too (on any of its 1 + FLAKY_RERUNS runs) is pre-existing: a guest that can't run part of a
+# project (no WebView, timing) must not send the builder chasing it, nor push it to narrow the list (DEVEX-514).
+# Sets NEWF ("; <line>: <errors>" for each line with a failure the base doesn't show) and PREF (the pre-existing ones).
+base_check() {
+  local out=$1 n=$2 line errs key f bf proj filt rc k new pre bwt="" vmrun="$QA_ROOT/vm-basetest-$2" why=""
+  NEWF="" PREF=""
+  while IFS='	' read -r line errs; do
+    [ -n "$line" ] || continue
+    key=$(git -C "$WT" rev-parse "$BASE^{tree}")-$(printf '%s' "base-test $line" | git hash-object --stdin | cut -c1-12)
+    f=$NEG_CACHE/$key
+    bf="$out.red-$(printf '%s' "$line" | git hash-object --stdin | cut -c1-12)"
+    if [ ! -f "$f" ] && [ -z "$why" ]; then
+      if [ -z "$bwt" ]; then
+        bwt="$MAIN_REPO/.claude/worktrees/$T-basetest-$STAMP-$n"
+        ev "verify-$n: listed tests red, running them on the base ${BASE:0:11}" > /dev/null
+        if ! git -C "$REPO" worktree add -q --detach "$bwt" "$BASE" 2>> "$EV"; then
+          why="base worktree add failed"; bwt=""
+        else
+          # One VM a run at a time (V63): the build VM boots again on its next use (lib/lease.sh).
+          "$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1
+          if "$VM/vmctl.sh" up "$vmrun" "$bwt" >> "$out" 2>&1; then guest_conf "$vmrun" "$bwt"; else why="base VM did not come up"; fi
+        fi
+      fi
+      if [ -z "$why" ]; then
+        proj=${line%% *} filt=""
+        [ "$proj" != "$line" ] && filt=${line#* }
+        : > "$f.tmp"
+        for k in $(seq $((FLAKY_RERUNS + 1))); do
+          if [ -n "$filt" ]; then "$GUEST_SH" "$vmrun" test "$proj" "$filt" > "$out.base" 2>&1; else "$GUEST_SH" "$vmrun" test "$proj" > "$out.base" 2>&1; fi
+          rc=$?
+          { echo "== base check on ${BASE:0:11}: $line, run $k: exit $rc"; cat "$out.base"; } >> "$out"
+          [ $rc -le 1 ] || { why="base test: $(harness_why "$out.base")"; break; }
+          failed_tests "$out.base" >> "$f.tmp"
+        done
+        if [ -z "$why" ]; then sort -u "$f.tmp" > "$f"; fi
+        rm -f "$f.tmp"
+      fi
+    fi
+    if [ -f "$f" ] && [ -s "$bf" ]; then
+      new=$(comm -23 "$bf" "$f") pre=$(comm -12 "$bf" "$f" | grep -c .)
+      if [ -z "$new" ]; then
+        PREF="$PREF; $line: $pre failing test(s) also fail on the base"
+      else
+        NEWF="$NEWF; $line: not on the base: $(echo "$new" | head -3 | tr '\n' ' ')"
+        [ "$pre" -gt 0 ] && PREF="$PREF; $line: $pre other failing test(s) also fail on the base"
+      fi
+    else
+      NEWF="$NEWF; $line: $errs${why:+ (base check could not run: $why)}"
+    fi
+  done <<< "$3"
+  if [ -n "$bwt" ]; then
+    "$VM/vmctl.sh" down "$vmrun" >> "$EV" 2>&1
+    git -C "$REPO" worktree remove --force "$bwt" 2>> "$EV"
+  fi
   return 0
 }
 

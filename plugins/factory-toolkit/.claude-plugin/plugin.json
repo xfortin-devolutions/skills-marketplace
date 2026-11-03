@@ -1,6 +1,6 @@
 {
   "name": "factory-toolkit",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "[EXPERIMENTAL] Software factory: Jira ticket -> spec with a red oracle -> unattended builder, verify, reviewer and blind VM QA loop -> hand-back for a human judge",
   "author": {
     "name": "Xavier Fortin",

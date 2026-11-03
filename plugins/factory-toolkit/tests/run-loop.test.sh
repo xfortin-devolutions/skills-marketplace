@@ -210,14 +210,32 @@ t_flaky() {
 
 t_failing_listed_test() {
   cat > "$T/scenario.sh" <<'EOF'
-builder_1() { commit_code done; mkdir -p "$(hb_dir)"; echo "Broken.Tests SomeFilter" > "$(hb_dir)/tests.txt"; write_handback; }
+builder_1() { commit_code done; mkdir -p "$(hb_dir)"; echo "Regress.Tests SomeFilter" > "$(hb_dir)/tests.txt"; write_handback; }
 builder_2() { : > "$(hb_dir)/tests.txt"; git add handback; git commit -qm "handback: dropped the broken test"; }
 EOF
   loop
   expect_end '^ready for the judge'
-  expect_event 'build-1 .*verify=red: tests fail in the guest Broken.Tests SomeFilter'
-  grep -q 'test --no-build Broken.Tests SomeFilter' "$FAKE_STATE/guest.log" || fail "the listed test did not run with its filter"
-  [ "$(grep -c 'test --no-build Broken.Tests' "$FAKE_STATE/guest.log")" = 3 ] || fail "a failing test runs 1 + FLAKY_RERUNS times"
+  expect_event 'build-1 .*verify=red: tests fail in the guest Regress.Tests SomeFilter: not on the base: Regress.Tests.It'
+  grep -q 'test --no-build Regress.Tests SomeFilter' "$FAKE_STATE/guest.log" || fail "the listed test did not run with its filter"
+  [ "$(grep -c 'test --no-build Regress.Tests' "$FAKE_STATE/guest.log")" = 3 ] || fail "a failing test runs 1 + FLAKY_RERUNS times"
+  [ "$(grep -c '^test Regress.Tests SomeFilter' "$FAKE_STATE/guest.log")" = 3 ] || fail "the base check runs the test 1 + FLAKY_RERUNS times, building it"
+  one_vm
+}
+
+# A listed test the base fails too is pre-existing: green, listed for the judge, and checked on the base once per base.
+t_listed_red_on_base_too() {
+  cat > "$T/scenario.sh" <<'EOF'
+REVIEW="send back"
+builder_1() { commit_code done; mkdir -p "$(hb_dir)"; echo "Broken.Tests" > "$(hb_dir)/tests.txt"; write_handback; }
+builder_2() { commit_code "done again"; write_handback; }
+builder_3() { commit_code "done thrice"; write_handback; }
+EOF
+  loop
+  expect_no_event 'verify=red'
+  expect_file "$(hb)/verification-record.md" '^- Pre-existing \(red on the base too, so not this change.s\): Broken.Tests: 1 failing test\(s\) also fail on the base$'
+  expect_file "$(hb)/verification-record.md" '^- Verdict: PASS$'
+  [ "$(grep -c '^test Broken.Tests' "$FAKE_STATE/guest.log")" = 3 ] || fail "the base check ran more than once for one base: $(grep -c '^test Broken.Tests' "$FAKE_STATE/guest.log") base runs"
+  one_vm
 }
 
 t_accept_passes_on_base() {
@@ -469,7 +487,7 @@ t_qa_needs_input() {
 }
 
 ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
-  failing_listed_test accept_passes_on_base build_fails restore_flake_on_clean accept_dispute accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
+  failing_listed_test listed_red_on_base_too accept_passes_on_base build_fails restore_flake_on_clean accept_dispute accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
   assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture provided_missing provided_check_then_resume
   qa_needs_input"
 for t in ${*:-$ALL}; do
