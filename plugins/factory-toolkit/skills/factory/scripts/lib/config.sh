@@ -25,6 +25,26 @@ C_MODEL=claude-sonnet-5-5   C_USD=1    C_MIN=10
 X_MODEL=claude-opus-5-5     X_USD=5    X_MIN=30    RC_USD=3   RC_MIN=20
 EXPLORE=yes                 EXPLORE_SENDBACKS=1
 ITER_CAP=5                  STALL_CAP=2               LOOP_USD=40
+# The assessor (before the first builder run): sizes the ticket and lists what testing it needs (lib/sizing.sh, the
+# ticket's <KEY>.assessment.md). ASSESS=no skips it: the run then uses SIZE_DEFAULT and no test needs.
+A_MODEL=claude-sonnet-5-5   A_USD=1.5  A_MIN=15  ASSESS=yes
+# Size classes: each sets the limits it names (absolute values; the ones it leaves out keep the values above). The
+# assessor picks a class; SIZE in the ticket .sh or --size picks one on purpose. SIZE_CEILING caps the values of a class
+# the assessor picked, never one a human or an agent set (ticket .sh, --size, --set): going above it is a decision.
+SIZE_CLASSES="S M L XL"     SIZE_DEFAULT=M
+SIZE_S="B_MIN=30 ITER_CAP=4 LOOP_USD=25"
+SIZE_M=""
+SIZE_L="B_USD=15 B_MIN=90 R_USD=3 R_MIN=30 QA_USD=8 QA_MIN=60 X_USD=7 X_MIN=45 ITER_CAP=6 LOOP_USD=80"
+SIZE_XL="B_USD=25 B_MIN=150 R_USD=4 R_MIN=40 QA_USD=10 QA_MIN=75 X_USD=8 X_MIN=60 ITER_CAP=8 LOOP_USD=150"
+SIZE_CEILING="LOOP_USD=150 B_USD=25 B_MIN=180"
+# Measured, not guessed: the reviewer's limits grow with the diff (one more share per R_SCALE_LINES changed lines) and
+# QA's with the Runtime check (per QA_SCALE_ITEMS steps and expectations), up to SCALE_MAX times, unless set on purpose.
+R_SCALE_LINES=400           QA_SCALE_ITEMS=12         SCALE_MAX=3
+# The limits a size class, the ticket .sh, --set or the scaling may change.
+CAP_VARS="B_USD B_MIN R_USD R_MIN QA_USD QA_MIN C_USD C_MIN X_USD X_MIN RC_USD RC_MIN A_USD A_MIN ITER_CAP STALL_CAP LOOP_USD EXPLORE_SENDBACKS GUEST_BUILD_MIN"
+# Resources only a human can provide (a data source, an account, a licensed server), one folder each, never in a repo:
+# provided.md (what it is, no secrets) and the files the guest needs. `factory.sh provide <name>` starts one.
+FACTORY_PROVIDED=${FACTORY_PROVIDED:-$HOME/.factory/provided}
 # A failing test is re-run up to FLAKY_RERUNS times; passing on a re-run makes it flaky (green, listed for the judge).
 FLAKY_RERUNS=2
 # After a builder session, how long a git index.lock it left may take to go before the runner removes it as stale.
@@ -68,8 +88,12 @@ fi
 [ -n "${TICKET:-}" ] && [ ! -f "$TICKETS_DIR/$TICKET.sh" ] && [ -f "$FACTORY_DIR/tickets/$TICKET.sh" ] && TICKETS_DIR=$FACTORY_DIR/tickets
 
 PROFILE="" PLATFORM="" TARGET_DIR="" PROFILE_DIR="" CODE_PATHS=""
+# The limits the ticket .sh sets on purpose (B_MIN=240, …) win over every later layer: run-loop.sh applies them last.
+TICKET_SET="" SIZE="" SIZE_WHY=""
 if [ -n "${TICKET:-}" ] && [ -f "$TICKETS_DIR/$TICKET.sh" ]; then
+  for _v in $CAP_VARS; do eval "_pre_$_v=\${$_v-}"; done
   . "$TICKETS_DIR/$TICKET.sh"
+  for _v in $CAP_VARS; do eval "[ \"\${$_v-}\" = \"\$_pre_$_v\" ]" || TICKET_SET="$TICKET_SET $_v=$(eval "echo \${$_v}")"; done
   PROFILE=${PROFILE:-$DEFAULT_PROFILE}
   [ -n "$PROJECT_DIR" ] || { echo "factory: no project for this repo: no $FACTORY_DIR_REL/profiles, and no projects/*/config.sh in the skill whose REPO_MATCH matches its origin" >&2; return 2; }
   PROFILE_DIR=$PROJECT_DIR/profiles/$PROFILE

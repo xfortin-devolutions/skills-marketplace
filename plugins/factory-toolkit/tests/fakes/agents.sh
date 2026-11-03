@@ -25,4 +25,5 @@ qa() { printf 'Verdict: PASS\nSummary: the feature works\nSteps:\n1. looked\nHum
 charter() { printf '1. Use the feature twice in a row.\n2. Look at it in OtherWindow.cs\n'; }
 explorer() { printf 'Tour:\n1. used it\nFindings:\n'; }
 recheck() { echo "- F1: same: also on the base"; }
+assessor() { printf 'Size: M\nWhy: one file, fake\nRounds: 1\nSplit: no\nNeeds: none\n'; }
 unknown() { echo "unknown prompt"; }

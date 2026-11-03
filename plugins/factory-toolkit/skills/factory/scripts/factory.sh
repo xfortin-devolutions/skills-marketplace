@@ -9,8 +9,14 @@
 #   factory.sh stop [run]                stop the run before its next station
 #   factory.sh pause [run]               stop the run before its next station, resumable: the runner saves its state and
 #                                        exits, its VMs power off (a weekend, a reboot)
-#   factory.sh resume [run]              go on with a paused, stopped or crashed loop run from the station it saved, in the
-#                                        same run folder (runs in the foreground: start it in the background)
+#   factory.sh resume [run] [--size <class>] [--set NAME=VALUE]...   go on with a paused, stopped or crashed loop run
+#                                        from the station it saved, in the same run folder (runs in the foreground: start
+#                                        it in the background); --size and --set raise (or lower) its limits from there
+#   factory.sh assess <KEY>              the assessor alone: size class and test needs, in <KEY>.assessment.md next to the
+#                                        spec (the one before is kept as .prev); runs in the foreground, a few minutes
+#   factory.sh limits <KEY> [--size <class>] [--set NAME=VALUE]...   the limits a run of <KEY> would use, and why
+#   factory.sh provide <name>            start a resource only a human can provide (~/.factory/provided/<name>/)
+#   factory.sh provided                  the resources provided on this machine, and the tickets that need missing ones
 #   factory.sh down [run]                power off the VMs a run kept (--keep-vm) and remove their worktrees
 #   factory.sh new-profile <name> [--skill <project>]   start profiles/<name>/ from the skill's templates, in this repo's
 #                                        project (its own .factory/, or the skill's projects/<project>/ that matches it);
@@ -78,7 +84,8 @@ case "$cmd" in
     touch "$d/PAUSE"
     echo "$(basename "$d") pauses before its next station; factory.sh resume $(basename "$d") goes on from there" ;;
   resume)
-    d=$(run_dir "${1:-}") || exit 1
+    sel=""; case "${1:-}" in ""|--*) ;; *) sel=$1; shift ;; esac
+    d=$(run_dir "$sel") || exit 1
     [ -f "$d/state.sh" ] || die "$(basename "$d") has no saved state (a QA-only or test-only run, or one from before 0.5.0)"
     if [ -s "$d/runner.pid" ] && kill -0 "$(cat "$d/runner.pid")" 2> /dev/null; then
       [ -e "$d/PAUSE" ] || die "$(basename "$d") is running"
@@ -86,7 +93,46 @@ case "$cmd" in
     fi
     t=$(. "$d/state.sh"; echo "$S_TICKET") wt=$(. "$d/state.sh"; echo "$S_WT")
     [ -d "$wt" ] || die "the run's worktree $wt is gone"
-    cd "$wt" && exec bash "$X/run-loop.sh" "$t" --resume-run "$(basename "$d")" ;;
+    cd "$wt" && exec bash "$X/run-loop.sh" "$t" --resume-run "$(basename "$d")" "$@" ;;
+  assess)
+    key=${1:-}; [ -n "$key" ] || die "usage: factory.sh assess <KEY>"
+    [ -f "$TICKETS_DIR/$key.md" ] || die "no spec for $key in $TICKETS_DIR: write it first"
+    exec bash "$X/run-loop.sh" "$key" --assess-only ;;
+  limits)
+    key=${1:-}; [ -n "$key" ] || die "usage: factory.sh limits <KEY> [--size <class>] [--set NAME=VALUE]..."
+    shift
+    exec bash "$X/run-loop.sh" "$key" --limits-only "$@" ;;
+  provide)
+    name=${1:-}
+    case "$name" in ''|*[!a-z0-9-]*) die "usage: factory.sh provide <name> (lowercase letters, digits, dashes)" ;; esac
+    d=$FACTORY_PROVIDED/$name
+    if [ -f "$d/provided.md" ]; then
+      echo "$d exists:"; ls -A "$d" | grep -v '^\.in-use\.d$' | sed 's/^/  /'
+    else
+      mkdir -p "$d" && chmod 700 "$FACTORY_PROVIDED" "$d"
+      sed "s/@NAME@/$name/g" "$X/../templates/provided/provided.md" > "$d/provided.md"
+      cp "$X/../templates/provided/check.ps1" "$d/check.ps1.example"
+      echo "created $d"
+    fi
+    echo "1. fill $d/provided.md: what it is and how QA uses it, in user terms; no secrets (agents read it)"
+    echo "2. put the files the guest needs next to it (a data source file, credentials): copied into each QA VM's"
+    echo "   C:\\factory\\provided\\$name, never into a prompt or the repo"
+    echo "3. optional: check.ps1 (fails when the resource can't be reached from the VM) and apply.ps1 (sets the app up"
+    echo "   with it, then deletes what QA must not read): they run in the guest, \$Dir = that folder"
+    echo "then: factory.sh resume <run>, or run the ticket again" ;;
+  provided)
+    for f in "$FACTORY_PROVIDED"/*/provided.md; do
+      [ -f "$f" ] || continue
+      n=$(basename "$(dirname "$f")")
+      use=$(cat "$(dirname "$f")/.in-use.d/run" 2> /dev/null)
+      echo "$n: $(sed -n 's/^What: *//p' "$f" | head -1) · $(sed -n 's/^Access: *//p' "$f" | head -1) · shared: $(sed -n 's/^Shared: *//p' "$f" | head -1)${use:+ · in use by $use}"
+    done
+    for a in "$TICKETS_DIR"/*.assessment.md; do
+      [ -f "$a" ] || continue
+      grep -E '^- N[0-9]+: .*\| *provided: ' "$a" | sed -E 's/.*\| *provided: *([a-z0-9-]+).*/\1/' | sort -u | while read -r n; do
+        [ -f "$FACTORY_PROVIDED/$n/provided.md" ] || echo "missing: $n, needed by $(basename "$a" .assessment.md): factory.sh provide $n"
+      done
+    done ;;
   down)
     d=$(run_dir "${1:-}") || exit 1
     n=0
@@ -226,7 +272,7 @@ case "$cmd" in
     dry=no; [ "${2:-}" = --dry-run ] && dry=yes
     k=$(echo "$key" | tr '[:upper:]' '[:lower:]')
     gone="" busy=""
-    for d in "$TICKETS_DIR/$key.md" "$TICKETS_DIR/$key.sh" "$RUNS/$k"-*; do
+    for d in "$TICKETS_DIR/$key.md" "$TICKETS_DIR/$key.sh" "$TICKETS_DIR/$key.assessment.md" "$TICKETS_DIR/$key.assessment.md.prev" "$RUNS/$k"-*; do
       [ -e "$d" ] || continue
       if [ -d "$d" ]; then
         [ -n "$(live_vm "$d")" ] || [ -e "$d/WAITING-FOR-HUMAN" ] && { busy="$busy $(basename "$d")"; continue; }
@@ -246,5 +292,5 @@ case "$cmd" in
     brs=$(git -C "$REPO" branch --list "*$k*" | sed 's/^[*+ ] */  /')
     [ -z "$wts$brs" ] || printf 'left for you to remove (git worktree remove / git branch -D):\n%s%s\n' "${wts:+$wts
 }" "$brs" ;;
-  *) sed -n '2,20p' "$0"; exit 2 ;;
+  *) sed -n '2,31p' "$0"; exit 2 ;;
 esac

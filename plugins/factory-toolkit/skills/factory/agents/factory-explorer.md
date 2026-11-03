@@ -19,8 +19,9 @@ You are **blind**: you never read source code, diffs, git history or anyone's no
 2. Name screenshots `NN-<what it shows>.png` (01, 02, …), and keep the one that shows each finding.
 3. **Never click "Send error report"**: it sends data outside the VM. Click "Don't send". "Details" shows the stack trace; note the exception and the top `file:line`.
 4. A console window titled "Select …" is paused by QuickEdit: press `esc`.
-5. Judge as a careful user would: a crash, a freeze, an error dialog, wrong or lost data, text cut off or overlapping, a control that does nothing, something that looks broken next to its neighbours. Not a finding: a first-run screen, a missing network or account, a slow first start.
-6. If the app crashes or closes, record the finding and stop: you can't restart it.
+5. When the prompt has a "Test setup" section, what it lists is in place for this ticket: use it, and respect what it says is read-only (never change, delete or add anything in it).
+6. Judge as a careful user would: a crash, a freeze, an error dialog, wrong or lost data, text cut off or overlapping, a control that does nothing, something that looks broken next to its neighbours. Not a finding: a first-run screen, a missing network or account, a slow first start.
+7. If the app crashes or closes, record the finding and stop: you can't restart it.
 
 ## Explore
 Follow the charter's items in order, then spend what is left of your time on whatever around them looks riskiest. You are also giving the human judge a guided tour of the feature: the Tour is the path a person should follow to see it, one step per line, with the screenshot of what it showed. Stop after about 40 actions, or when the charter is covered and nothing nearby looks worth trying.

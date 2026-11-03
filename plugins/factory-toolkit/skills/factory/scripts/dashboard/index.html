@@ -82,11 +82,15 @@
   .events b { color: var(--text); font-weight: 500; }
   a { color: var(--accent); }
   .empty { color: var(--muted); padding: 40px; text-align: center; }
+  table.calib { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.calib th, table.calib td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.calib td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  details.limits summary { cursor: pointer; color: var(--muted); }
   @media (max-width: 760px) { .layout { grid-template-columns: 1fr; height: auto; } aside { max-height: 40vh; } }
 </style>
 </head>
 <body>
-<header><h1>Factory runs</h1><span class="badge">local · read-only</span><span class="muted" id="clock"></span></header>
+<header><h1>Factory runs</h1><span class="badge">local · read-only</span><a href="#view=calibration" id="calib-link">Sizing calibration</a><span class="muted" id="clock"></span></header>
 <div class="layout">
   <aside><div class="filter"><span class="muted">Show</span><select id="filter">
     <option value="1">active, and finished in the last day</option><option value="7">active, and finished in the last 7 days</option>
@@ -96,7 +100,7 @@
 <script>
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const state = { run: null, node: null, tab: null, runData: null };
+const state = { run: null, node: null, tab: null, runData: null, view: null };
 const ago = t => { if (!t) return ""; const s = (Date.now() - Date.parse(t)) / 1000;
   return s < 60 ? `${Math.round(s)} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
 const elapsed = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000;
@@ -104,13 +108,14 @@ const elapsed = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : D
 
 function readHash() {
   const h = new URLSearchParams(location.hash.slice(1));
-  state.run = h.get("run"); state.node = h.get("node"); state.tab = h.get("tab");
+  state.run = h.get("run"); state.node = h.get("node"); state.tab = h.get("tab"); state.view = h.get("view");
 }
 function writeHash() {
   const h = new URLSearchParams();
   if (state.run) h.set("run", state.run);
   if (state.node) h.set("node", state.node);
   if (state.tab) h.set("tab", state.tab);
+  if (state.view) h.set("view", state.view);
   history.replaceState(null, "", "#" + h.toString());
 }
 async function get(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(r.status); return r.json(); }
@@ -149,7 +154,7 @@ async function loadRuns() {
   $("#hidden").textContent = hidden ? `${hidden} older finished run${hidden > 1 ? "s" : ""} hidden. factory.sh clean <KEY> deletes a ticket's runs.` : "";
   for (const el of document.querySelectorAll(".run")) el.onclick = () => {
     if (state.run === el.dataset.id) return;
-    state.run = el.dataset.id; state.node = null; state.tab = null; writeHash(); refresh(); };
+    state.run = el.dataset.id; state.node = null; state.tab = null; state.view = null; writeHash(); refresh(); };
   if (!state.run && runs.length) { state.run = runs[0].id; writeHash(); }
 }
 
@@ -185,9 +190,11 @@ async function loadRun() {
       <div class="muted">${esc(r.id)} · started ${ago(r.started)} · ${isLive ? "running for " + elapsed(r.started) : "took " + elapsed(r.started, r.updated)} · spent $${r.spent.toFixed(2)}</div>
       <div style="margin-top:6px">${esc(r.status)}</div>
       ${r.header ? `<div class="muted" style="margin-top:4px">${esc(r.header)}</div>` : ""}
+      ${r.size ? `<div style="margin-top:4px">${esc(r.size)}</div>` : ""}
+      ${r.limits ? `<details class="limits" style="margin-top:4px"><summary>All limits, and where each comes from</summary><pre>${esc(r.limits)}</pre></details>` : ""}
       ${r.state === "waiting" ? `<div class="banner">Waiting for a human: factory.sh show ${esc(r.id)}, then factory.sh judge ${esc(r.id)} pass|fail &lt;why&gt;</div>` : ""}`);
   if (setHTML($("#s-pipeline"), Object.keys(rounds).sort((a, b) => a - b).map(k => `
-    <div class="round"><div class="label">${r.kind === "loop" ? "Round " + k : ""}</div>
+    <div class="round"><div class="label">${k === "0" ? "Before" : r.kind === "loop" ? "Round " + k : ""}</div>
       ${rounds[k].map(nodeHtml).join('<div class="arrow">→</div>')}</div>`).join("") || `<div class="muted">Nothing has started yet.</div>`)) {
     for (const el of document.querySelectorAll(".node")) el.onclick = () => {
       if (state.node === el.dataset.key) return;
@@ -283,11 +290,32 @@ function zoom(shots, i) {
   document.body.append(z);
 }
 
+// The calibration view: each finished loop run's size against what it used, to tune the size table on.
+async function loadCalibration() {
+  const rows = await get("/api/calibration");
+  state.skeleton = null;
+  const cols = [["ended", "Ended"], ["ticket", "Ticket"], ["size", "Size"], ["size_from", "From"], ["rounds", "Rounds", 1],
+    ["spent", "Spent $", 1], ["loop_usd", "Budget $", 1], ["minutes", "Min", 1], ["longest_builder_min", "Longest round", 1],
+    ["limits_set", "Limits set"], ["status", "Status"]];
+  setHTML($("#main"), `<div class="card"><h2>Sizing calibration</h2>
+    <div class="muted" style="margin:4px 0 10px">One line per finished loop run (factory-runs/.calibration.tsv). A run that used most of its budget or
+      rounds, or whose longest round reached its time box, was sized too small; tune SIZE_&lt;class&gt; in the project's config.sh.</div>
+    ${rows.length ? `<table class="calib"><tr>${cols.map(c => `<th>${c[1]}</th>`).join("")}</tr>${rows.map(r => `<tr>${cols.map(c =>
+      `<td class="${c[2] ? "n" : ""}">${esc(c[0] === "ended" ? (r[c[0]] || "").slice(0, 16).replace("T", " ") : r[c[0]])}</td>`).join("")}</tr>`).join("")}</table>`
+      : `<div class="empty">No finished loop run since 0.7.0 yet.</div>`}</div>`);
+}
+
 async function refresh() {
+  if (state.view === "calibration") {
+    try { await loadRuns(); await loadCalibration(); $("#clock").textContent = "updated " + new Date().toLocaleTimeString(); }
+    catch (e) { $("#clock").textContent = "server not answering (" + e.message + ")"; }
+    return;
+  }
   try { await loadRuns(); await loadRun(); $("#clock").textContent = "updated " + new Date().toLocaleTimeString(); }
   catch (e) { $("#clock").textContent = "server not answering (" + e.message + ")"; }
 }
 readHash();
+window.addEventListener("hashchange", () => { readHash(); refresh(); });
 $("#filter").value = filterDays();
 $("#filter").onchange = e => { try { localStorage.setItem("factory.filter", e.target.value); } catch {} loadRuns(); };
 refresh();

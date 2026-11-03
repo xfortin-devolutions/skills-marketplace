@@ -35,7 +35,7 @@ setup() {
   printf 'FACTORY_VM_ROOT=%s/vms\nGIT_SETTLE_S=2\n' "$T" > "$T/user.sh"
   : > "$T/scenario.sh"
   export FACTORY_TICKETS=$T/tickets FACTORY_USER_CONFIG=$T/user.sh FACTORY_VM_DIR=$FAKES/vm FACTORY_GUEST_SH=$FAKES/guest.sh
-  export FACTORY_NEG_CACHE=$T/negative FAKE_STATE=$T/state FAKE_SCENARIO=$T/scenario.sh FAKE_SKILL=$SKILL
+  export FACTORY_NEG_CACHE=$T/negative FACTORY_PROVIDED=$T/provided FAKE_STATE=$T/state FAKE_SCENARIO=$T/scenario.sh FAKE_SKILL=$SKILL
   export FAKE_RUNS=$R/.claude/worktrees/factory-runs
   export PATH=$FAKES/bin:$PATH
 }
@@ -91,15 +91,20 @@ t_timebox_after_commit() {
   expect_file "$(hb)/hand-back.md" '^- What changed: DEMO-1: Changed the feature \(done\); the builder stopped'
 }
 
-t_uncommitted_then_commit() {
+# A builder stopped by its time box before its commit: the runner checkpoints its work, the next round goes on from it.
+t_timebox_checkpoint() {
   cat > "$T/scenario.sh" <<'EOF'
 builder_1() { mkdir -p src; echo half > src/feature.txt; return 142; }
-builder_2() { echo done > src/feature.txt; git add src; git commit -qm "DEMO-1: Finished the feature"; write_handback; }
+builder_2() { grep -q half src/feature.txt && touch "$FAKE_STATE/saw-half"; echo done > src/feature.txt; git add src; git commit -qm "DEMO-1: Finished the feature"; write_handback; }
 EOF
   loop
   expect_end '^ready for the judge'
-  expect_event 'build-1 outcome=time box .* verify=red: uncommitted changes'
-  expect_file "$FAKE_STATE/builder-2.prompt" 'uncommitted changes left in the worktree'
+  expect_event 'build-1: its unfinished work checkpointed as [0-9a-f]+'
+  expect_event 'build-1 outcome=time box .* verify=red: stopped by its limit before committing'
+  expect_file "$FAKE_STATE/builder-2.prompt" 'checkpoint [0-9a-f]+, on the branch: go on from it'
+  [ -e "$FAKE_STATE/saw-half" ] || fail "the second builder did not find the first one's work"
+  git -C "$(ls -d "$R"/.claude/worktrees/demo-1-build-*/ | head -1)" log --format=%s | grep -q 'Work in progress, checkpointed by the runner' \
+    || fail "no checkpoint commit on the branch"
 }
 
 t_qa_fail_then_fix() {
@@ -333,8 +338,140 @@ EOF2
   expect_file "$FAKE_STATE/recheck-1.prompt" 'set the DevMode registry value over vmssh'
 }
 
-ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
-  failing_listed_test accept_passes_on_base build_fails restore_flake_on_clean accept_dispute accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell"
+# The assessor and the run's limits.
+assess() { printf '%s\n' "$@" > "$T/tickets/DEMO-1.assessment.md"; }
+limit() { grep -E "^$1=" "$RUN/limits.txt" | grep -qE "^$1=$2" || fail "limits.txt: wanted $1=$2, got: $(grep -E "^$1=" "$RUN/limits.txt")"; }
+
+t_assessor_writes() {
+  loop
+  expect_end '^ready for the judge'
+  expect_calls assessor 1
+  expect_file "$T/tickets/DEMO-1.assessment.md" '^Size: M$'
+  expect_file "$RUN/runs.md" '^\| 0 \| assessor \| .* size M, 0 test need'
+  expect_file "$RUN/runs.md" '^Size: M, from the assessor'
+  loop
+  expect_calls assessor 1
+}
+
+t_size_from_assessment() {
+  assess 'Size: L' 'Why: three projects' 'Rounds: 3' 'Split: no' 'Needs: none'
+  echo 'SIZE_CEILING="LOOP_USD=50"' >> "$T/user.sh"
+  loop
+  expect_end '^ready for the judge'
+  expect_calls assessor 0
+  limit B_USD '15 \(size L\)'; limit B_MIN '90 \(size L\)'
+  limit LOOP_USD '50 \(size L, capped at the ceiling 50 \(was 80\)\)'
+  limit R_USD '3 \(size L\)'
+  expect_event 'limits: size L from the assessor \(three projects\)'
+}
+
+t_size_on_purpose() {
+  assess 'Size: S' 'Why: tiny' 'Needs: none'
+  printf 'SIZE=XL\nSIZE_WHY="a big one"\nB_MIN=500\n' >> "$T/tickets/DEMO-1.sh"
+  echo 'SIZE_CEILING="LOOP_USD=50 B_MIN=180"; B_MIN=20' >> "$T/user.sh"
+  loop --set ITER_CAP=2 --set B_USD=1.5
+  expect_end '^ready for the judge'
+  limit LOOP_USD '150 \(size XL, above the ceiling 50\)'
+  limit B_MIN '500 \(the ticket .sh: a big one, above the ceiling 180\)'
+  limit ITER_CAP '2 \(the command line'
+  limit B_USD '1.5 \(the command line'
+  expect_file "$RUN/runs.md" 'Size: XL, from the ticket .sh: a big one'
+  # A limit that isn't a number never reaches the runner.
+  loop --set B_MIN=lots
+  grep -q 'B_MIN=lots: a limit is a number' "$T/out" || fail "a bad --set was not refused: $(tail -1 "$T/out")"
+}
+
+t_limits_only() {
+  (cd "$R" && bash "$SKILL/scripts/run-loop.sh" DEMO-1 --limits-only --size L > "$T/out" 2>&1)
+  grep -q '^size L, from the command line' "$T/out" || fail "limits-only: $(head -1 "$T/out")"
+  grep -q '^B_USD=15 (size L)' "$T/out" || fail "limits-only: no B_USD=15 (size L)"
+  [ ! -d "$FAKE_RUNS" ] || [ -z "$(ls "$FAKE_RUNS")" ] || fail "limits-only made a run folder"
+}
+
+t_reviewer_scaled() {
+  echo 'R_SCALE_LINES=2' >> "$T/user.sh"
+  echo 'builder_1() { mkdir -p src; printf "done\\nb\\nc\\nd\\n" > src/feature.txt; git add src; git commit -qm "DEMO-1: Changed it"; write_handback; }' > "$T/scenario.sh"
+  loop
+  expect_end '^ready for the judge'
+  expect_event 'review-1: [0-9]+ changed lines: reviewer x[23], \$[0-9.]+, [0-9]+ min'
+}
+
+# Test needs: fixtures and resources a human provides.
+fixture() {
+  local d=$R/.factory/profiles/demo/fixtures/$1
+  mkdir -p "$d"
+  printf '# %s\nWhat: ten demo entries in the default data source\nUse: the entries are in the Demo folder of the navigation pane.\n' "$1" > "$d/fixture.md"
+  printf '# apply %s\nCopy-Item "$Dir\\entries.xml" $env:APPDATA\n' "$1" > "$d/apply.ps1"
+  echo '<entries/>' > "$d/entries.xml"
+  git -C "$R" add -A && git -C "$R" commit -qm "fixture $1"
+}
+provided() { # provided <name> <Shared> [check script body]
+  local d=$T/provided/$1
+  mkdir -p "$d"
+  printf '# %s\nWhat: the lab DVLS\nUse: open the data source "Lab" from the data source list.\nAccess: read-only\nShared: %s\n' "$1" "$2" > "$d/provided.md"
+  echo 'secret' > "$d/credentials.txt"
+  [ -n "${3:-}" ] && echo "$3" > "$d/check.ps1"
+  return 0
+}
+
+t_fixture() {
+  fixture demo-data
+  assess 'Size: M' 'Why: x' 'Needs:' '- N1: ten entries in a folder | fixture: demo-data' '- N2: a new RDP entry | qa-setup: create one with host 127.0.0.1'
+  loop
+  expect_end '^ready for the judge'
+  expect_file "$FAKE_STATE/calls.log" '^vmcp demo-data C:\\factory\\fixtures\\demo-data$'
+  expect_file "$FAKE_STATE/vmssh.log" '^\$Dir = .C:\\factory\\fixtures\\demo-data.$'
+  expect_file "$FAKE_STATE/vmssh.log" '^# apply demo-data$'
+  expect_file "$FAKE_STATE/guest/C_/factory/fixtures/demo-data/entries.xml" 'entries'
+  expect_file "$FAKE_STATE/qa-1.prompt" '^## Test setup$'
+  expect_file "$FAKE_STATE/qa-1.prompt" 'ten entries in a folder: in place .* the Demo folder of the navigation pane'
+  expect_file "$FAKE_STATE/qa-1.prompt" 'a new RDP entry: not in place: create it yourself first, as setup steps: create one with host 127.0.0.1'
+  expect_file "$FAKE_STATE/explorer-1.prompt" '^## Test setup$'
+  expect_file "$(hb)/hand-back.md" '^## Test needs \(runner\)$'
+  expect_file "$(hb)/hand-back.md" '^  N1 ten entries in a folder: fixture demo-data$'
+  expect_file "$(hb)/hand-back.md" '^  N2 a new RDP entry: set up by QA in the app$'
+}
+
+t_provided_missing() {
+  assess 'Size: M' 'Why: x' 'Needs:' '- N1: a DVLS with a Dashboard entry | provided: lab-dvls: a DVLS data source with one Dashboard entry'
+  loop
+  expect_end '^needs input before the run: provided lab-dvls \(a DVLS with a Dashboard entry\): factory.sh provide lab-dvls'
+  expect_calls builder 0
+  expect_event 'notify: the run needs input'
+}
+
+t_provided_check_then_resume() {
+  provided lab-dvls no '# FAKE-FAIL lab'
+  touch "$FAKE_STATE/fail-lab"
+  assess 'Size: M' 'Why: x' 'Needs:' '- N1: a DVLS with a Dashboard entry | provided: lab-dvls: a DVLS data source'
+  loop
+  expect_end '^needs input for runtime QA: provided lab-dvls: its check fails in the guest: PS ERROR: the lab server does not answer'
+  expect_calls qa 0
+  [ ! -d "$T/provided/lab-dvls/.in-use.d" ] || fail "the run kept its lock on lab-dvls"
+  rm -f "$FAKE_STATE/fail-lab"
+  (cd "$R" && bash "$SKILL/scripts/factory.sh" resume "$(basename "$RUN")" > "$T/out2" 2>&1)
+  expect_end '^ready for the judge'
+  expect_calls builder 1; expect_calls qa 1
+  expect_file "$FAKE_STATE/qa-1.prompt" 'provided by a human .* It is read-only'
+  expect_file "$(hb)/hand-back.md" '^  N1 a DVLS with a Dashboard entry: provided by a human: lab-dvls \(read-only\)$'
+  ! grep -rq secret "$RUN"/*.prompt || fail "a provided resource's file reached a prompt"
+  [ ! -d "$T/provided/lab-dvls/.in-use.d" ] || fail "the run kept its lock on lab-dvls"
+}
+
+t_qa_needs_input() {
+  echo 'qa_1() { printf "Verdict: NEEDS-INPUT\nSummary: no server\nInput: a licensed Hyper-V host to connect to\nHuman: none\n"; }' > "$T/scenario.sh"
+  loop
+  expect_end '^needs input for runtime QA: a licensed Hyper-V host to connect to; provide it'
+  expect_calls builder 1
+  (cd "$R" && bash "$SKILL/scripts/factory.sh" resume "$(basename "$RUN")" > "$T/out2" 2>&1)
+  expect_end '^ready for the judge'
+  expect_calls builder 1; expect_calls qa 2
+}
+
+ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
+  failing_listed_test accept_passes_on_base build_fails restore_flake_on_clean accept_dispute accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
+  assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture provided_missing provided_check_then_resume
+  qa_needs_input"
 for t in ${*:-$ALL}; do
   ok=yes
   setup

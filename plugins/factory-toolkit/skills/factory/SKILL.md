@@ -45,11 +45,12 @@ the repo it is run from. The skill is the engine; what a repo's products need is
 - `<project>/profiles/<name>/`: one per product (`rdm`, `console`, …): `profile.sh` (app name, `CODE_PATHS`, targets,
   protected paths, branch prefix), `reviewer.md` (review standards), `targets/<os>/` (guest image and build/test/launch
   scripts).
-- Tickets: `<KEY>.md` + `.sh` (the `.sh` picks `PROFILE` and `PLATFORM`) in the main checkout's
+- Tickets: `<KEY>.md` + `.sh` (the `.sh` picks `PROFILE` and `PLATFORM`) + `<KEY>.assessment.md` (size and test needs) in the main checkout's
   `.claude/worktrees/factory-tickets/`, next to the runs: working files, never committed. Each run copies its spec, so
   editing it between runs is safe. `factory.sh clean <KEY>` deletes a finished ticket's spec, run logs and VM folders.
-- Per machine, never in the repo: `~/.factory/config.sh` (VM root, CPUs, RAM, budget overrides).
-The agents' system prompts, in this skill's `agents/`: `factory-reviewer.md`, `factory-qa.md` (acceptance QA),
+- Per machine, never in the repo: `~/.factory/config.sh` (VM root, CPUs, RAM, budget overrides, the size table and
+  its ceiling), and `~/.factory/provided/<name>/` (resources only a human can provide, for QA).
+The agents' system prompts, in this skill's `agents/`: `factory-assessor.md` (size and test needs), `factory-reviewer.md`, `factory-qa.md` (acceptance QA),
 `factory-charter.md` and `factory-explorer.md` (exploratory QA: explore, and re-check on the base).
 
 ## Pick the sub-command
@@ -67,6 +68,8 @@ The agents' system prompts, in this skill's `agents/`: `factory-reviewer.md`, `f
 | "set up the VM", first QA on this Mac | **setup** |
 | "use the factory for <product>", a ticket for a product with no profile (`which` says so) | **profile** |
 | "the ticket is merged", "clean up DEVEX-123" | **clean** |
+| "how big is it?", "what will it cost?", "give it more time / budget", "go higher" | **limits** |
+| "QA needs a data source / server / account", a run that needs input | **provide** |
 
 ## spec <KEY> (interactive: this is where the human adds the most value)
 
@@ -94,12 +97,18 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
    projects: the guest is Windows for RDM and the Console). Prove it red on the base in the guest:
    `bash $F/run-loop.sh <KEY> --test-only HEAD` (background) must **fail, for the reason the ticket states**. A test that
    passes on buggy code is the most common spec bug: assert on what the user sees.
-7. If there is a Runtime check and a golden VM: `bash $F/run-loop.sh <KEY> --qa-only HEAD` must come back FAIL for the
-   stated reason. Record both red runs in the ticket.
-8. Show the spec to the user and stop: give them its path (`factory.sh spec <KEY>`; `--open` opens it), the red output,
-   and the Jira enrichment you'd post. The oracle is already committed (the red runs need it); if they change the spec,
+7. Assess it: `bash $F/factory.sh assess <KEY>` writes `<KEY>.assessment.md` next to the spec: a size class (which sets
+   the run's limits) and the test needs (what QA's VM must contain, and how: a fixture, a resource only a human can
+   provide, QA's own setup, or nothing). [references/test-needs.md](references/test-needs.md). Read it critically:
+   a need the assessor missed, or one QA could create itself, is yours to fix in the file. A `provided:` need: ask the
+   user for it now (`factory.sh provide <name>`), they are here; a `fixture:` the profile lacks: write it with them
+   (`templates/fixture/`), or change the line to `qa-setup` or `unmet`.
+8. If there is a Runtime check and a golden VM: `bash $F/run-loop.sh <KEY> --qa-only HEAD` must come back FAIL for the
+   stated reason (it applies the test needs, so do it after step 7). Record both red runs in the ticket.
+9. Show the spec to the user and stop: give them its path (`factory.sh spec <KEY>`; `--open` opens it), the red output,
+   the assessment (size, what it sets: `factory.sh limits <KEY>`, and the test needs), and the Jira enrichment you'd post. The oracle is already committed (the red runs need it); if they change the spec,
    amend the oracle commit to match (branch commits: no `[TICKET]` prefix, no `CR:`).
-9. Offer to post the itemized acceptance and scope back to Jira; never post without a yes.
+10. Offer to post the itemized acceptance and scope back to Jira; never post without a yes.
 
 ## run <KEY> [--open-pr] [--qa | --no-qa] [--no-explore] [--keep-vm]
 
@@ -129,8 +138,15 @@ bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loo
   the tests the builder lists in `handback/<branch>/tests.txt`, each in the build VM. A test that passes only on a
   re-run (`FLAKY_RERUNS`) is green and listed as flaky for the judge. A builder stopped by its time box after its code
   commit is verified like any other (the runner starts a missing hand-back from the template).
-- Caps: `ITER_CAP` builder runs in all (5), `STALL_CAP` in a row that change nothing (code, disputes, listed tests: 2),
-  and `LOOP_USD`, the hard limit. An accept test that passes on the base stops the run: the spec needs a human.
+- Limits come from the ticket's size class (**limits**, below): `ITER_CAP` builder runs in all, `STALL_CAP` in a row
+  that change nothing (code, disputes, listed tests: 2), each station's dollars and minutes, and `LOOP_USD`, the hard
+  limit. A run with no assessment starts with the assessor. A builder stopped by its time box or budget before its
+  commit keeps its work: the runner commits it as a checkpoint and the next round goes on from it. An accept test that
+  passes on the base stops the run: the spec needs a human.
+- Test needs: the run checks the fixtures and provided resources the assessment names before it spends anything, and
+  puts them in each QA VM before the app starts. A missing one stops the run (`needs input before the run`); one that
+  can't be reached at QA, or a QA agent that answers NEEDS-INPUT, pauses it before QA (`needs input for runtime QA`):
+  **provide**, then `factory.sh resume <run>`.
 - `--open-pr` pushes and opens a **draft** PR when the run is ready: outward-facing, so only when the user asked for it in
   this conversation.
 - While it runs, answer progress questions with **status**; when it ends, summarise `loop-handback.md`: status, builder
@@ -143,6 +159,29 @@ The QA stage alone, on a commit: `bash $F/run-loop.sh <KEY> --qa-only <ref>` (ba
 (spec step 5), to re-test a branch, or to answer a judge's "does it really work?". It needs no builder and spends only
 the QA budget. `--explore` adds the exploratory QA after a PASS, for the change `<base>..<ref>` (`--base`, default the
 merge-base with `PR_BASE`, or `<ref>~1` when `<ref>` is already on it); its section is `qa-1/exploratory.md` in the run.
+
+## limits <KEY> · assess <KEY>
+
+`bash $F/factory.sh limits <KEY>` prints every limit a run would use and where it comes from; `assess <KEY>` (re)writes
+the assessment (the previous one stays as `.prev`). To overrule the assessor, when the user (or you, with a reason)
+wants more or less, in order of reach:
+- the ticket, every run: `SIZE=XL` and/or any limit (`B_MIN=240`, `LOOP_USD=300`) in `<KEY>.sh`, with `SIZE_WHY="…"`;
+  or edit the Size line of `<KEY>.assessment.md`;
+- one run: `run-loop.sh <KEY> --size XL --set LOOP_USD=300`;
+- a run that stopped at a limit (`stopped: loop budget`, `reject: iteration cap`, a round cut by its time box):
+  `factory.sh resume <run> --set LOOP_USD=120 --set ITER_CAP=8` goes on from where it stopped.
+The size table and `SIZE_CEILING` are in the project's `config.sh` (team) and `~/.factory/config.sh` (this machine). The
+ceiling only caps the assessor's own suggestion: a value someone set on purpose may go above it, and the run log says so.
+Say in one line which limits you raised and why; never raise them on your own to finish a run the user didn't ask to
+push.
+
+## provide <name> · provided
+
+A test need only a human can meet (a real data source with a working Dashboard entry, a server, an account):
+`bash $F/factory.sh provide <name>` starts `~/.factory/provided/<name>/`; walk the user through `provided.md` (What, Use,
+Access read-only or scratch, Shared) and the files the guest needs. Never read, print or copy those files yourself: they
+may be credentials; only the runner copies them into QA VMs. `factory.sh provided` lists what is on the machine, and the
+needs tickets name that aren't.
 
 ## dashboard
 
@@ -244,7 +283,9 @@ new `targets/<os>/`, not a new profile.
 | Hand-back (builder, reviewer, QA, exploratory QA sections + Judge) | `<worktree>/handback/<branch-dir>/hand-back.md`, QA screenshots in `qa-<n>/`, the charter, tour and re-check in `qa-<n>/charter.md`, `explore/`, `recheck/` |
 | VM disks (overlays) and the QA agent's folder | `~/VMs/factory/<os>/runs/<run>/` (golden image: `~/VMs/factory/<os>/base.qcow2`) |
 | Project config and profiles | `projects/<project>/` in this skill (or the repo's `.factory/`, which wins) |
-| Tickets (specs, never committed) | `.claude/worktrees/factory-tickets/` in the main checkout; `factory.sh clean <KEY>` when done |
+| Tickets (specs and assessments, never committed) | `.claude/worktrees/factory-tickets/` in the main checkout; `factory.sh clean <KEY>` when done |
+| Limits a run used, and where each came from | `<run>/limits.txt`; every finished run: `factory-runs/.calibration.tsv` |
+| Fixtures / resources a human provides | `projects/<project>/profiles/<profile>/fixtures/<name>/` / `~/.factory/provided/<name>/` |
 | What is still missing | `GAPS.md` at the plugin's root |
 
 Credits: the VM layer is the `rdm-windows-vm-test` setup (QEMU Windows 11 ARM64, QMP driving, SMB share), vendored and

@@ -1,0 +1,4 @@
+#!/bin/bash
+# Fake vmcp for tests/run-loop.test.sh: "copies" into $FAKE_STATE/guest/<guest folder>, and logs it.
+echo "vmcp $(basename "$1") $2" >> "$FAKE_STATE/calls.log"
+d="$FAKE_STATE/guest/$(echo "$2" | tr '\\:' '/_')"; rm -rf "$d"; mkdir -p "$d" && cp -R "$1/." "$d/"
