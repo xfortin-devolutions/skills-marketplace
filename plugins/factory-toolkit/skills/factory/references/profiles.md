@@ -30,7 +30,7 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
     layer/layer.conf, setup.ps1    optional: the VM layer the targets start from
     layer.md                       optional: notes on how the layer was worked out
 <main checkout>/.claude/worktrees/factory-tickets/<KEY>.md, <KEY>.sh   a spec and its inputs (spec-authoring.md), not committed
-~/.factory/config.sh               per machine, never committed: FACTORY_VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, VM_SLOT_WAIT_MIN, budget overrides
+~/.factory/config.sh               per machine, never committed: FACTORY_VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, VM_SLOT_WAIT_MIN, VM_IDLE_MIN, budget overrides
 ```
 
 The project's `config.sh` also sets `DOC_PATHS`: repo path prefixes of docs any change may update (`.claude/skills/
@@ -89,7 +89,8 @@ Exit code rules: a non-zero code with restore or SDK errors (`NU…`, `NETSDK…
 non-zero code is the change's fault. When the harness is at fault (no `R:`, no SDK), stop **without** printing the
 `EXIT CODE` line: the runner then reports ERROR and never sends the change back for it.
 
-How the loop uses them: one VM per run at a time. The build VM serves the builder (`guest build|test|info`) and the runner's verify
+How the loop uses them: one VM per run at a time, and only while in use. The build VM, booted by the first build or
+test and powered off after `VM_IDLE_MIN` unused, serves the builder (`guest build|test|info`) and the runner's verify
 (`build`, one clean rebuild on red, then the ticket's `test`) and goes down once verify is green; each QA round boots a fresh clone that runs `launch` on
 what verify built, without rebuilding.
 

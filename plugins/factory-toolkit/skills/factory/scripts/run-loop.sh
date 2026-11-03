@@ -513,15 +513,22 @@ guest_conf() {
     "$2" "$GUEST_BUILD" "$GUEST_TEST" "$GUEST_BUILD_MIN" > "$1/guest.conf"
 }
 
-# build_vm_up <worktree>: boots the run's build VM sharing <worktree> and writes the guest tool; on failure the reason is
-# the last line of $RUN/build-vm.log. The VM is powered off when the runner exits.
+# build_vm_up <worktree>: sets up the run's build VM and writes the guest tool. The VM itself boots on demand: the first
+# build or test goes through lib/lease.sh, which boots it (waiting for a free slot), and it powers off after VM_IDLE_MIN
+# minutes unused, so a builder that is reading or thinking holds no slot. It is powered off when the runner exits.
 build_vm_up() {
-  ev "build VM up from $GOLDEN_IMAGE, sharing ${1#$MAIN_REPO/}"
+  local v
   trap '"$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1' EXIT
-  "$VM/vmctl.sh" up "$BUILD_VM" "$1" > "$RUN/build-vm.log" 2>&1 || return 1
+  mkdir -p "$BUILD_VM"
   guest_conf "$BUILD_VM" "$1"
-  printf '#!/bin/bash\n# Builds and tests this run'"'"'s worktree in its build VM: build [<project>] [--clean] | test <project> [<filter>] | info\nexec "%s" "%s" "$@"\n' \
-    "$GUEST_SH" "$BUILD_VM" > "$GUEST"
+  # The builder's sessions run the tool too, so it carries the VM settings rather than relying on their environment.
+  {
+    printf '#!/bin/bash\n# Builds and tests this run'"'"'s worktree in its build VM (booted on first use): build [<project>] [--clean] | test [--no-build] <project> [<filter>] | info\n'
+    for v in FACTORY_VM_HOME VM_IMAGE VM_SHARE_CHECK VM_CPUS VM_MEM VM_MAX VM_SLOT_WAIT_MIN VM_BOOT_MIN VM_XRES VM_YRES VM_IDLE_MIN; do
+      printf 'export %s=%q\n' "$v" "${!v:-}"
+    done
+    printf 'exec %q %q %q %q %q %q %q "$@"\n' "$SKILL/scripts/lib/lease.sh" "$VM/vmctl.sh" "$BUILD_VM" "$1" "$EV" "$GUEST_SH" "$BUILD_VM"
+  } > "$GUEST"
   chmod +x "$GUEST"
 }
 
@@ -650,7 +657,7 @@ qa_stage() {
     ev "explore-$n: $X_STATUS"
   fi
   # --keep-vm leaves the VM running whatever the verdict (a PASS is what a judge wants to look at) until factory.sh down.
-  if [ "$KEEP_VM" = yes ] && "$VM/vmctl.sh" env "$vmrun" > /dev/null 2>&1; then
+  if [ "$KEEP_VM" = yes ] && "$VM/vmctl.sh" alive "$vmrun"; then
     printf '%s' "$qwt" > "$vmrun/factory-kept"
     ev "qa-$n: VM left running: factory.sh show $ID, then factory.sh down $ID"
   else
@@ -987,9 +994,9 @@ REVIEW_TOOLS+=("Bash($GUEST test *)")
 # ITER_CAP rounds in all; the loop budget is the hard limit.
 while :; do
   release_kept_vms
-  # Up at the start, and again after a base re-check powered it off to free its slot.
+  # Set up at the start (the VM boots with the first build or test), and again after a stage powered it off.
   if [ "$BUILD_VM_UP" != yes ]; then
-    build_vm_up "$WT" || { STATUS="harness error: the build VM did not come up: $(tail -1 "$RUN/build-vm.log")"; break; }
+    build_vm_up "$WT"
     BUILD_VM_UP=yes
   fi
   if [ -z "$SKIP" ]; then
