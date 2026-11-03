@@ -130,6 +130,32 @@ EOF
   ! grep -q '^- Re-review:' "$(hb)/hand-back.md" || fail "a re-review that named its changes was flagged"
 }
 
+t_vm_on_demand() {
+  # The builder reads and thinks first: the build VM boots with its first build, not before the session.
+  cat > "$T/scenario.sh" <<'EOF'
+builder_1() { grep -q '^vm up vm-build' "$FAKE_STATE/calls.log" && echo early > "$FAKE_STATE/vm-early"; "$(run_dir)guest" build > /dev/null; commit_code done; write_handback; }
+EOF
+  loop
+  expect_end '^ready for the judge'
+  [ ! -e "$FAKE_STATE/vm-early" ] || fail "the build VM was up before the builder's first build"
+  expect_event 'build VM up \(on demand\)'
+  one_vm
+}
+
+t_vm_idle() {
+  # A builder that thinks longer than VM_IDLE_MIN after a build lets its VM go; verify boots a fresh one.
+  export FACTORY_VM_IDLE_S=2 FACTORY_REAP_POLL_S=1
+  cat > "$T/scenario.sh" <<'EOF'
+builder_1() { "$(run_dir)guest" build > /dev/null; sleep 5; commit_code done; write_handback; }
+EOF
+  loop
+  unset FACTORY_VM_IDLE_S FACTORY_REAP_POLL_S
+  expect_end '^ready for the judge'
+  expect_event 'build VM down: idle for 2 s, its slot is free'
+  [ "$(grep -c '^vm up vm-build' "$FAKE_STATE/calls.log")" = 2 ] || fail "wanted 2 build VM boots: $(grep -c '^vm up vm-build' "$FAKE_STATE/calls.log")"
+  one_vm
+}
+
 t_qa_defects() {
   cat > "$T/scenario.sh" <<'EOF'
 qa_1() { printf 'Verdict: PASS\nSummary: works\nSteps:\n1. looked\nDefects:\n  a notification covered the grid; 1 of 2 tries; elsewhere; evidence: 04.png\nHuman: none\n'; }
@@ -274,7 +300,7 @@ EOF2
   expect_file "$FAKE_STATE/recheck-1.prompt" 'set the DevMode registry value over vmssh'
 }
 
-ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix re_review_names_changes qa_defects stall same_binaries iteration_cap flaky
+ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
   failing_listed_test accept_passes_on_base build_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell"
 for t in ${*:-$ALL}; do
   ok=yes

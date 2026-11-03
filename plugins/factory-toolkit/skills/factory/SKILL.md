@@ -104,10 +104,11 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
 ## run <KEY> [--open-pr] [--qa | --no-qa] [--no-explore] [--keep-vm]
 
 Preconditions: run from the ticket's worktree (`factory.sh start`), with the spec written and the oracle committed: the run
-cuts its own branch and worktree from that `HEAD`, and nothing builds in your checkout. It also needs the target's VM image (**setup**). A run holds one VM slot at a time: the build VM
-for the builder and verify, powered off once verify is green; then the QA clone; then, for findings to re-try, the
-base re-check's VM. A send back boots a fresh build VM (the build output lives in the worktree, so it builds
-incrementally). When every slot (`VM_MAX`) is taken, a VM waits up to `VM_SLOT_WAIT_MIN` for one instead of failing.
+cuts its own branch and worktree from that `HEAD`, and nothing builds in your checkout. It also needs the target's VM image (**setup**). A run holds at most one VM slot, and only while it
+uses a VM. The build VM boots with the round's first build or test (the builder's `guest` tool or verify), powers off
+after `VM_IDLE_MIN` (10) minutes unused and once verify is green, and boots again when needed: the build output lives
+in the worktree, so it builds incrementally. Then the QA clone, for the whole QA stage; then, for findings to re-try,
+the base re-check's VM. When every slot (`VM_MAX`) is taken, a VM waits up to `VM_SLOT_WAIT_MIN` for one instead of failing.
 ```
 bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loop takes minutes to an hour
 ```

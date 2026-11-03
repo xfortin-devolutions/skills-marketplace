@@ -2,6 +2,7 @@
 # vmctl.sh: one throwaway VM per factory run, cloned from the golden image as a copy-on-write overlay.
 #   vmctl.sh up <run dir> <worktree>   boot headless with <worktree> shared as R:, return when the guest's SSH answers
 #   vmctl.sh env <run dir>             export lines for vm.py / vmssh:  eval "$(vmctl.sh env <run dir>)"
+#   vmctl.sh alive <run dir>           exit 0 when the VM is running (env still answers after a down: it reads a file)
 #   vmctl.sh show <run dir>            open the VM's screen in macOS Screen Sharing (VNC on localhost, password)
 #   vmctl.sh down <run dir> [--keep-disk]   power off, free the slot, delete the overlay unless kept
 #   vmctl.sh list                      factory VMs and their slots
@@ -227,6 +228,7 @@ cmd=${1:-}
 case "$cmd" in
   up) up "$@" ;;
   env) cat "$(vmdir "${1:-}")/vm.env" ;;
+  alive) alive "$(vmdir "${1:-}")" ;;
   show) show "$@" ;;
   down) down "$@" ;;
   list) list ;;
