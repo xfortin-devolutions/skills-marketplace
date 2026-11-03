@@ -78,6 +78,7 @@ t_happy() {
   expect_end '^ready for the judge'
   expect_event 'negative run: kept from run demo-1-'
   one_vm
+  ! grep -q 'unbound variable' "$T/out" || fail "runner: $(grep -m1 'unbound variable' "$T/out")"
 }
 
 t_timebox_after_commit() {
@@ -231,6 +232,15 @@ EOF
   expect_event 'build-1 .*verify=red: the Fake OS build fails: src/a.cs'
 }
 
+# A red build whose clean rebuild hits a restore failure gets one more build: the builder never sees a harness error.
+t_restore_flake_on_clean() {
+  touch "$FAKE_STATE/restore-flake"
+  loop
+  expect_end '^ready for the judge'
+  expect_calls builder 1
+  expect_file "$RUN/verify-1.log" 'harness error on the clean rebuild: one more build'
+}
+
 t_pause_resume() {
   echo 'builder_1() { commit_code done; write_handback; touch "$(run_dir)PAUSE"; }' > "$T/scenario.sh"
   loop
@@ -301,7 +311,7 @@ EOF2
 }
 
 ALL="happy timebox_after_commit uncommitted_then_commit qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
-  failing_listed_test accept_passes_on_base build_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell"
+  failing_listed_test accept_passes_on_base build_fails restore_flake_on_clean pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell"
 for t in ${*:-$ALL}; do
   ok=yes
   setup

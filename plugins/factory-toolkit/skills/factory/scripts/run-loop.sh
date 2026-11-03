@@ -80,6 +80,8 @@ fi
   || { echo "no $GOLDEN_IMAGE in $FACTORY_VM_HOME (or no QEMU): see $SKILL_REL/references/vm-setup.md" >&2; exit 2; }
 [ -n "${GUEST_BUILD:-}" ] && [ -n "${GUEST_TEST:-}" ] || { echo "profile $PROFILE, target '$PLATFORM': no GUEST_BUILD/GUEST_TEST" >&2; exit 2; }
 [ -n "${ACCEPT_TEST:-}" ] || { echo "no ACCEPT_TEST in $TICKETS_DIR/$TICKET.sh" >&2; exit 2; }
+# Optional: most tickets run their whole accept project. Read bare in the negative run's cache key, so set here.
+ACCEPT_FILTER=${ACCEPT_FILTER:-}
 grep -q '^## Runtime check' "$TICKET_FILE" && HAS_RC=yes || HAS_RC=no
 [ "$QA" = auto ] && QA=$HAS_RC
 [ -n "$QA_ONLY" ] && QA=yes
@@ -238,8 +240,17 @@ verify() {
   rc=$?
   if [ $rc -eq 1 ]; then
     cat "$out.last" >> "$out"; echo "== red: one clean rebuild" >> "$out"
+    # The clean rebuild overwrites the guest's build.log: keep the first build's, whose errors may be the real ones.
+    cp "$BUILD_VM/build.log" "$RUN/verify-$n-build-first.log" 2> /dev/null
     "$GUEST" build --clean > "$out.last" 2>&1
     rc=$?
+    # A restore racing the share right after the clean (obj/ just deleted) is the harness, not the change: one more
+    # plain build decides, so the builder is never sent to fix a restore error.
+    if [ $rc -eq 3 ]; then
+      cat "$out.last" >> "$out"; echo "== harness error on the clean rebuild: one more build" >> "$out"
+      "$GUEST" build > "$out.last" 2>&1
+      rc=$?
+    fi
   fi
   cp "$BUILD_VM/build.log" "$RUN/verify-$n-build.log" 2> /dev/null
   # bash 3.2 misparses a case inside $(...): the result goes through a variable.
@@ -503,8 +514,8 @@ harness_why() { # harness_why <guest.sh output>: its HARNESS ERROR line, else it
   grep -m1 'HARNESS ERROR' "$1" || grep -v '^[[:space:]]*$' "$1" | tail -1
 }
 
-first_errors() { # first_errors <guest.sh output>: three error or failed-test lines, on one line
-  grep -E ': error |^ *Failed [^!]' "$1" | awk '!seen[$0]++' | head -3 | tr '\n' ' '
+first_errors() { # first_errors <guest.sh output>: three error or failed-test lines (also "Avalonia error AVLN…"), on one line
+  grep -E ': ([A-Za-z]+ )?error |^ *Failed [^!]' "$1" | awk '!seen[$0]++' | head -3 | tr '\n' ' '
 }
 
 # guest_conf <vm run dir> <worktree>: what scripts/guest.sh needs to build and test in that VM
