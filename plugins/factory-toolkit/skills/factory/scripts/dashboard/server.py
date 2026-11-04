@@ -1,8 +1,9 @@
-"""Factory dashboard: a local, read-only view of factory runs, refreshed live by the page.
+"""Factory dashboard: a local view of factory runs, refreshed live by the page.
 
 Started by `factory.sh dashboard`. Reads the run folders the runner writes (events.log, runs.md, <session>.prompt /
 .jsonl / .json / .time / .err, verify logs, QA reports and screenshots) and the QA agents' live folders under the VM
-root, and serves them as JSON to index.html. Standard library only; listens on 127.0.0.1. Writes nothing.
+root, and serves them as JSON to index.html. Standard library only; listens on 127.0.0.1. Its one write is the bin: a
+BINNED marker in a finished run's folder hides it from the list until it is restored (factory.sh clean deletes it).
 """
 
 import argparse
@@ -127,7 +128,7 @@ def run_summary(run):
     return {"id": run_id, "ticket": ticket_of(run_id), "kind": run_kind(run_id), "state": state, "status": status,
             "cls": cls,
             "started": evs[0]["t"] if evs else None, "updated": evs[-1]["t"] if evs else None,
-            "spent": round(spent, 2)}
+            "spent": round(spent, 2), "binned": os.path.exists(os.path.join(run, "BINNED"))}
 
 
 def stream_activity(path, limit=40):
@@ -435,6 +436,28 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(404, {"error": "not found"})
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def do_POST(self):
+        # Only the dashboard page itself: the custom header makes another site's request need a CORS preflight, which
+        # this server never grants, and the Host check keeps out a DNS-rebound name pointing at 127.0.0.1.
+        host = (self.headers.get("Host") or "").split(":")[0]
+        if self.headers.get("X-Factory-Dashboard") != "1" or host not in ("127.0.0.1", "localhost"):
+            return self.send(403, {"error": "forbidden"})
+        parts = [unquote(p) for p in urlparse(self.path).path.strip("/").split("/") if p]
+        if len(parts) != 4 or parts[:2] != ["api", "run"] or parts[3] not in ("bin", "restore"):
+            return self.send(404, {"error": "not found"})
+        run = safe_join(ARGS.runs, parts[2])
+        if not run or not os.path.isdir(run) or not os.path.exists(os.path.join(run, "events.log")):
+            return self.send(404, {"error": "no such run"})
+        marker = os.path.join(run, "BINNED")
+        if parts[3] == "bin":
+            if run_summary(run)["state"] in ("running", "waiting"):
+                return self.send(409, {"error": "a live run cannot go to the bin"})
+            with open(marker, "w") as f:
+                f.write(time.strftime("%Y-%m-%dT%H:%M:%SZ\n", time.gmtime()))
+        elif os.path.exists(marker):
+            os.remove(marker)
+        return self.send(200, {"ok": True})
 
 
 def main():
