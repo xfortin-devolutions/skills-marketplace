@@ -92,15 +92,8 @@ if [ -d "$D/layer" ]; then
   fi
 fi
 
-# Fixtures (fixtures/<name>/): the assessor matches tickets' needs on What, QA reads Use, the runner runs apply.ps1.
-for f in "$D"/fixtures/*/; do
-  [ -d "$f" ] || continue
-  n=$(basename "$f")
-  [ -f "$f/fixture.md" ] || { err "fixture $n: no fixture.md"; continue; }
-  grep -q '^What: [^<]' "$f/fixture.md" || err "fixture $n: fixture.md has no What: line"
-  grep -q '^Use: [^<]' "$f/fixture.md" || err "fixture $n: fixture.md has no Use: line"
-  [ -f "$f/apply.ps1" ] || warn "fixture $n: no apply.ps1 (its files are copied into the guest, nothing runs)"
-done
+# Fixtures belong to tickets (<KEY>.fixtures/ next to the spec), not to profiles: a profile's fixtures/ is never read.
+[ ! -d "$D/fixtures" ] || warn "fixtures/ is not read: a fixture belongs to its ticket, <KEY>.fixtures/<name>/ in $TICKETS_DIR"
 
 for k in "$TICKETS_DIR"/*.sh; do
   [ -f "$k" ] || continue
@@ -122,11 +115,21 @@ for k in "$TICKETS_DIR"/*.sh; do
     a=$TICKETS_DIR/$n.assessment.md
     if [ -f "$a" ]; then
       grep -E '^- N[0-9]+: .*\| *fixture: ' "$a" | sed -E 's/.*\| *fixture: *([a-z0-9-]+).*/\1/' | while read -r fx; do
-        [ -f "$D/fixtures/$fx/fixture.md" ] || echo "  WARN  ticket $n: its assessment needs fixture $fx, which $P doesn't have"
+        [ -f "$TICKETS_DIR/$n.fixtures/$fx/fixture.md" ] \
+          || echo "  WARN  ticket $n: its assessment needs fixture $fx, not written yet: factory.sh fixture $n $fx"
       done
       grep -E '^- N[0-9]+: ' "$a" | grep -vqE '\| *(fixture|provided|qa-setup|unmet): ' \
         && echo "  WARN  ticket $n: an assessment need line says neither fixture, provided, qa-setup nor unmet"
     fi
+    # The ticket's fixtures: QA reads Use, the runner runs apply.ps1.
+    for f in "$TICKETS_DIR/$n.fixtures"/*/; do
+      [ -d "$f" ] || continue
+      fx=$(basename "$f")
+      [ -f "$f/fixture.md" ] || { err "ticket $n: fixture $fx has no fixture.md"; continue; }
+      grep -q '^What: [^<]' "$f/fixture.md" || err "ticket $n: fixture $fx: fixture.md has no What: line"
+      grep -q '^Use: [^<]' "$f/fixture.md" || err "ticket $n: fixture $fx: fixture.md has no Use: line"
+      [ -f "$f/apply.ps1" ] || warn "ticket $n: fixture $fx has no apply.ps1 (its files are copied into the guest, nothing runs)"
+    done
     exit $(( errs > 0 ? 2 : 0 ))
   )
   [ $? -eq 2 ] && errs=$((errs + 1))

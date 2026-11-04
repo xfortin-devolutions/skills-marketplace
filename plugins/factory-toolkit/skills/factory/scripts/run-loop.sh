@@ -148,6 +148,10 @@ SPEC_DIR=$RUN/spec
 [ -n "$RESUME_RUN" ] || { mkdir -p "$SPEC_DIR" && cp "$TICKET_FILE" "$TICKETS_DIR/$TICKET.sh" "$SPEC_DIR/"
   [ -f "$ASSESSMENT" ] && [ -z "$ASSESS_ONLY" ] && cp "$ASSESSMENT" "$SPEC_DIR/"; }
 TICKET_FILE=$SPEC_DIR/$TICKET.md
+# The run's copy of the ticket's fixtures (<KEY>.fixtures/), taken with the spec and for the same reason; outside spec/,
+# which the agents read.
+FIXTURES_DIR=$RUN/fixtures
+[ -n "$RESUME_RUN" ] || [ ! -d "$TICKETS_DIR/$TICKET.fixtures" ] || cp -R "$TICKETS_DIR/$TICKET.fixtures" "$FIXTURES_DIR"
 # The run's assessment: its copy of the ticket's, or the one its assessor writes (assess_stage).
 RUN_ASSESSMENT=$SPEC_DIR/$TICKET.assessment.md
 # VM disks and the QA agent's folder live outside the repo: the QA agent must not find CLAUDE.md or the source above it.
@@ -1036,7 +1040,7 @@ PY
 }
 
 # assess_stage <dir>: the assessor, a fresh read-only session in <dir> (the repo at the run's base): the ticket's size
-# class and its test needs, written to $RUN_ASSESSMENT. It sees the fixture and provided catalogs' descriptions, never a
+# class and its test needs, written to $RUN_ASSESSMENT. It sees the ticket's fixtures and the provided catalog's descriptions, never a
 # provided resource's files. Its row waits in ASSESS_ROW for runs.md's header.
 assess_stage() {
   local dir=$1 raw="$RUN/assess.raw" c e out t0 t1 st tu co de
@@ -1045,8 +1049,8 @@ assess_stage() {
     echo; echo "## Size classes"
     echo "Each class sets the limits it names; the others keep the defaults: builder \$$B_USD and $B_MIN min a round, $ITER_CAP rounds, reviewer \$$R_USD, QA \$$QA_USD, \$$LOOP_USD a run."
     for c in $SIZE_CLASSES; do eval "e=\${SIZE_$c:-}"; echo "- $c: ${e:-the defaults}"; done
-    echo; echo "## Fixture catalog (profile $PROFILE)"
-    catalog "$PROFILE_DIR/fixtures" fixture.md | grep . || echo "none yet"
+    echo; echo "## This ticket's fixtures (written for it, in $TICKET.fixtures/)"
+    catalog "$FIXTURES_DIR" fixture.md | grep . || echo "none yet"
     echo; echo "## Provided catalog (resources a human set up on this machine)"
     catalog "$FACTORY_PROVIDED" provided.md | grep . || echo "none yet"
   } > "$RUN/assess.prompt"

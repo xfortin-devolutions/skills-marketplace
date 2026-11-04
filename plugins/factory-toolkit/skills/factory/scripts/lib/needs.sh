@@ -1,8 +1,10 @@
 # needs.sh: what testing a ticket needs, from its assessment, sourced by run-loop.sh (bash 3.2). A need line:
 #   - N<n>: <the need, in user terms> | <how>: <detail>
 # <how> is one of
-#   fixture: <name>                  profiles/<profile>/fixtures/<name>/ (fixture.md, apply.ps1, data files), applied
-#                                    in every QA, exploration and base re-check VM before the app starts
+#   fixture: <name>[: <what>]        the ticket's own <KEY>.fixtures/<name>/ next to its spec (fixture.md, apply.ps1,
+#                                    data files), written with the spec and kept until `factory.sh clean <KEY>`; the run
+#                                    takes a copy at its start; applied in every QA, exploration and base re-check VM
+#                                    before the app starts
 #   provided: <name>[: <what>]       $FACTORY_PROVIDED/<name>/ (provided.md, the files the guest needs, optional
 #                                    check.ps1 and apply.ps1): only a human can provide it; a missing one stops the run
 #                                    before it spends anything, an unreachable one pauses it for input
@@ -19,7 +21,8 @@ need_detail() { echo "$1" | sed -E 's/.*\| *(fixture|provided|qa-setup|unmet): *
 # need_name <line>: the fixture's or provided resource's name (the detail up to a colon or a space)
 need_name() { need_detail "$1" | sed -E 's/[: ].*$//'; }
 
-fixture_dir() { echo "$PROFILE_DIR/fixtures/$1"; }
+# fixture_dir <name>: the run's copy of the ticket's fixtures (FIXTURES_DIR, set by run-loop.sh), else the ticket's own
+fixture_dir() { echo "${FIXTURES_DIR:-$TICKETS_DIR/$TICKET.fixtures}/$1"; }
 provided_dir() { echo "$FACTORY_PROVIDED/$1"; }
 # field <file> <Field>: a "<Field>: value" line of a fixture.md or provided.md
 md_field() { sed -n "s/^$2: *//p" "$1" 2> /dev/null | head -1; }
@@ -38,7 +41,7 @@ needs_preflight() {
                   || NEEDS_MISSING="${NEEDS_MISSING}provided $n ($(need_what "$line")): factory.sh provide $n
 " ;;
       fixture) [ -f "$(fixture_dir "$n")/fixture.md" ] \
-                 || NEEDS_MISSING="${NEEDS_MISSING}fixture $n ($(need_what "$line")): no fixtures/$n in profile $PROFILE
+                 || NEEDS_MISSING="${NEEDS_MISSING}fixture $n ($(need_what "$line")): write it, factory.sh fixture $TICKET $n
 " ;;
     esac
   done < <(needs_lines "$1")

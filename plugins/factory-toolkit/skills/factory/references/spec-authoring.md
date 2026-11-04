@@ -33,6 +33,10 @@ VM must contain, and how each is met). Edit it to overrule; `SIZE` or any limit 
 they need is a need line: a fixture, a resource the user provides, a `qa-setup` step, or `unmet` (then QA can't check
 it, and the hand-back says so).
 
+## <KEY>.fixtures/<name>/
+A fixture the assessment names: the ticket's own, written with the spec (`factory.sh fixture <KEY> <name>`), never
+committed, deleted by `factory.sh clean <KEY>`. [test-needs.md](test-needs.md).
+
 ## The oracle
 - Runs in the target's guest (the target's `test.ps1`), like every build and test: any test project of the product,
   Windows-only ones included. Avalonia headless for controls.
