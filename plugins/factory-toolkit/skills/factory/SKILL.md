@@ -136,7 +136,8 @@ bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loo
 - The builder commits code and writes its hand-back sections; **the runner writes the verification record**: verify runs
   the negative run (the accept test on the base, kept per base and test, so once), the full build, the accept test and
   the tests the builder lists in `handback/<branch>/tests.txt`, each in the build VM. A test that passes only on a
-  re-run (`FLAKY_RERUNS`) is green and listed as flaky for the judge. A builder stopped by its time box after its code
+  re-run (`FLAKY_RERUNS`) is green and listed as flaky for the judge. A listed test red on every run is run on the base too, in a VM
+  of its own (once per base): failures the base shows as well are pre-existing, listed for the judge, not a send back. A builder stopped by its time box after its code
   commit is verified like any other (the runner starts a missing hand-back from the template).
 - Limits come from the ticket's size class (**limits**, below): `ITER_CAP` builder runs in all, `STALL_CAP` in a row
   that change nothing (code, disputes, listed tests: 2), each station's dollars and minutes, and `LOOP_USD`, the hard

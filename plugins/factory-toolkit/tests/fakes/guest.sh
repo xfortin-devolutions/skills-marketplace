@@ -1,7 +1,8 @@
 #!/bin/bash
 # Fake guest tool for tests/run-loop.test.sh: "builds" and "tests" the shared worktree by looking at it.
 #   build: fails when <worktree>/BROKEN exists. test Accept.Tests: passes when src/feature.txt holds "done" (or always,
-#   with $FAKE_STATE/accept-always-passes). Flaky.Tests fails its first run, Broken.Tests always fails.
+#   with $FAKE_STATE/accept-always-passes). Flaky.Tests fails its first run, Broken.Tests always fails (the base too), Regress.Tests
+#   fails with the change only.
 #   test --no-build fails with no tests run when $FAKE_STATE/no-build-misses exists.
 #   With $FAKE_STATE/restore-flake, the build is red, then its clean rebuild a harness error, then green.
 #   With $FAKE_STATE/lock-on-test, the first test run holds the worktree's index.lock for 4 s.
@@ -34,6 +35,8 @@ case "$CMD" in
     case "$1" in
       Accept.Tests) { grep -q '^done' "$WORKTREE/src/feature.txt" 2> /dev/null || [ -e "$FAKE_STATE/accept-always-passes" ]; } && pass "$1" || fail "$1" ;;
       Flaky.Tests) [ "$k" -gt 1 ] && pass "$1" || fail "$1" ;;
+      # Fails with the change only: the base (no src/feature.txt) passes it.
+      Regress.Tests) [ -f "$WORKTREE/src/feature.txt" ] && fail "$1" || pass "$1" ;;
       *) fail "$1" ;;
     esac ;;
   info) echo "guest: Fake OS 1.0 ARM64; dotnet 0.0" ;;
