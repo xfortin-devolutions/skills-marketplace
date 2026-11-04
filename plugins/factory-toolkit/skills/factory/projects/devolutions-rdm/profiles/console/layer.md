@@ -28,8 +28,8 @@ End state of the dry run, all answering 200 over HTTPS, each with its Scheduler 
 | Instance | Hosting | Database |
 |---|---|---|
 | `/dvls` | IIS | SQL Server Express (`SQLEXPRESS`) |
-| `/dvls-1` | IIS | PostgreSQL 18 (`localhost:5432`) |
-| `/dvls-sqlite-1` | IIS | SQLite (`.db` outside the user profile) |
+| `/dvls-pg` | IIS | PostgreSQL 18 (`localhost:5432`) |
+| `/dvls-sqlite` | IIS | SQLite (`.db` outside the user profile) |
 | Kestrel | Windows service, `https://localhost:5000` | SQL Server Express |
 
 ## What the Console needs on the machine, in order
