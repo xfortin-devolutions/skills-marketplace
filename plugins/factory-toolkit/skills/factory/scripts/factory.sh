@@ -26,7 +26,7 @@
 #   factory.sh check [profile]           which project this repo uses, then check a profile (default: every one)
 #   factory.sh which <path>...           the profile whose CODE_PATHS own each repo path (how the spec step picks one)
 #   factory.sh spec <KEY> [--open]       a ticket's spec files (and open the .md in the default app)
-#   factory.sh dashboard [--port N] [--no-open]   live view of the runs in the browser (local, read-only; Ctrl-C stops)
+#   factory.sh dashboard [--port N] [--no-open]   live view of the runs in the browser (local; Ctrl-C stops)
 #   factory.sh clean <KEY> [--dry-run]   a finished ticket: delete its spec, fixtures, run logs and VM folders; list the
 #                                        worktrees and branches left (removing those stays a human's call)
 #   factory.sh layer <profile> --test|--build   rehearse (throwaway clone) or build and freeze the profile's VM layer

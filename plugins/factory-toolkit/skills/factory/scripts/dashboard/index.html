@@ -6,12 +6,14 @@
 <title>Factory runs</title>
 <style>
   :root {
+    color-scheme: light;
     --bg: #f6f7f9; --panel: #ffffff; --line: #e2e5ea; --text: #1d2330; --muted: #667085; --accent: #3a6df0;
     --good: #1f8a4c; --good-bg: #e7f6ed; --bad: #c43d3d; --bad-bg: #fbeaea; --warn: #b26b00; --warn-bg: #fdf3e1;
     --run: #3a6df0; --run-bg: #e8effe; --neutral-bg: #f0f2f5; --code-bg: #f3f4f6;
   }
   @media (prefers-color-scheme: dark) {
     :root {
+      color-scheme: dark;
       --bg: #12151b; --panel: #1a1e26; --line: #2a303b; --text: #e6e9ef; --muted: #98a2b3; --accent: #7aa2ff;
       --good: #4cc282; --good-bg: #16301f; --bad: #ff7b7b; --bad-bg: #3a1c1c; --warn: #f0b04a; --warn-bg: #3a2c12;
       --run: #7aa2ff; --run-bg: #1c2a4a; --neutral-bg: #232833; --code-bg: #0f1217;
@@ -63,8 +65,26 @@
   .tab.on { color: var(--text); background: var(--neutral-bg); font-weight: 600; }
   pre { background: var(--code-bg); border-radius: 6px; padding: 10px; overflow: auto; max-height: 480px; white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; }
   .steps { list-style: none; padding: 0; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 480px; overflow-y: auto; }
-  .filter { padding: 8px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
-  .filter select { font: inherit; font-size: 12px; }
+  .filter { padding: 8px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .filter select { font: inherit; font-size: 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; }
+  .states { display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip { font: inherit; font-size: 11px; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--muted); }
+  .chip.on { background: var(--neutral-bg); color: var(--text); border-color: var(--muted); }
+  .chip:not(.on) .dot { opacity: .35; animation: none; }
+  .run { display: flex; align-items: center; gap: 10px; }
+  .run .body { flex: 1; min-width: 0; }
+  .run .throw { display: none; }
+  .run:hover .throw, details.bin .run .throw { display: inline-flex; }
+  .throw { width: 30px; height: 30px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    border-radius: 7px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--muted); }
+  .throw svg { width: 17px; height: 17px; }
+  .throw:hover { color: var(--text); border-color: var(--muted); }
+  .throw[data-act="bin"]:hover { color: var(--bad); border-color: var(--bad); }
+  .throw[data-act="restore"]:hover { color: var(--accent); border-color: var(--accent); }
+  details.bin { border-top: 1px solid var(--line); }
+  details.bin summary { padding: 8px 14px; cursor: pointer; color: var(--muted); font-size: 12px; }
+  details.bin .run { opacity: .75; }
   .steps li { padding: 4px 8px; border-left: 3px solid var(--line); margin-bottom: 3px; background: var(--code-bg); border-radius: 0 4px 4px 0; white-space: pre-wrap; word-break: break-word; }
   .steps li.text { border-left-color: var(--accent); font-family: inherit; }
   .steps li:last-child { border-left-color: var(--run); }
@@ -90,11 +110,11 @@
 </style>
 </head>
 <body>
-<header><h1>Factory runs</h1><span class="badge">local · read-only</span><a href="#view=calibration" id="calib-link">Sizing calibration</a><span class="muted" id="clock"></span></header>
+<header><h1>Factory runs</h1><span class="badge">local</span><a href="#view=calibration" id="calib-link">Sizing calibration</a><span class="muted" id="clock"></span></header>
 <div class="layout">
   <aside><div class="filter"><span class="muted">Show</span><select id="filter">
     <option value="1">active, and finished in the last day</option><option value="7">active, and finished in the last 7 days</option>
-    <option value="0">all runs</option></select></div><div id="runs"></div><div class="muted" id="hidden" style="padding:8px 14px"></div></aside>
+    <option value="0">all runs</option></select><div class="states" id="states"></div></div><div id="runs"></div><div class="muted" id="hidden" style="padding:8px 14px"></div><div id="bin"></div></aside>
   <main id="main"><div class="empty">Pick a run.</div></main>
 </div>
 <script>
@@ -137,21 +157,67 @@ function setHTML(el, html) {
 
 const live = s => s === "running" || s === "waiting";
 function filterDays() { try { return localStorage.getItem("factory.filter") ?? "7"; } catch { return "7"; } }
+// The toggles above the list: a finished run is filed under how it ended (the colour of its dot), any other under its
+// state. The ones turned off are kept per browser.
+const ENDED = { good: "passed", bad: "failed", warn: "needs a look", neutral: "stopped" };
+const STATES = [["running", "running"], ["waiting", "waiting"], ["passed", "done good"], ["failed", "done bad"],
+  ["needs a look", "done warn"], ["stopped", "done neutral"], ["dead", "dead"], ["stale", "stale"]];
+const filed = r => r.state === "done" ? ENDED[r.cls] || "passed" : r.state;
+function statesOff() { try { return new Set(JSON.parse(localStorage.getItem("factory.states.off") || "[]")); } catch { return new Set(); } }
+function toggleState(s) {
+  const off = statesOff();
+  off.has(s) ? off.delete(s) : off.add(s);
+  try { localStorage.setItem("factory.states.off", JSON.stringify([...off])); } catch {}
+  loadRuns();
+}
 
-async function loadRuns() {
-  const all = await get("/api/runs");
-  const days = Number(filterDays());
-  const recent = r => !days || live(r.state) || r.id === state.run || Date.now() - Date.parse(r.updated) < days * 86400e3;
-  const runs = all.filter(recent);
-  setHTML($("#runs"), runs.map(r => `
-    <div class="run ${r.id === state.run ? "sel" : ""}" data-id="${esc(r.id)}">
+const icon = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const TRASH = icon('<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>');
+const RESTORE = icon('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>');
+function runHtml(r) {
+  const btn = r.binned ? `<button class="throw" data-act="restore" title="Restore: back to the list" aria-label="Restore">${RESTORE}</button>`
+    : live(r.state) ? "" : `<button class="throw" data-act="bin" title="Bin: hide it from the list (the Bin keeps it)" aria-label="Bin">${TRASH}</button>`;
+  return `
+    <div class="run ${r.id === state.run ? "sel" : ""}" data-id="${esc(r.id)}"><div class="body">
       <div class="top"><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}"></span><b>${esc(r.ticket)}</b><span class="badge">${esc(r.kind)}</span>
         <span class="muted" style="margin-left:auto">${r.spent ? "$" + r.spent.toFixed(2) : ""}</span></div>
       <div class="status" title="${esc(r.status)}">${esc(r.status)}</div>
-      <div class="muted">${esc(r.state)} · ${ago(r.updated)}</div>
-    </div>`).join("") || `<div class="empty">No runs ${days ? "in that time" : "yet"}.</div>`);
-  const hidden = all.length - runs.length;
-  $("#hidden").textContent = hidden ? `${hidden} older finished run${hidden > 1 ? "s" : ""} hidden. factory.sh clean <KEY> deletes a ticket's runs.` : "";
+      <div class="muted">${esc(filed(r))} · ${ago(r.updated)}</div>
+    </div>${btn}</div>`;
+}
+
+async function binRun(id, act) {
+  const res = await fetch(`/api/run/${encodeURIComponent(id)}/${act}`, { method: "POST", headers: { "X-Factory-Dashboard": "1" } });
+  if (!res.ok) $("#clock").textContent = `${act === "bin" ? "binning" : "restoring"} ${id} failed (${res.status})`;
+  loadRuns();
+}
+
+async function loadRuns() {
+  const fetched = await get("/api/runs");
+  const all = fetched.filter(r => !r.binned), binned = fetched.filter(r => r.binned);
+  const days = Number(filterDays());
+  const recent = r => !days || live(r.state) || r.id === state.run || Date.now() - Date.parse(r.updated) < days * 86400e3;
+  const off = statesOff();
+  const inTime = all.filter(recent);
+  const runs = inTime.filter(r => !off.has(filed(r)));
+  const count = s => inTime.filter(r => filed(r) === s).length;
+  // A toggle with nothing under it is left out, unless it is off (so it can be turned back on).
+  if (setHTML($("#states"), STATES.filter(([s]) => count(s) || off.has(s)).map(([s, dot]) =>
+      `<button class="chip ${off.has(s) ? "" : "on"}" data-state="${s}" title="Show or hide the ${s} runs">
+      <span class="dot ${dot}"></span>${s} ${count(s)}</button>`).join("")))
+    for (const el of document.querySelectorAll(".chip")) el.onclick = () => toggleState(el.dataset.state);
+  setHTML($("#runs"), runs.map(runHtml).join("") || `<div class="empty">No runs ${off.size ? "in the states shown" : days ? "in that time" : "yet"}.</div>`);
+  const old = all.length - inTime.length, filtered = inTime.length - runs.length;
+  $("#hidden").textContent = [
+    filtered ? `${filtered} run${filtered > 1 ? "s" : ""} hidden by state.` : "",
+    old ? `${old} older finished run${old > 1 ? "s" : ""} hidden. factory.sh clean <KEY> deletes a ticket's runs.` : ""].filter(Boolean).join(" ");
+  // The bin: every binned run, whatever the filters; kept open or closed as the viewer left it.
+  const bin = $("#bin details");
+  const open = bin ? bin.open : false;
+  setHTML($("#bin"), binned.length ? `<details class="bin"${open ? " open" : ""}><summary>Bin (${binned.length})</summary>
+      ${binned.map(runHtml).join("")}</details>` : "");
+  for (const el of document.querySelectorAll(".throw")) el.onclick = e => {
+    e.stopPropagation(); binRun(el.closest(".run").dataset.id, el.dataset.act); };
   for (const el of document.querySelectorAll(".run")) el.onclick = () => {
     if (state.run === el.dataset.id) return;
     state.run = el.dataset.id; state.node = null; state.tab = null; state.view = null; writeHash(); refresh(); };

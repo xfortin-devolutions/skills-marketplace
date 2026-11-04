@@ -200,10 +200,11 @@ needs tickets name that aren't.
 
 ## dashboard
 
-`bash $F/factory.sh dashboard` (Bash tool with `run_in_background`: it serves until stopped) opens a live, read-only page
-on `127.0.0.1` in the browser: every run with its state and spend; per run, a pipeline of its stations round by round
-(builder, verify, reviewer, charter, runtime QA, exploratory QA, re-check), each with its outcome, time and cost; a
-station's details on click: the agent's live steps (what it reads, runs, edits), the builder's changes in its worktree,
+`bash $F/factory.sh dashboard` (Bash tool with `run_in_background`: it serves until stopped) opens a live page on
+`127.0.0.1` in the browser: every run with its state and spend, filtered by age and by state (a finished run by how it
+ended); a Bin a finished run goes to in one click, and back (a `BINNED` marker in the run folder, the page's only
+write); per run, a pipeline of its stations round by round (builder, verify, reviewer, charter, runtime QA, exploratory
+QA, re-check), each with its outcome, time and cost; a station's details on click: the agent's live steps (what it reads, runs, edits), the builder's changes in its worktree,
 the QA report and screenshots (live, as the agent takes them), the answer, the prompt and stderr. Nothing leaves the Mac.
 Offer it when a run starts, and whenever the user asks how things are going. `--port N`, `--no-open`.
 
