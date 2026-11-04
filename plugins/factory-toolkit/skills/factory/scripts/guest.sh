@@ -5,6 +5,12 @@
 #   guest.sh <vm run dir> test [--no-build] <project> [<filter>]   the target's test script on one test project;
 #                                                       --no-build runs what the last build left (no rebuild)
 #   guest.sh <vm run dir> info                          the guest's OS and SDK versions (for a verification record)
+#   guest.sh <vm run dir> app launch | wait <s> | shot | click <x> <y> [right|double] | type <text> | key <combo>... |
+#                         scroll <x> <y> <n> | stop     the builder's app, at any point while it works (not QA): launch
+#                                                       (re)starts the build in the desktop session, shot saves a
+#                                                       screenshot under <vm run dir>/app/ and prints its path; build and
+#                                                       test stop a launched app first (it locks bin/)
+#   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min
 # Exit: 0 green, 1 the build or tests fail, 3 the harness failed (no exit code: time box, SSH, share; restore or SDK
 # errors), 2 usage. It prints the errors and the summary; the full log is <vm run dir>/build.log or test.log.
 # Nothing builds on the Mac: the guest is where the product ships, so it is where the loop compiles and tests.
@@ -13,7 +19,7 @@
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,7p' "$0" >&2; exit 2; }
+usage() { sed -n '3,13p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2
@@ -21,6 +27,13 @@ shift 2
 . "$D/guest.conf"
 env=$("$X/vm/vmctl.sh" env "$D" 2> /dev/null) || { echo "HARNESS ERROR: the VM of $D is not running" >&2; exit 3; }
 eval "$env"
+
+# app_stop: ends what runs from the share (the app the builder launched), which would lock the build's output
+app_stop() {
+  [ -e "$D/app.running" ] || return 0
+  "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1
+  rm -f "$D/app.running"
+}
 
 # ps_str <value>: the value as a PowerShell single-quoted literal
 ps_str() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
@@ -58,6 +71,7 @@ case "$CMD" in
     for a in "$@"; do
       case "$a" in --clean) clean=yes ;; -*) usage ;; *) proj=$a ;; esac
     done
+    app_stop
     # Ignored files only: in a run's worktree those are build outputs; tracked files and the hand-back stay.
     [ "$clean" = yes ] && git -C "$WORKTREE" clean -fdXq -- . ':!handback'
     run "$D/build.log" "$GUEST_BUILD" "\$Project = $(ps_str "$proj")"
@@ -66,8 +80,39 @@ case "$CMD" in
     nob='$false'
     [ "${1:-}" = --no-build ] && { nob='$true'; shift; }
     [ $# -ge 1 ] && [ $# -le 2 ] || usage
+    app_stop
     run "$D/test.log" "$GUEST_TEST" "\$Project = $(ps_str "$1"); \$Filter = $(ps_str "${2:-}"); \$NoBuild = $nob"
     report "$D/test.log" TEST ;;
+  app)
+    sub=${1:-}
+    [ $# -gt 0 ] && shift
+    mkdir -p "$D/app"
+    case "$sub" in
+      launch)
+        [ -n "${GUEST_LAUNCH:-}" ] && [ -f "$GUEST_LAUNCH" ] || { echo "HARNESS ERROR: this target has no launch script"; exit 3; }
+        # The target's launch script stops a running instance itself: a relaunch after a build picks up the new build.
+        "$X/vm/vmssh" - < "$GUEST_LAUNCH" > "$D/app/launch.log" 2>&1
+        tail -3 "$D/app/launch.log"
+        grep -q '^LAUNCH OK' "$D/app/launch.log" || exit 1
+        : > "$D/app.running"
+        echo "launched; the window can take a while to show: app wait, then app shot" ;;
+      wait)
+        [ "${1:-}" -ge 1 ] 2> /dev/null && [ "$1" -le 120 ] || usage
+        sleep "$1" ;;
+      shot)
+        n=$(($(ls "$D/app"/shot-*.png 2> /dev/null | wc -l) + 1))
+        # Against a runaway loop only, not a budget for looking.
+        [ "$n" -le "${APP_SHOT_CAP:-200}" ] || { echo "app shot: ${APP_SHOT_CAP:-200} screenshots this run: a loop? Stop and rethink"; exit 1; }
+        python3 "$X/vm/vm.py" shot "$D/app/shot-$n.png" ;;
+      click|type|key|scroll)
+        [ $# -ge 1 ] || usage
+        python3 "$X/vm/vm.py" "$sub" "$@" ;;
+      stop) : > "$D/app.running"; app_stop; echo "stopped" ;;
+      *) usage ;;
+    esac ;;
+  run)
+    [ $# -eq 1 ] || usage
+    timebox 300 "$X/vm/vmssh" "$1" ;;
   info)
     "$X/vm/vmssh" '"guest: {0} {1} {2}; dotnet {3}" -f (Get-CimInstance Win32_OperatingSystem).Caption, [Environment]::OSVersion.Version, $env:PROCESSOR_ARCHITECTURE, (dotnet --version)' ;;
   *) usage ;;
