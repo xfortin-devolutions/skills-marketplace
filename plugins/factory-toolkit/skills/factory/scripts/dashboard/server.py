@@ -126,7 +126,7 @@ def run_summary(run):
     # A finished run's dot shows how it ended, not just that it ended.
     cls = "neutral" if status.startswith(("stopped", "paused")) else outcome_class(status)
     return {"id": run_id, "ticket": ticket_of(run_id), "kind": run_kind(run_id), "state": state, "status": status,
-            "cls": cls,
+            "cls": cls, "disputed": disputed(status),
             "started": evs[0]["t"] if evs else None, "updated": evs[-1]["t"] if evs else None,
             "spent": round(spent, 2), "binned": os.path.exists(os.path.join(run, "BINNED"))}
 
@@ -184,9 +184,20 @@ def session_state(run, name):
     return None
 
 
+# A builder's dispute of an expectation, as the runner and QA word it: "disputed by the builder: E1: <title>; ..." in a
+# run's status, "E1 is disputed: <what QA saw>." in QA's answer. It is the judge's to decide, not a defect: flagged on
+# its own and left out of the colour, so a pass that carries one stays green and the dispute's own words ("E2: the
+# button fails to ...") don't colour it either.
+DISPUTE = re.compile(r"disputed by the builder: .*?(?=; the judge decides|\)|$)|\bE\d+ is disputed:[^.]*\.?", re.I)
+
+
+def disputed(text):
+    return bool(text and DISPUTE.search(text))
+
+
 def outcome_class(text):
-    t = (text or "").lower()
-    if not t:
+    t = DISPUTE.sub("", text or "").lower()
+    if not t.strip():
         return "neutral"
     if re.search(r"\b(fail|red|send back|error|harness|not met|blocker)", t) and "verify green" not in t:
         return "bad"
@@ -283,7 +294,7 @@ def last_event(evs, name):
 
 def node(st, n, state, outcome, cls, cost=None, minutes=None):
     return {"key": f"{st}-{n}", "station": st, "title": TITLES[st], "round": n, "state": state, "outcome": outcome,
-            "cls": cls, "cost": cost, "minutes": minutes}
+            "cls": cls, "disputed": disputed(outcome), "cost": cost, "minutes": minutes}
 
 
 def run_detail(run):

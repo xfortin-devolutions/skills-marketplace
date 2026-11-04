@@ -34,6 +34,7 @@
   .run .top { display: flex; align-items: center; gap: 8px; }
   .run .status { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
   .badge { font-size: 11px; padding: 1px 6px; border-radius: 9px; background: var(--neutral-bg); color: var(--muted); }
+  .badge.disputed { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
   .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
   .dot.running { background: var(--run); animation: pulse 1.4s infinite; }
   .dot.waiting { background: var(--warn); animation: pulse 1s infinite; }
@@ -156,6 +157,8 @@ function setHTML(el, html) {
 }
 
 const live = s => s === "running" || s === "waiting";
+// A builder's dispute of an expectation: the judge decides. Shown beside the outcome's colour, not as one.
+const DISPUTED = '<span class="badge disputed" title="The builder disputes an expectation; the judge decides (hand-back: Disputed)">disputed</span>';
 function filterDays() { try { return localStorage.getItem("factory.filter") ?? "7"; } catch { return "7"; } }
 // The toggles above the list: a finished run is filed under how it ended (the colour of its dot), any other under its
 // state. The ones turned off are kept per browser.
@@ -179,7 +182,7 @@ function runHtml(r) {
     : live(r.state) ? "" : `<button class="throw" data-act="bin" title="Bin: hide it from the list (the Bin keeps it)" aria-label="Bin">${TRASH}</button>`;
   return `
     <div class="run ${r.id === state.run ? "sel" : ""}" data-id="${esc(r.id)}"><div class="body">
-      <div class="top"><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}"></span><b>${esc(r.ticket)}</b><span class="badge">${esc(r.kind)}</span>
+      <div class="top"><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}"></span><b>${esc(r.ticket)}</b><span class="badge">${esc(r.kind)}</span>${r.disputed ? DISPUTED : ""}
         <span class="muted" style="margin-left:auto">${r.spent ? "$" + r.spent.toFixed(2) : ""}</span></div>
       <div class="status" title="${esc(r.status)}">${esc(r.status)}</div>
       <div class="muted">${esc(filed(r))} · ${ago(r.updated)}</div>
@@ -229,7 +232,7 @@ function nodeHtml(n) {
   const icon = n.state === "running" || n.state === "preparing" ? '<span class="dot running"></span>' : "";
   const meta = [n.minutes ? `${n.minutes} min` : "", n.cost ? `$${Number(n.cost).toFixed(2)}` : ""].filter(Boolean).join(" · ");
   return `<div class="node ${cls} ${n.key === state.node ? "sel" : ""}" data-key="${esc(n.key)}">
-    <div class="t">${icon}${esc(n.title)}</div><div class="o" title="${esc(n.outcome)}">${esc(n.outcome)}</div>
+    <div class="t">${icon}${esc(n.title)}${n.disputed ? DISPUTED : ""}</div><div class="o" title="${esc(n.outcome)}">${esc(n.outcome)}</div>
     ${meta ? `<div class="m">${meta}</div>` : ""}</div>`;
 }
 
@@ -252,7 +255,7 @@ async function loadRun() {
   for (const n of r.nodes) (rounds[n.round] = rounds[n.round] || []).push(n);
   const isLive = r.state === "running" || r.state === "waiting";
   setHTML($("#s-head"), `
-      <h2><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}" style="display:inline-block"></span> ${esc(r.ticket)} <span class="badge">${esc(r.kind)}</span></h2>
+      <h2><span class="dot ${r.state} ${r.state === "done" ? r.cls || "" : ""}" style="display:inline-block"></span> ${esc(r.ticket)} <span class="badge">${esc(r.kind)}</span> ${r.disputed ? DISPUTED : ""}</h2>
       <div class="muted">${esc(r.id)} · started ${ago(r.started)} · ${isLive ? "running for " + elapsed(r.started) : "took " + elapsed(r.started, r.updated)} · spent $${r.spent.toFixed(2)}</div>
       <div style="margin-top:6px">${esc(r.status)}</div>
       ${r.header ? `<div class="muted" style="margin-top:4px">${esc(r.header)}</div>` : ""}
