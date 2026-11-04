@@ -352,6 +352,11 @@ def worktree_changes(run):
     if not m:
         return None
     base, wt = (m.group(1), m.group(2)) if m.lastindex == 2 else (None, m.group(1))
+    runs_md = read(os.path.join(run, "runs.md")) or ""
+    # A resumed run's event names no base; its runs.md does ("Base: <sha> · branch: ...").
+    if not base:
+        b = re.search(r"^Base: (\S+)", runs_md, re.M)
+        base = b.group(1) if b else None
     if not os.path.isabs(wt):
         wt = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(ARGS.runs))), wt)
     if not os.path.isdir(wt):
@@ -363,7 +368,7 @@ def worktree_changes(run):
         except (OSError, subprocess.SubprocessError):
             return ""
     # The run's branch, not HEAD: verify in the middle of its negative run has HEAD detached on the base.
-    branch = next((l.split("branch: ")[1].split(" ")[0] for l in (read(os.path.join(run, "runs.md")) or "").splitlines()
+    branch = next((l.split("branch: ")[1].split(" ")[0] for l in runs_md.splitlines()
                    if "branch: " in l), None)
     tip = branch or "HEAD"
     head = git("symbolic-ref", "-q", "--short", "HEAD").strip()
