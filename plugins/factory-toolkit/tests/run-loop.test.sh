@@ -415,13 +415,13 @@ t_reviewer_scaled() {
 }
 
 # Test needs: fixtures and resources a human provides.
+# A fixture is the ticket's own, next to its spec: never in the repo or a profile.
 fixture() {
-  local d=$R/.factory/profiles/demo/fixtures/$1
+  local d=$T/tickets/DEMO-1.fixtures/$1
   mkdir -p "$d"
   printf '# %s\nWhat: ten demo entries in the default data source\nUse: the entries are in the Demo folder of the navigation pane.\n' "$1" > "$d/fixture.md"
   printf '# apply %s\nCopy-Item "$Dir\\entries.xml" $env:APPDATA\n' "$1" > "$d/apply.ps1"
   echo '<entries/>' > "$d/entries.xml"
-  git -C "$R" add -A && git -C "$R" commit -qm "fixture $1"
 }
 provided() { # provided <name> <Shared> [check script body]
   local d=$T/provided/$1
@@ -448,6 +448,13 @@ t_fixture() {
   expect_file "$(hb)/hand-back.md" '^## Test needs \(runner\)$'
   expect_file "$(hb)/hand-back.md" '^  N1 ten entries in a folder: fixture demo-data$'
   expect_file "$(hb)/hand-back.md" '^  N2 a new RDP entry: set up by QA in the app$'
+}
+
+t_fixture_missing() {
+  assess 'Size: M' 'Why: x' 'Needs:' '- N1: ten entries in a folder | fixture: demo-data: ten entries in a Demo folder'
+  loop
+  expect_end '^needs input before the run: fixture demo-data \(ten entries in a folder\): write it, factory.sh fixture DEMO-1 demo-data'
+  expect_calls builder 0
 }
 
 t_provided_missing() {
@@ -488,7 +495,7 @@ t_qa_needs_input() {
 
 ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
   failing_listed_test listed_red_on_base_too accept_passes_on_base build_fails restore_flake_on_clean accept_dispute accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
-  assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture provided_missing provided_check_then_resume
+  assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture fixture_missing provided_missing provided_check_then_resume
   qa_needs_input"
 for t in ${*:-$ALL}; do
   ok=yes

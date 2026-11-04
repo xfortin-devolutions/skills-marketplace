@@ -45,9 +45,10 @@ the repo it is run from. The skill is the engine; what a repo's products need is
 - `<project>/profiles/<name>/`: one per product (`rdm`, `console`, …): `profile.sh` (app name, `CODE_PATHS`, targets,
   protected paths, branch prefix), `reviewer.md` (review standards), `targets/<os>/` (guest image and build/test/launch
   scripts).
-- Tickets: `<KEY>.md` + `.sh` (the `.sh` picks `PROFILE` and `PLATFORM`) + `<KEY>.assessment.md` (size and test needs) in the main checkout's
-  `.claude/worktrees/factory-tickets/`, next to the runs: working files, never committed. Each run copies its spec, so
-  editing it between runs is safe. `factory.sh clean <KEY>` deletes a finished ticket's spec, run logs and VM folders.
+- Tickets: `<KEY>.md` + `.sh` (the `.sh` picks `PROFILE` and `PLATFORM`) + `<KEY>.assessment.md` (size and test needs),
+  and the fixtures its QA needs (`<KEY>.fixtures/<name>/`), in the main checkout's `.claude/worktrees/factory-tickets/`,
+  next to the runs: working files, never committed. Each run copies its spec and fixtures, so editing them between runs
+  is safe. `factory.sh clean <KEY>` deletes a finished ticket's spec, fixtures, run logs and VM folders.
 - Per machine, never in the repo: `~/.factory/config.sh` (VM root, CPUs, RAM, budget overrides, the size table and
   its ceiling), and `~/.factory/provided/<name>/` (resources only a human can provide, for QA).
 The agents' system prompts, in this skill's `agents/`: `factory-assessor.md` (size and test needs), `factory-reviewer.md`, `factory-qa.md` (acceptance QA),
@@ -70,6 +71,7 @@ The agents' system prompts, in this skill's `agents/`: `factory-assessor.md` (si
 | "the ticket is merged", "clean up DEVEX-123" | **clean** |
 | "how big is it?", "what will it cost?", "give it more time / budget", "go higher" | **limits** |
 | "QA needs a data source / server / account", a run that needs input | **provide** |
+| "QA needs this state in the VM" (a file, a setting, a broken configuration), a `fixture:` need | **fixture** |
 
 ## spec <KEY> (interactive: this is where the human adds the most value)
 
@@ -101,8 +103,9 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
    the run's limits) and the test needs (what QA's VM must contain, and how: a fixture, a resource only a human can
    provide, QA's own setup, or nothing). [references/test-needs.md](references/test-needs.md). Read it critically:
    a need the assessor missed, or one QA could create itself, is yours to fix in the file. A `provided:` need: ask the
-   user for it now (`factory.sh provide <name>`), they are here; a `fixture:` the profile lacks: write it with them
-   (`templates/fixture/`), or change the line to `qa-setup` or `unmet`.
+   user for it now (`factory.sh provide <name>`), they are here; a `fixture:` need: write it for this ticket
+   (`factory.sh fixture <KEY> <name>`, from `templates/fixture/`), or change the line to `qa-setup` or `unmet`. A
+   fixture is the ticket's own, never the profile's: it lives and dies with the ticket.
 8. If there is a Runtime check and a golden VM: `bash $F/run-loop.sh <KEY> --qa-only HEAD` must come back FAIL for the
    stated reason (it applies the test needs, so do it after step 7). Record both red runs in the ticket.
 9. Show the spec to the user and stop: give them its path (`factory.sh spec <KEY>`; `--open` opens it), the red output,
@@ -179,6 +182,14 @@ ceiling only caps the assessor's own suggestion: a value someone set on purpose 
 Say in one line which limits you raised and why; never raise them on your own to finish a run the user didn't ask to
 push.
 
+## fixture <KEY> <name>
+
+State a script can put in QA's VM before the app starts (a file, a setting, a broken or seeded configuration), for one
+ticket: `bash $F/factory.sh fixture <KEY> <name>` starts `<KEY>.fixtures/<name>/` next to the spec. Fill `fixture.md`
+(What, Use: in user terms, no secrets) and `apply.ps1` (idempotent, throws on failure), name it in the assessment
+(`| fixture: <name>`), then prove it on the base with `run-loop.sh <KEY> --qa-only`. Fixtures are never committed and
+never go in a profile; `clean <KEY>` deletes them with the ticket.
+
 ## provide <name> · provided
 
 A test need only a human can meet (a real data source with a working Dashboard entry, a server, an account):
@@ -221,13 +232,13 @@ The final merge decision is the Judge section of the hand-back, which the human 
 `$F/vm/vmctl.sh …` manages per-run VMs (normally only the runner calls it). `list` and `gc` are the useful manual ones
 (gc frees slots of dead VMs). **setup** = the one-time golden image: walk the user through
 [references/vm-setup.md](references/vm-setup.md); it needs their Windows ISO, Artifactory NuGet config and one keypress.
-One golden image per guest OS (`<VM root>/<os>/base.qcow2`); never one per scenario: per-run state belongs in fixtures.
+One golden image per guest OS (`<VM root>/<os>/base.qcow2`); never one per scenario: per-ticket state belongs in the ticket's fixtures.
 
 ## clean <KEY>
 
 Once a ticket is merged or dropped: `bash $F/factory.sh clean <KEY> --dry-run`, show the user what it would delete and
-how much, then the same without `--dry-run` on their yes. It deletes the spec, the run logs (prompts, JSON, QA
-screenshots) and the VM folders, never a run that is live or waiting for a human. It lists the ticket's worktrees and
+how much, then the same without `--dry-run` on their yes. It deletes the spec, the assessment, the fixtures, the run
+logs (prompts, JSON, QA screenshots) and the VM folders, never a run that is live or waiting for a human. It lists the ticket's worktrees and
 branches but removes none: those may hold work, so ask, and remove them only on a yes.
 
 ## profile <name> (set up a product, or a repo with no project yet)
@@ -287,9 +298,9 @@ new `targets/<os>/`, not a new profile.
 | Hand-back (builder, reviewer, QA, exploratory QA sections + Judge) | `<worktree>/handback/<branch-dir>/hand-back.md`, QA screenshots in `qa-<n>/`, the charter, tour and re-check in `qa-<n>/charter.md`, `explore/`, `recheck/` |
 | VM disks (overlays) and the QA agent's folder | `~/VMs/factory/<os>/runs/<run>/` (golden image: `~/VMs/factory/<os>/base.qcow2`) |
 | Project config and profiles | `projects/<project>/` in this skill (or the repo's `.factory/`, which wins) |
-| Tickets (specs and assessments, never committed) | `.claude/worktrees/factory-tickets/` in the main checkout; `factory.sh clean <KEY>` when done |
+| Tickets (specs, assessments and fixtures, never committed) | `.claude/worktrees/factory-tickets/` in the main checkout; `factory.sh clean <KEY>` when done |
 | Limits a run used, and where each came from | `<run>/limits.txt`; every finished run: `factory-runs/.calibration.tsv` |
-| Fixtures / resources a human provides | `projects/<project>/profiles/<profile>/fixtures/<name>/` / `~/.factory/provided/<name>/` |
+| Fixtures / resources a human provides | `factory-tickets/<KEY>.fixtures/<name>/` / `~/.factory/provided/<name>/` |
 | What is still missing | `GAPS.md` at the plugin's root |
 
 Credits: the VM layer is the `rdm-windows-vm-test` setup (QEMU Windows 11 ARM64, QMP driving, SMB share), vendored and

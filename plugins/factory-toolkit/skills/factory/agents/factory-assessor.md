@@ -29,7 +29,10 @@ app for each step to be possible? The QA VM starts with the app freshly installe
 entries, default settings, no network but the VM itself, no accounts, no servers. List each thing the steps need that a
 fresh install lacks, in user terms ("an RDP entry with a linked credential", "administration logs with check-out
 events", "a DVLS data source with a Dashboard entry"), and how it is met, the first that works:
-1. `fixture: <name>`: a fixture from the catalog the prompt lists provides it (read its description, not its name).
+1. `fixture: <name>[: <what it puts in place>]`: the runner can put it in the VM with a script before the app starts
+   (files, settings, a broken or seeded configuration, data the app reads at startup). A fixture belongs to this ticket:
+   use one the prompt lists when it fits (read its description, not its name); else name a new one (lowercase, dashes)
+   and say exactly what it must put in place, so the spec's author can write it.
 2. `qa-setup: <how>`: QA can create it in the app in a few steps (a new entry, a setting); say how, in user terms. Only
    when it takes under about ten steps and needs nothing from outside the VM.
 3. `provided: <name>: <what>`: only a human can provide it (a real server or data source, an account, a license, a
@@ -45,5 +48,5 @@ Why: <one line: what drives the size>
 Rounds: <the rounds you expect>
 Split: <no | how to split it, in one line>
 Needs: <none, or nothing after the colon and one need a line below>
-- N1: <the need, in user terms> | <fixture: <name> | qa-setup: <how> | provided: <name>: <what> | unmet: <why>>
+- N1: <the need, in user terms> | <fixture: <name>[: <what>] | qa-setup: <how> | provided: <name>: <what> | unmet: <why>>
 ```

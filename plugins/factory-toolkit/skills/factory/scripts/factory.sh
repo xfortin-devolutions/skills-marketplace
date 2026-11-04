@@ -15,6 +15,8 @@
 #   factory.sh assess <KEY>              the assessor alone: size class and test needs, in <KEY>.assessment.md next to the
 #                                        spec (the one before is kept as .prev); runs in the foreground, a few minutes
 #   factory.sh limits <KEY> [--size <class>] [--set NAME=VALUE]...   the limits a run of <KEY> would use, and why
+#   factory.sh fixture <KEY> <name>      start a fixture for a ticket (<KEY>.fixtures/<name>/ next to its spec): state
+#                                        QA's VMs need, applied before the app starts; deleted by clean <KEY>
 #   factory.sh provide <name>            start a resource only a human can provide (~/.factory/provided/<name>/)
 #   factory.sh provided                  the resources provided on this machine, and the tickets that need missing ones
 #   factory.sh down [run]                power off the VMs a run kept (--keep-vm) and remove their worktrees
@@ -25,7 +27,7 @@
 #   factory.sh which <path>...           the profile whose CODE_PATHS own each repo path (how the spec step picks one)
 #   factory.sh spec <KEY> [--open]       a ticket's spec files (and open the .md in the default app)
 #   factory.sh dashboard [--port N] [--no-open]   live view of the runs in the browser (local, read-only; Ctrl-C stops)
-#   factory.sh clean <KEY> [--dry-run]   a finished ticket: delete its spec, its run logs and its VM folders; list the
+#   factory.sh clean <KEY> [--dry-run]   a finished ticket: delete its spec, fixtures, run logs and VM folders; list the
 #                                        worktrees and branches left (removing those stays a human's call)
 #   factory.sh layer <profile> --test|--build   rehearse (throwaway clone) or build and freeze the profile's VM layer
 # [run] is a run id or a prefix of one (devex-528-2026…); default: the newest run.
@@ -102,6 +104,24 @@ case "$cmd" in
     key=${1:-}; [ -n "$key" ] || die "usage: factory.sh limits <KEY> [--size <class>] [--set NAME=VALUE]..."
     shift
     exec bash "$X/run-loop.sh" "$key" --limits-only "$@" ;;
+  fixture)
+    key=${1:-} name=${2:-}
+    [ -n "$key" ] || die "usage: factory.sh fixture <KEY> <name>"
+    case "$name" in ''|*[!a-z0-9-]*) die "usage: factory.sh fixture <KEY> <name> (lowercase letters, digits, dashes)" ;; esac
+    [ -f "$TICKETS_DIR/$key.md" ] || die "no spec for $key in $TICKETS_DIR: write it first"
+    d=$TICKETS_DIR/$key.fixtures/$name
+    if [ -f "$d/fixture.md" ]; then
+      echo "$d exists:"; ls -A "$d" | sed 's/^/  /'
+    else
+      mkdir -p "$d"
+      sed "s/@NAME@/$name/g" "$X/../templates/fixture/fixture.md" > "$d/fixture.md"
+      cp "$X/../templates/fixture/apply.ps1" "$d/apply.ps1"
+      echo "created $d"
+    fi
+    echo "1. fill $d/fixture.md: What (what it puts in place) and Use (where QA finds it), in user terms; no secrets"
+    echo "2. write apply.ps1 (idempotent, throws on failure) and put its data files next to it: copied into each QA VM's"
+    echo "   C:\\factory\\fixtures\\$name, run there before the app starts, \$Dir = that folder"
+    echo "3. name it in $key.assessment.md: '| fixture: $name', then factory.sh check, and prove it with run-loop.sh $key --qa-only" ;;
   provide)
     name=${1:-}
     case "$name" in ''|*[!a-z0-9-]*) die "usage: factory.sh provide <name> (lowercase letters, digits, dashes)" ;; esac
@@ -272,7 +292,7 @@ case "$cmd" in
     dry=no; [ "${2:-}" = --dry-run ] && dry=yes
     k=$(echo "$key" | tr '[:upper:]' '[:lower:]')
     gone="" busy=""
-    for d in "$TICKETS_DIR/$key.md" "$TICKETS_DIR/$key.sh" "$TICKETS_DIR/$key.assessment.md" "$TICKETS_DIR/$key.assessment.md.prev" "$RUNS/$k"-*; do
+    for d in "$TICKETS_DIR/$key.md" "$TICKETS_DIR/$key.sh" "$TICKETS_DIR/$key.assessment.md" "$TICKETS_DIR/$key.assessment.md.prev" "$TICKETS_DIR/$key.fixtures" "$RUNS/$k"-*; do
       [ -e "$d" ] || continue
       if [ -d "$d" ]; then
         [ -n "$(live_vm "$d")" ] || [ -e "$d/WAITING-FOR-HUMAN" ] && { busy="$busy $(basename "$d")"; continue; }

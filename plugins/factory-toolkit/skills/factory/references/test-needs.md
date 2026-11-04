@@ -52,7 +52,7 @@ works:
 
 | How | What it is | Where | When it is missing |
 |---|---|---|---|
-| `fixture: <name>` | state the profile knows how to create, committed with it | `profiles/<profile>/fixtures/<name>/`: `fixture.md` (What, Use), `apply.ps1`, data files | the run stops before it spends anything |
+| `fixture: <name>` | state a script puts in the VM before the app starts, written for this ticket | `<KEY>.fixtures/<name>/` next to the spec (`factory.sh fixture <KEY> <name>`): `fixture.md` (What, Use), `apply.ps1`, data files; never committed | the run stops before it spends anything |
 | `provided: <name>` | what only a human has: a real server or data source, an account, a license | `~/.factory/provided/<name>/` on this machine, never in a repo | the run stops before it spends anything; unreachable at QA (its `check.ps1` fails): the run pauses for input |
 | `qa-setup: <how>` | QA creates it in the app, as setup steps | the assessment line | n/a |
 | `unmet: <why>` | nothing provides it | the assessment line | what needs it goes untested; the hand-back says so |
@@ -65,10 +65,14 @@ The hand-back's **Test needs** section tells the judge how each need was met.
 
 ### Fixtures
 
-`templates/fixture/` is the starting point. `apply.ps1` runs over SSH as the desktop user (same profile, no desktop),
-must be idempotent, and throws on failure (the QA round is then a harness error, not the change's fault). Write a
-fixture once, for the first ticket that needs it: the catalog grows ticket by ticket, and the assessor picks from it by
-its What line. `factory.sh check` checks them.
+A fixture belongs to its ticket, like the spec and the assessment: written while specifying it, carried for the
+ticket's duration, deleted by `factory.sh clean <KEY>`. There is no catalog in the profiles: a state worth reusing
+across tickets belongs in the profile's VM layer, not in a fixture. `factory.sh fixture <KEY> <name>` starts one in
+`<KEY>.fixtures/<name>/` from `templates/fixture/`; each run takes a copy at its start, as it does the spec. `apply.ps1`
+runs over SSH as the desktop user (same profile, no desktop), must be idempotent, and throws on failure (the QA round is
+then a harness error, not the change's fault). The assessor sees the ticket's fixtures and proposes the ones it lacks
+(`fixture: <name>: <what it puts in place>`); `factory.sh check` checks them. Prove a new one with
+`run-loop.sh <KEY> --qa-only` on the base before any builder run.
 
 ### Resources a human provides
 
