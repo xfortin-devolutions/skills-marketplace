@@ -47,6 +47,8 @@ CAP_VARS="B_USD B_MIN R_USD R_MIN QA_USD QA_MIN C_USD C_MIN X_USD X_MIN RC_USD R
 FACTORY_PROVIDED=${FACTORY_PROVIDED:-$HOME/.factory/provided}
 # A failing test is re-run up to FLAKY_RERUNS times; passing on a re-run makes it flaky (green, listed for the judge).
 FLAKY_RERUNS=2
+# The builder's app (guest app), at any point while it works: screenshots a run, a cap against a runaway loop only.
+APP_SHOT_CAP=${APP_SHOT_CAP:-200}
 # After a builder session, how long a git index.lock it left may take to go before the runner removes it as stale.
 GIT_SETTLE_S=60
 FACTORY_RUNS=${FACTORY_RUNS:-$MAIN_REPO/.claude/worktrees/factory-runs}

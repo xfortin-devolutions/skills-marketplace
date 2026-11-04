@@ -118,6 +118,9 @@ uses a VM. The build VM boots with the round's first build or test (the builder'
 after `VM_IDLE_MIN` (10) minutes unused and once verify is green, and boots again when needed: the build output lives
 in the worktree, so it builds incrementally. Then the QA clone, for the whole QA stage; then, for findings to re-try,
 the base re-check's VM. When every slot (`VM_MAX`) is taken, a VM waits up to `VM_SLOT_WAIT_MIN` for one instead of failing.
+The builder also runs the app in its build VM whenever it wants while it works (`guest app launch|shot|click|type|key|
+stop`, `guest run '<powershell>'`), to check an assumption or a case as a developer would; headless tests come first
+where they can show it. What it sees there is never evidence: the record and the blind QA stay the judge's.
 ```
 bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loop takes minutes to an hour
 ```

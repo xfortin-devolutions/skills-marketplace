@@ -4,7 +4,10 @@ Nothing builds or runs on this Mac: @APP@ ships on @GUEST_DESC@, and a VM of it 
 - `@GUEST@ build` builds what ships (long the first time, incremental after); `@GUEST@ build <project>` builds one project, for quicker checks while you work.
 - `@GUEST@ test <test project> [<filter>]` runs tests.
 - `@GUEST@ info` prints the guest's OS and SDK versions.
+- `@GUEST@ app launch` starts @APP@ from your latest build in the VM's desktop session (again after each build: a build stops it); then `app wait <seconds>`, `app shot` (prints the screenshot's path: Read it), `app click <x> <y> [right|double]`, `app type <text>`, `app key <combo>` (e.g. ctrl-c, esc), `app scroll <x> <y> <n>`, `app stop`. `@GUEST@ run '<powershell>'` runs one command in the guest (the app's logs, settings, files).
 Exit 0 = green, 1 = the build or tests fail, 3 = the VM or share failed (not your code: retry once, then say so in your Tests section).
+
+The running app is yours to use at any point, like a developer's: look at how it behaves before you change it, to check an assumption, and after, to confirm a case. Use it as often as you need; nothing has to justify it. Cover with headless tests what they can show, since those stay as regression checks; whenever you're not confident a headless test really shows the behaviour, check it in the app. What you see there is for you, not evidence: the runner's verification record and the blind QA after you are what the judge relies on, so never cite your own screenshots as proof in the hand-back.
 
 You are done when your change is committed and your hand-back sections are written. The runner then verifies the commit itself, in the same VM, and writes the verification record: the full build (@GUEST@ build), the accept test (@ACCEPT@), the negative run (the accept test on the base, where it must fail), and the tests you list in @HANDBACK@/tests.txt. A failure there comes back to you as the next round's reason.
 The ticket's Runtime check is not yours: a blind QA stage runs the app after you.

@@ -622,8 +622,8 @@ first_errors() { # first_errors <guest.sh output>: three error or failed-test li
 
 # guest_conf <vm run dir> <worktree>: what scripts/guest.sh needs to build and test in that VM
 guest_conf() {
-  printf "WORKTREE='%s'\nGUEST_BUILD='%s'\nGUEST_TEST='%s'\nGUEST_BUILD_MIN=%s\n" \
-    "$2" "$GUEST_BUILD" "$GUEST_TEST" "$GUEST_BUILD_MIN" > "$1/guest.conf"
+  printf "WORKTREE='%s'\nGUEST_BUILD='%s'\nGUEST_TEST='%s'\nGUEST_BUILD_MIN=%s\nGUEST_LAUNCH='%s'\nAPP_SHOT_CAP=%s\n" \
+    "$2" "$GUEST_BUILD" "$GUEST_TEST" "$GUEST_BUILD_MIN" "${GUEST_LAUNCH:-}" "$APP_SHOT_CAP" > "$1/guest.conf"
 }
 
 # build_vm_up <worktree>: sets up the run's build VM and writes the guest tool. The VM itself boots on demand: the first
@@ -632,11 +632,12 @@ guest_conf() {
 build_vm_up() {
   local v
   trap '"$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1' EXIT
-  mkdir -p "$BUILD_VM"
+  # app/: the builder's screenshots (guest app shot), readable by its sessions (--add-dir).
+  mkdir -p "$BUILD_VM/app"
   guest_conf "$BUILD_VM" "$1"
   # The builder's sessions run the tool too, so it carries the VM settings rather than relying on their environment.
   {
-    printf '#!/bin/bash\n# Builds and tests this run'"'"'s worktree in its build VM (booted on first use): build [<project>] [--clean] | test [--no-build] <project> [<filter>] | info\n'
+    printf '#!/bin/bash\n# Builds, tests and runs this run'"'"'s worktree in its build VM (booted on first use): build [<project>] [--clean] | test [--no-build] <project> [<filter>] | app launch|wait|shot|click|type|key|scroll|stop | run <powershell> | info\n'
     for v in FACTORY_VM_HOME VM_IMAGE VM_SHARE_CHECK VM_CPUS VM_MEM VM_MAX VM_SLOT_WAIT_MIN VM_BOOT_MIN VM_XRES VM_YRES VM_IDLE_MIN; do
       printf 'export %s=%q\n' "$v" "${!v:-}"
     done
@@ -1250,7 +1251,7 @@ while :; do
     fi
     sig0=$(progress_sig "$([ "$from" = review ] && echo hand-back)")
     run_claude "$name" "$B_MIN" "$WT" -p "$(cat "$RUN/$name.prompt")" --model "$B_MODEL" --max-budget-usd "$B_USD" \
-      --permission-mode acceptEdits --settings "$RUN/builder-settings.json" --add-dir "$SKILL/templates" --add-dir "$SPEC_DIR" \
+      --permission-mode acceptEdits --settings "$RUN/builder-settings.json" --add-dir "$SKILL/templates" --add-dir "$SPEC_DIR" --add-dir "$BUILD_VM/app" \
       --allowedTools "${BUILD_TOOLS[@]}" --output-format json
     read -r st _ _ _ <<< "$(fields "$RUN/$name.json")"
     read -r _ _ rc < "$RUN/$name.time"
