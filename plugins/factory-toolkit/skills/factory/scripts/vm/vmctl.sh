@@ -32,6 +32,21 @@ die() { echo "vmctl: $*" >&2; exit 1; }
 alive() { [ -f "$1/qemu.pid" ] && kill -0 "$(cat "$1/qemu.pid")" 2> /dev/null; }
 # A layer boots with its own firmware variables: its maintenance boots must not change the base's.
 image_vars() { [ "$VM_IMAGE" = base.qcow2 ] && echo vars.base.fd || echo "${VM_IMAGE%.qcow2}.vars.fd"; }
+# vm_title <run dir>: the VM's name, which Screen Sharing shows as its window title: the ticket, what the VM is for and
+# the run id (<run dir> is <VM root>/runs/<run id>/<vm folder>), e.g. "DEVEX-514 QA round 5 - devex-514-20261104T182338Z".
+# No commas: QEMU's -name would read one as an option separator.
+vm_title() {
+  local dir id what
+  dir=$(basename "$1"); id=$(basename "$(dirname "$1")")
+  case $dir in
+    vm-build) what="build" ;;
+    vm-base-*) what="base re-check round ${dir#vm-base-}" ;;
+    vm-basetest-*) what="tests on the base round ${dir#vm-basetest-}" ;;
+    vm-[0-9]*) what="QA round ${dir#vm-}" ;;
+    *) what=$dir ;;
+  esac
+  echo "$(echo "$id" | sed -n 's/^\([a-z]*-[0-9]*\).*/\1/p' | tr '[:lower:]' '[:upper:]') $what - $id" | tr -d , | sed 's/^ //'
+}
 vmdir() { [ -n "${1:-}" ] || die "missing <run dir>"; echo "$(cd "$1" 2> /dev/null && pwd || echo "$1")/vm"; }
 
 up() {
@@ -131,7 +146,7 @@ EOF
   # takes files edited on the host for older than its outputs on the share and skips rebuilding them (GAPS V38).
   # Plain background process rather than -daemonize: forking after Hypervisor.framework setup is unsafe on macOS.
   nohup qemu-system-aarch64 \
-    -name "factory-$n" \
+    -name "$(vm_title "$(dirname "$d")")" \
     -machine virt -accel hvf -cpu host -smp "$VM_CPUS" -m "$VM_MEM" \
     -rtc base=localtime \
     -drive if=pflash,format=raw,readonly=on,file="$qs/edk2-aarch64-code.fd" \
