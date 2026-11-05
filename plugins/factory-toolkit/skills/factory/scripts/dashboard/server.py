@@ -458,6 +458,10 @@ class Handler(BaseHTTPRequestHandler):
             if not parts:
                 with open(os.path.join(HERE, "index.html"), "rb") as f:
                     return self.send(200, f.read(), "text/html; charset=utf-8")
+            if parts == ["api", "whoami"]:
+                # factory.sh dashboard asks before starting one: this repo's dashboard is already up, or the port is
+                # someone else's.
+                return self.send(200, {"name": ARGS.name, "runs": os.path.realpath(ARGS.runs)})
             if parts == ["api", "calibration"]:
                 return self.send(200, calibration())
             if parts == ["api", "runs"]:
@@ -488,7 +492,7 @@ class Handler(BaseHTTPRequestHandler):
         # Only the dashboard page itself: the custom header makes another site's request need a CORS preflight, which
         # this server never grants, and the Host check keeps out a DNS-rebound name pointing at 127.0.0.1.
         host = (self.headers.get("Host") or "").split(":")[0]
-        if self.headers.get("X-Factory-Dashboard") != "1" or host not in ("127.0.0.1", "localhost"):
+        if self.headers.get("X-Factory-Dashboard") != "1" or host not in ("127.0.0.1", "localhost", f"{ARGS.name}.factory.localhost"):
             return self.send(403, {"error": "forbidden"})
         parts = [unquote(p) for p in urlparse(self.path).path.strip("/").split("/") if p]
         if len(parts) != 4 or parts[:2] != ["api", "run"] or parts[3] not in ("bin", "restore"):
@@ -513,15 +517,16 @@ def main():
     p.add_argument("--runs", required=True)
     p.add_argument("--vm-root", required=True)
     p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--name", default="factory")
     ARGS = p.parse_args()
-    for port in range(ARGS.port, ARGS.port + 20):
-        try:
-            server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-        except OSError:
-            continue
-        print(f"factory dashboard: http://127.0.0.1:{port}/", flush=True)
-        server.serve_forever()
-    raise SystemExit("factory dashboard: no free port from %d" % ARGS.port)
+    # One port, never the next free one: the URL stays the same, so it can be bookmarked (any *.localhost name is this
+    # Mac, with no setup).
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
+    except OSError as e:
+        raise SystemExit(f"factory dashboard: port {ARGS.port} is not free ({e.strerror})")
+    print(f"factory dashboard: http://{ARGS.name}.factory.localhost:{ARGS.port}/", flush=True)
+    server.serve_forever()
 
 
 if __name__ == "__main__":

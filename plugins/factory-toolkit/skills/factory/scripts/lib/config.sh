@@ -55,6 +55,11 @@ FACTORY_RUNS=${FACTORY_RUNS:-$MAIN_REPO/.claude/worktrees/factory-runs}
 # The negative runs (the acceptance test on a base, which must fail), kept per base tree and test across runs.
 NEG_CACHE=${FACTORY_NEG_CACHE:-$FACTORY_RUNS/.negative}
 FACTORY_VM_ROOT=${FACTORY_VM_ROOT:-$HOME/VMs/factory}
+# The dashboard, one per repo: http://<DASHBOARD_NAME>.factory.localhost:<DASHBOARD_PORT>/. The name defaults to the
+# repo folder's, the port to one picked from the name, so two repos' dashboards don't want the same one; a project or
+# ~/.factory/config.sh pins either.
+DASHBOARD_NAME=$(basename "$MAIN_REPO" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-')
+DASHBOARD_PORT=$((8800 + $(printf %s "$DASHBOARD_NAME" | cksum | cut -d' ' -f1) % 100))
 VM_CPUS=8  VM_MEM=16G  VM_MAX=2  VM_SLOT_WAIT_MIN=120  VM_IDLE_MIN=10  VM_BOOT_MIN=10  GUEST_BUILD_MIN=30  HUMAN_WAIT_MIN=120
 VM_XRES=1600  VM_YRES=900
 DEFAULT_PROFILE=""

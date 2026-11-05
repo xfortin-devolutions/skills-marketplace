@@ -7,6 +7,8 @@
 REPO_MATCH='[:/]Devolutions/RDM(\.git)?$'
 
 DEFAULT_PROFILE=rdm
+# The dashboard: http://rdm.factory.localhost:8765/
+DASHBOARD_NAME=rdm          DASHBOARD_PORT=8765
 # Docs a change may always update (skills: the .claude side; .agents/ and AGENTS.md are symlinks to it). The DVLS and
 # Console folders carry their own skills and CLAUDE.md, which a Console change makes wrong as often as the root ones.
 DOC_PATHS=".claude/skills/ docs/ CLAUDE.md DVLS/.claude/skills/ DVLS/CLAUDE.md Console/.claude/skills/ Console/CLAUDE.md"
