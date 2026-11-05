@@ -279,6 +279,27 @@ EOF
   expect_event 'notify: the builder disputes the acceptance test'
 }
 
+# A builder that rewrites its hand-back without the sections after Tests still gets the review and the judge's questions,
+# and a doc it stages for a nested .claude folder (sub/.claude/skills/) is copied into place.
+t_handback_rewritten_nested_docs() {
+  (cd "$R" && echo 'DOC_PATHS="docs/ sub/.claude/skills/"' >> .factory/config.sh && mkdir -p sub/.claude/skills/x \
+    && echo old > sub/.claude/skills/x/SKILL.md && git add -A && git commit -qm "a nested skill")
+  cat > "$T/scenario.sh" <<'EOF2'
+builder() {
+  commit_code done; d=$(hb_dir); mkdir -p "$d/docs/sub/claude/skills/x"
+  echo new > "$d/docs/sub/claude/skills/x/SKILL.md"
+  sed '/^## Review (reviewer)/,$d' "$FAKE_SKILL/templates/hand-back.md" > "$d/hand-back.md"
+  write_handback
+}
+EOF2
+  loop
+  expect_end '^ready for the judge \(Recommend: merge'
+  expect_file "$(hb)/hand-back.md" '^- Recommend: merge$'
+  expect_file "$(hb)/hand-back.md" '^## Judge \(human\)$'
+  expect_file "$(hb)/../../sub/.claude/skills/x/SKILL.md" '^new$'
+  expect_event "applied the builder's staged docs: sub/.claude/skills/x/SKILL.md"
+}
+
 # The same accept tests red in two verifies in a row stop for a human, even with no dispute and new code each round.
 t_accept_same_fails() {
   echo 'builder() { commit_code "half $(cat "$FAKE_STATE/builder.n")"; write_handback; }' > "$T/scenario.sh"
@@ -494,7 +515,7 @@ t_qa_needs_input() {
 }
 
 ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
-  failing_listed_test listed_red_on_base_too accept_passes_on_base build_fails restore_flake_on_clean accept_dispute accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
+  failing_listed_test listed_red_on_base_too accept_passes_on_base build_fails restore_flake_on_clean accept_dispute handback_rewritten_nested_docs accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
   assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture fixture_missing provided_missing provided_check_then_resume
   qa_needs_input"
 for t in ${*:-$ALL}; do

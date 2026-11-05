@@ -519,19 +519,20 @@ wtgit() {
   return "$rc"
 }
 
-dot_docs() { # dot_docs: the DOC_PATHS under .claude/, one a line: the builder stages those, the runner applies them
+dot_docs() { # dot_docs: the DOC_PATHS under a .claude/ folder (the root one or a nested one), one a line
   local d
-  for d in $DOC_PATHS; do case "$d" in .claude/*) echo "$d" ;; esac; done
+  for d in $DOC_PATHS; do case "$d" in .claude/*|*/.claude/*) echo "$d" ;; esac; done
 }
 
 # apply_docs: Claude Code refuses a headless session's edits under any .claude/ folder, whatever the allow rules, so the
-# builder writes its new version of such a doc at $HANDBACK/docs/<path without the leading dot>. This copies the ones
-# under dot_docs into place, in a commit of the runner's that the reviewer then sees; anything else there is ignored.
+# builder writes its new version of such a doc at $HANDBACK/docs/<path with the .claude folder's dot dropped>
+# (DVLS/.claude/skills/x/SKILL.md at docs/DVLS/claude/skills/x/SKILL.md). This copies the ones under dot_docs into
+# place, in a commit of the runner's that the reviewer then sees; anything else there is ignored.
 apply_docs() {
-  local st="$WT/$HANDBACK/docs/claude" f rel d ok
+  local st="$WT/$HANDBACK/docs" f rel d ok
   [ -d "$st" ] || return 0
   while IFS= read -r f; do
-    rel=.claude/${f#$st/} ok=""
+    rel=$(printf '%s' "${f#$st/}" | sed -E 's#(^|/)claude/#\1.claude/#') ok=""
     for d in $(dot_docs); do case "$rel" in "$d"*) ok=yes ;; esac; done
     case "$rel" in *..*) ok="" ;; esac
     [ -n "$ok" ] || { ev "staged doc $rel is not under DOC_PATHS ($(echo $(dot_docs))): ignored"; continue; }
@@ -652,16 +653,22 @@ build_vm_up() {
 
 # write_section <heading> <body file>: the runner, not the agents, writes the Review and Runtime check sections.
 write_section() {
-  python3 - "$WT/$HANDBACK/hand-back.md" "$1" "$2" <<'PY'
+  python3 - "$WT/$HANDBACK/hand-back.md" "$1" "$2" "$SKILL/templates/hand-back.md" <<'PY'
 import re, sys
-hb_path, heading, body_path = sys.argv[1], sys.argv[2], sys.argv[3]
+hb_path, heading, body_path, template_path = sys.argv[1:5]
 hb = open(hb_path).read()
+# A builder that rewrote the file may have dropped the Judge section: the judge's questions come back from the template.
+if "## Judge (human)" not in hb:
+    template = open(template_path).read()
+    hb = hb.rstrip("\n") + "\n\n" + template[template.index("## Judge (human)"):]
 if "## " + heading not in hb:
     j = hb.find("## Judge (human)")
     j = len(hb) if j < 0 else j
     hb = hb[:j] + "## " + heading + "\n\n" + hb[j:]
 start = hb.index("## " + heading)
-end = hb.index("\n## ", start + 1) + 1
+# The last section in the file runs to its end.
+end = hb.find("\n## ", start + 1)
+end = len(hb) if end < 0 else end + 1
 section = hb[start:end]
 comment = re.search(r"<!--.*?-->", section, re.S)
 body = "## " + heading + "\n" + (comment.group(0) + "\n" if comment else "")
