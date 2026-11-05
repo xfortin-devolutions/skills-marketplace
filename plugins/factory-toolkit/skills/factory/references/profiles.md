@@ -33,12 +33,13 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
 ~/.factory/config.sh               per machine, never committed: FACTORY_VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, VM_SLOT_WAIT_MIN, VM_IDLE_MIN, budget overrides
 ```
 
-The project's `config.sh` also sets `DOC_PATHS`: repo path prefixes of docs any change may update (`.claude/skills/
-docs/ CLAUDE.md` for RDM). The builder keeps them true, verify accepts them whatever the ticket's scope, the reviewer's
-Docs line checks them, and `factory.sh which` treats them as shared by every product. Claude Code refuses an unattended session's
-edits under any `.claude/` folder (no allow rule or permission mode changes that), so for a `DOC_PATHS` entry under
-`.claude/` the builder writes the new file at `handback/<branch>/docs/claude/…` and the runner copies it into place in
-its own commit, before verify.
+The project's `config.sh` also sets `DOC_PATHS`: repo path prefixes of docs any change may update (for RDM, the root
+`.claude/skills/ docs/ CLAUDE.md` plus the DVLS and Console folders' own skills and CLAUDE.md). The builder keeps them
+true, verify accepts them whatever the ticket's scope, the reviewer's Docs line checks them, and `factory.sh which`
+treats them as shared by every product. Claude Code refuses an unattended session's edits under any `.claude/` folder
+(no allow rule or permission mode changes that), so for a `DOC_PATHS` entry under a `.claude/` folder, the root one or
+a nested one, the builder writes the new file at `handback/<branch>/docs/<path with that folder's dot dropped>`
+(`docs/claude/…`, `docs/DVLS/claude/…`) and the runner copies it into place in its own commit, before verify.
 
 Load order, later wins: engine defaults (`scripts/lib/config.sh`) < the project's `config.sh` < the ticket's `.sh` <
 `profile.sh` < `target.sh` < `~/.factory/config.sh`. All are bash 3.2 (the macOS default): no associative arrays.

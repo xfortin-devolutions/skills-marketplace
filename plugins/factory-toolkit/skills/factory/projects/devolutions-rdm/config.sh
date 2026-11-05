@@ -7,8 +7,9 @@
 REPO_MATCH='[:/]Devolutions/RDM(\.git)?$'
 
 DEFAULT_PROFILE=rdm
-# Docs a change may always update (skills: the .claude side; .agents/ and AGENTS.md are symlinks to it).
-DOC_PATHS=".claude/skills/ docs/ CLAUDE.md"
+# Docs a change may always update (skills: the .claude side; .agents/ and AGENTS.md are symlinks to it). The DVLS and
+# Console folders carry their own skills and CLAUDE.md, which a Console change makes wrong as often as the root ones.
+DOC_PATHS=".claude/skills/ docs/ CLAUDE.md DVLS/.claude/skills/ DVLS/CLAUDE.md Console/.claude/skills/ Console/CLAUDE.md"
 
 # Builder: 75 min. It only checks its work in the guest (a project build, the accept test); the runner's verify does the
 # full build, the tests and the negative run after it.

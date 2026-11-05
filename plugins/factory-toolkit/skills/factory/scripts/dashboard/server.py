@@ -195,15 +195,31 @@ def disputed(text):
     return bool(text and DISPUTE.search(text))
 
 
+KILLED = re.compile(r"\(exit (143|137)\)")
+
+
 def outcome_class(text):
     t = DISPUTE.sub("", text or "").lower()
     if not t.strip():
         return "neutral"
+    # A session killed with SIGTERM or SIGKILL did nothing to judge: stopped, like a run stopped by hand.
+    if KILLED.search(t):
+        return "neutral"
+    # The guest, not the change, failed: a resume re-runs the round, so a run that ends on it needs a look.
+    if "harness error" in t:
+        return "warn"
     if re.search(r"\b(fail|red|send back|error|harness|not met|blocker)", t) and "verify green" not in t:
         return "bad"
-    if re.search(r"needs-human|needs input|needs-input|waiting|can't tell|disputed", t):
+    if re.search(r"needs[- ]a?[- ]?human|needs[- ]input|waiting|can't tell|disputed", t):
         return "warn"
     return "good"
+
+
+def add(a, b):
+    try:
+        return f"{float(a) + float(b):g}"
+    except (TypeError, ValueError):
+        return b
 
 
 def nodes(run):
@@ -211,9 +227,15 @@ def nodes(run):
     rs = rows(run)
     evs = events(run)
     kind = run_kind(os.path.basename(run))
-    by = {}
+    # A resumed run re-runs its round under the same number and appends a row: the last row is the round's outcome, the
+    # earlier ones are attempts the resume superseded (a harness error, a killed session), shown as a note.
+    by, earlier = {}, {}
     for r in rs:
-        by.setdefault((r["role"], r["n"]), r)
+        key = (r["role"], r["n"])
+        if key in by:
+            earlier.setdefault(key, []).append(by[key]["outcome"])
+            r = dict(r, cost=add(by[key]["cost"], r["cost"]), min=add(by[key]["min"], r["min"]))
+        by[key] = r
     out = []
     # A session the run never saw end (killed, or the runner died) is stopped, not working.
     over = last_end(evs) is not None or pid_alive(run) is False
@@ -249,7 +271,11 @@ def nodes(run):
                 if b:
                     v = re.search(r"verify (.*)$", b["outcome"])
                     text = v.group(1) if v else b["outcome"]
-                    out.append(node(st, n, "done", text, "good" if text.startswith("green") else outcome_class(text)))
+                    # A builder killed before its commit leaves verify nothing to check: that red is the kill's.
+                    killed = KILLED.search(b["outcome"].split("; verify ", 1)[0])
+                    out.append(node(st, n, "done", text, "good" if text.startswith("green") else "neutral" if killed
+                                    else outcome_class(text),
+                                    earlier=[re.sub(r"^.*?verify ", "", o) for o in earlier.get(("builder", str(n)), [])]))
                 elif session_state(run, f"build-{n}") == "done":
                     base = any(e["msg"].startswith(f"verify-{n}: listed tests red") for e in evs)
                     out.append(node(st, n, "stopped", "stopped: the run ended first", "neutral") if over
@@ -282,8 +308,13 @@ def nodes(run):
                 state, text = "stopped", "stopped: the run ended first"
             if not text and state == "running":
                 text = "working"
-            out.append(node(st, n, state, text, outcome_class(text) if r else "neutral",
-                            cost=r["cost"] if r else None, minutes=r["min"] if r else None))
+            # The builder's row carries the verify outcome after its own ("success; verify red: ..."), which the verify
+            # station shows: the builder is coloured by its own part only.
+            own = text.split("; verify ", 1)[0] if st == "build" else text
+            prev = earlier.get((ROLES[st], str(n)), [])
+            out.append(node(st, n, state, text, outcome_class(own) if r else "neutral",
+                            cost=r["cost"] if r else None, minutes=r["min"] if r else None,
+                            earlier=[o.split("; verify ", 1)[0] if st == "build" else o for o in prev]))
     return out
 
 
@@ -292,9 +323,9 @@ def last_event(evs, name):
     return hits[-1] if hits else None
 
 
-def node(st, n, state, outcome, cls, cost=None, minutes=None):
+def node(st, n, state, outcome, cls, cost=None, minutes=None, earlier=None):
     return {"key": f"{st}-{n}", "station": st, "title": TITLES[st], "round": n, "state": state, "outcome": outcome,
-            "cls": cls, "disputed": disputed(outcome), "cost": cost, "minutes": minutes}
+            "cls": cls, "disputed": disputed(outcome), "cost": cost, "minutes": minutes, "earlier": earlier or []}
 
 
 def run_detail(run):

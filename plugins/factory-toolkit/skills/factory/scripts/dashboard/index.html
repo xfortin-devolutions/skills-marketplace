@@ -233,7 +233,14 @@ function nodeHtml(n) {
   const meta = [n.minutes ? `${n.minutes} min` : "", n.cost ? `$${Number(n.cost).toFixed(2)}` : ""].filter(Boolean).join(" · ");
   return `<div class="node ${cls} ${n.key === state.node ? "sel" : ""}" data-key="${esc(n.key)}">
     <div class="t">${icon}${esc(n.title)}${n.disputed ? DISPUTED : ""}</div><div class="o" title="${esc(n.outcome)}">${esc(n.outcome)}</div>
-    ${meta ? `<div class="m">${meta}</div>` : ""}</div>`;
+    ${earlierHtml(n)}${meta ? `<div class="m">${meta}</div>` : ""}</div>`;
+}
+
+// A resumed round's superseded attempts (a harness error, a killed session): history, not the round's outcome.
+function earlierHtml(n) {
+  if (!n.earlier || !n.earlier.length) return "";
+  const all = n.earlier.join("\n");
+  return `<div class="m" title="${esc(all)}">resumed after ${n.earlier.length === 1 ? "1 attempt" : `${n.earlier.length} attempts`}</div>`;
 }
 
 // The run view is a fixed set of sections, built once a run: a refresh updates each one only when its content changed,
@@ -321,6 +328,7 @@ async function loadNode() {
   if (fresh) { box.innerHTML = `<div id="d-head"></div><div id="d-body"></div>`; box._key = key; box._html = null; }
   setHTML($("#d-head", box), `<b>${esc(n.title)}</b> <span class="muted">${esc(state.node)} · ${esc(n.state || "")}</span>
     ${n.outcome ? `<div style="margin-top:4px">${esc(n.outcome)}</div>` : ""}
+    ${n.earlier && n.earlier.length ? `<div class="muted" style="margin-top:4px">Earlier ${n.earlier.length === 1 ? "attempt" : "attempts"}, superseded by the resume: ${n.earlier.map(esc).join(" · ")}</div>` : ""}
     ${tabs.length ? `<div class="tabs">${tabs.map(([k, l]) => `<div class="tab ${k === state.tab ? "on" : ""}" data-tab="${k}">${l}</div>`).join("")}</div>` : ""}`);
   for (const el of box.querySelectorAll(".tab")) el.onclick = () => { if (state.tab === el.dataset.tab) return; state.tab = el.dataset.tab; writeHash(); loadNode(); };
   const changed = setHTML($("#d-body", box), tabs.length ? body[state.tab]() : `<div class="muted" style="margin-top:8px">${waitingText}</div>`);
