@@ -41,7 +41,8 @@
   .dot.done { background: var(--good); }
   .dot.done.bad { background: var(--bad); }
   .dot.done.warn { background: var(--warn); }
-  .dot.done.neutral { background: var(--muted); }
+  .dot.done.neutral, .dot.done.unjudged { background: var(--muted); }
+  .dot.done.unjudged { background: transparent; box-shadow: inset 0 0 0 2px var(--muted); }
   .dot.dead, .dot.stale { background: var(--bad); }
   @keyframes pulse { 50% { opacity: .35; } }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
@@ -111,7 +112,8 @@
 </style>
 </head>
 <body>
-<header><h1>Factory runs</h1><span class="badge">local</span><a href="#view=calibration" id="calib-link">Sizing calibration</a><span class="muted" id="clock"></span></header>
+<header><h1>Factory runs</h1><span class="badge" id="version" title="The factory-toolkit version this dashboard runs">local</span>
+  <span class="banner" id="stale" hidden style="margin:0;padding:3px 10px;font-size:12px"></span><a href="#view=calibration" id="calib-link">Sizing calibration</a><span class="muted" id="clock"></span></header>
 <div class="layout">
   <aside><div class="filter"><span class="muted">Show</span><select id="filter">
     <option value="1">active, and finished in the last day</option><option value="7">active, and finished in the last 7 days</option>
@@ -124,6 +126,10 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const state = { run: null, node: null, tab: null, runData: null, view: null };
 const ago = t => { if (!t) return ""; const s = (Date.now() - Date.parse(t)) / 1000;
   return s < 60 ? `${Math.round(s)} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
+// Times come as UTC (…Z): shown in the viewer's own time zone, the full date and time on hover.
+const clock = t => { const d = new Date(t); return isNaN(d) ? String(t ?? "") : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); };
+const stamp = t => { const d = new Date(t); return isNaN(d) ? String(t ?? "") : d.toLocaleString([], { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); };
+const full = t => { const d = new Date(t); return isNaN(d) ? "" : d.toLocaleString(); };
 const elapsed = (a, b) => { if (!a) return ""; const s = ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000;
   return s < 3600 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`; };
 
@@ -162,9 +168,9 @@ const DISPUTED = '<span class="badge disputed" title="The builder disputes an ex
 function filterDays() { try { return localStorage.getItem("factory.filter") ?? "7"; } catch { return "7"; } }
 // The toggles above the list: a finished run is filed under how it ended (the colour of its dot), any other under its
 // state. The ones turned off are kept per browser.
-const ENDED = { good: "passed", bad: "failed", warn: "needs a look", neutral: "stopped" };
+const ENDED = { good: "passed", bad: "failed", warn: "needs a look", neutral: "stopped", unjudged: "not judged" };
 const STATES = [["running", "running"], ["waiting", "waiting"], ["passed", "done good"], ["failed", "done bad"],
-  ["needs a look", "done warn"], ["stopped", "done neutral"], ["dead", "dead"], ["stale", "stale"]];
+  ["needs a look", "done warn"], ["stopped", "done neutral"], ["not judged", "done unjudged"], ["dead", "dead"], ["stale", "stale"]];
 const filed = r => r.state === "done" ? ENDED[r.cls] || "passed" : r.state;
 function statesOff() { try { return new Set(JSON.parse(localStorage.getItem("factory.states.off") || "[]")); } catch { return new Set(); } }
 function toggleState(s) {
@@ -278,7 +284,7 @@ async function loadRun() {
   }
   $("#s-handback").hidden = !r.handback;
   if (r.handback) setHTML($("#s-handback-body"), `<pre>${esc(r.handback)}</pre>`);
-  setHTML($("#s-events"), r.events.slice().reverse().map(e => `<div><b>${esc(e.t.slice(11, 19))}</b> ${esc(e.msg)}</div>`).join(""));
+  setHTML($("#s-events"), r.events.slice().reverse().map(e => `<div><b title="${esc(full(e.t))}">${esc(clock(e.t))}</b> ${esc(e.msg)}</div>`).join(""));
   if (state.node) await loadNode();
   else setHTML($("#detail"), '<div class="muted">Click a station for its details.</div>');
 }
@@ -378,7 +384,7 @@ async function loadCalibration() {
     <div class="muted" style="margin:4px 0 10px">One line per finished loop run (factory-runs/.calibration.tsv). A run that used most of its budget or
       rounds, or whose longest round reached its time box, was sized too small; tune SIZE_&lt;class&gt; in the project's config.sh.</div>
     ${rows.length ? `<table class="calib"><tr>${cols.map(c => `<th>${c[1]}</th>`).join("")}</tr>${rows.map(r => `<tr>${cols.map(c =>
-      `<td class="${c[2] ? "n" : ""}">${esc(c[0] === "ended" ? (r[c[0]] || "").slice(0, 16).replace("T", " ") : r[c[0]])}</td>`).join("")}</tr>`).join("")}</table>`
+      `<td class="${c[2] ? "n" : ""}">${esc(c[0] === "ended" ? stamp(r[c[0]]) : r[c[0]])}</td>`).join("")}</tr>`).join("")}</table>`
       : `<div class="empty">No finished loop run since 0.7.0 yet.</div>`}</div>`);
 }
 
@@ -391,14 +397,30 @@ async function refresh() {
   try { await loadRuns(); await loadRun(); $("#clock").textContent = "updated " + new Date().toLocaleTimeString(); }
   catch (e) { $("#clock").textContent = "server not answering (" + e.message + ")"; }
 }
-// The repo's name in the title and header, so the tab says which repo's runs it shows.
-get("/api/whoami").then(w => { document.title = `${w.name} · Factory runs`; $("header h1").textContent = `${w.name} · Factory runs`; }).catch(() => {});
+// The repo's name in the title and header, so the tab says which repo's runs it shows, and the version in the badge. The
+// page is the one the server had when the tab opened: after the dashboard is updated and restarted under an open tab, the
+// new server answers this old page, so it says to reload rather than show a mix of the two.
+let pageVersion = null;
+async function checkVersion() {
+  try {
+    const w = await get("/api/whoami");
+    if (pageVersion === null) {
+      pageVersion = w.version;
+      document.title = `${w.name} · Factory runs`; $("header h1").textContent = `${w.name} · Factory runs`;
+      $("#version").textContent = `local · ${w.version}`;
+    } else if (w.version !== pageVersion) {
+      $("#stale").hidden = false;
+      $("#stale").innerHTML = `Dashboard updated to ${esc(w.version)}: <a href="javascript:location.reload()">reload</a>`;
+    }
+  } catch {}
+}
+checkVersion();
 readHash();
 window.addEventListener("hashchange", () => { readHash(); refresh(); });
 $("#filter").value = filterDays();
 $("#filter").onchange = e => { try { localStorage.setItem("factory.filter", e.target.value); } catch {} loadRuns(); };
 refresh();
-setInterval(() => { if (!document.querySelector(".zoom")) refresh(); }, 4000);
+setInterval(() => { if (!document.querySelector(".zoom")) { refresh(); checkVersion(); } }, 4000);
 </script>
 </body>
 </html>

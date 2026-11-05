@@ -28,6 +28,18 @@ TITLES = {"assess": "Assessor", "build": "Builder", "verify": "Verify", "review"
 ARGS = None
 
 
+def plugin_version():
+    """The factory-toolkit version this server runs (its plugin.json, four folders up), shown on the page."""
+    try:
+        with open(os.path.join(HERE, "..", "..", "..", "..", ".claude-plugin", "plugin.json")) as f:
+            return json.load(f).get("version") or "unknown"
+    except (OSError, ValueError):
+        return "unknown"
+
+
+VERSION = plugin_version()
+
+
 def read(path, limit=None):
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -87,7 +99,8 @@ def run_kind(run_id):
 
 
 def ticket_of(run_id):
-    m = re.match(r"^([a-z]+-\d+)", run_id)
+    # Everything before the run's stamp (and its kind): a key may go on after its number (DEVEX-514R).
+    m = re.match(r"^(.+?)-(?:(?:qa|test|assess)-)?\d{8}T\d{6}Z", run_id)
     return m.group(1).upper() if m else run_id
 
 
@@ -203,7 +216,10 @@ KILLED = re.compile(r"\(exit (143|137)\)")
 # again or the run gave up; orange when a human decides, provides something or has a look; grey when stopped by hand.
 # The runner writes what it decided, station by station and for the run, in results.log (run-loop.sh: result); runs from
 # before it are read from the verdict their outcome starts with (PREFIX below), never from words found further on.
-CODES = {"proceed": "good", "new-round": "bad", "rerun": "bad", "rejected": "bad", "human": "warn", "stopped": "neutral"}
+# "unjudged" is grey too, but not stopped: nothing says whether the result was the one wanted (a test run without
+# --expect, wording no table knows).
+CODES = {"proceed": "good", "new-round": "bad", "rerun": "bad", "rejected": "bad", "human": "warn", "stopped": "neutral",
+         "unknown": "unjudged"}
 
 
 def results(run):
@@ -241,7 +257,7 @@ def outcome_class(text, kind="run", code=None):
     """The colour of a run (kind "run") or a station (its name): the runner's code when it wrote one, else the verdict
     the text starts with."""
     if code:
-        return CODES.get(code, "neutral")
+        return CODES.get(code, "unjudged")
     t = DISPUTE.sub("", text or "").strip()
     # A session killed with SIGTERM or SIGKILL did nothing to judge: stopped, like a run stopped by hand.
     if not t or KILLED.search(t):
@@ -249,7 +265,7 @@ def outcome_class(text, kind="run", code=None):
     for pat, cls in PREFIX.get(kind, []):
         if re.match(pat, t, re.I):
             return cls
-    return "neutral"
+    return "unjudged"
 
 
 def add(a, b):
@@ -501,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "whoami"]:
                 # factory.sh dashboard asks before starting one: this repo's dashboard is already up, or the port is
                 # someone else's.
-                return self.send(200, {"name": ARGS.name, "runs": os.path.realpath(ARGS.runs)})
+                return self.send(200, {"name": ARGS.name, "runs": os.path.realpath(ARGS.runs), "version": VERSION})
             if parts == ["api", "calibration"]:
                 return self.send(200, calibration())
             if parts == ["api", "runs"]:
