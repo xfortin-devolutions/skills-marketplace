@@ -208,14 +208,16 @@ in the browser, at `http://<DASHBOARD_NAME>.factory.localhost:<DASHBOARD_PORT>/`
 `http://rdm.factory.localhost:8765/`; one per repo: when it already runs, the command opens it and exits; a port someone
 else holds is an error, not the next free one): every run with its state and spend, coloured by what the runner decided
 comes next (its `results.log`: green goes on as planned, red means a new round or a check to run again, orange needs a
-human, grey was stopped; a run from before 0.7.10 by the verdict its outcome starts with), filtered by age and by state
-(a finished run by how it ended; a builder's dispute is a `disputed` badge beside that, the judge's to decide, not a
-colour); a Bin a finished run goes to in one click, and back (a `BINNED` marker in the run folder, the page's only
-write); per run, a pipeline of its stations round by round (builder, verify, reviewer, charter, runtime QA, exploratory
-QA, re-check), each with its outcome, time and cost; a station's details on click: the agent's live steps (what it
-reads, runs, edits), the builder's changes in its worktree, the QA report and screenshots (live, as the agent takes
-them), the answer, the prompt and stderr. Nothing leaves the Mac. Offer it when a run starts, and whenever the user asks
-how things are going. `--port N`, `--no-open`.
+human, grey was stopped, a hollow grey dot not judged: nothing says whether the result was the one wanted; a run from
+before 0.7.10 by the verdict its outcome starts with), times in the viewer's time zone, the plugin version in the header
+(a tab opened before the dashboard was updated says to reload), filtered by age and by state (a finished run by how it
+ended; a builder's dispute is a `disputed` badge beside that, the judge's to decide, not a colour); a Bin a finished run
+goes to in one click, and back (a `BINNED` marker in the run folder, the page's only write); per run, a pipeline of its
+stations round by round (builder, verify, reviewer, charter, runtime QA, exploratory QA, re-check), each with its
+outcome, time and cost; a station's details on click: the agent's live steps (what it reads, runs, edits), the builder's
+changes in its worktree, the QA report and screenshots (live, as the agent takes them), the answer, the prompt and
+stderr. Nothing leaves the Mac. Offer it when a run starts, and whenever the user asks how things are going. `--port N`,
+`--no-open`.
 
 ## status [run] · show [run] · human [run] · judge [run] pass|fail <why> · stop · pause · resume [run] · down [run]
 

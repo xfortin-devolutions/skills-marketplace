@@ -45,7 +45,8 @@ vm_title() {
     vm-[0-9]*) what="QA round ${dir#vm-}" ;;
     *) what=$dir ;;
   esac
-  echo "$(echo "$id" | sed -n 's/^\([a-z]*-[0-9]*\).*/\1/p' | tr '[:lower:]' '[:upper:]') $what - $id" | tr -d , | sed 's/^ //'
+  # The ticket is everything before the run's stamp (and its kind): a key may go on after its number (DEVEX-514R).
+  echo "$(echo "$id" | sed -nE 's/-(qa|test|assess)-([0-9]{8}T[0-9]{6}Z)/-\2/; s/^(.+)-[0-9]{8}T[0-9]{6}Z.*/\1/p' | tr '[:lower:]' '[:upper:]') $what - $id" | tr -d , | sed 's/^ //'
 }
 vmdir() { [ -n "${1:-}" ] || die "missing <run dir>"; echo "$(cd "$1" 2> /dev/null && pwd || echo "$1")/vm"; }
 
