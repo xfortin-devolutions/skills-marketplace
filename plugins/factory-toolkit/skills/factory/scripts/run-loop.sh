@@ -1118,7 +1118,7 @@ assess_stage() {
     --disallowedTools Edit Write --output-format json
   jq -r '.result // ""' "$RUN/assess.json" > "$raw" 2> /dev/null
   if grep -qE '^Size: ' "$raw"; then
-    { echo "<!-- The factory's assessment of $TICKET, by $A_MODEL on $(date -u +%F), from $BASE. Edit it to overrule the assessor: Size sets the run's limits (SIZE in $TICKET.sh, --size and --set beat it), each Needs line what QA gets. -->"
+    { echo "<!-- The factory's assessment of $TICKET, by $A_MODEL on $(date -u +%F), from $BASE, engine $(jq -r '.version // "unknown"' "$SKILL/../../.claude-plugin/plugin.json" 2> /dev/null). Edit it to overrule the assessor: Size sets the run's limits (SIZE in $TICKET.sh, --size and --set beat it), each Needs line what QA gets. -->"
       sed -n '/^Size: /,$p' "$raw"; } > "$RUN_ASSESSMENT"
     out="size $(assessment_field "$RUN_ASSESSMENT" Size), $(needs_lines "$RUN_ASSESSMENT" | grep -c .) test need(s)"
     result assess proceed
@@ -1177,6 +1177,10 @@ f=$(scale_factor "${QA_ITEMS:-0}" "$QA_SCALE_ITEMS")
 QA_MIN=$(scaled QA_MIN "$f") QA_USD=$(scaled QA_USD "$f")
 [ -z "$TEST_ONLY" ] && ev "limits: size $SIZE from $SIZE_FROM${SIZE_NOTE:+ ($SIZE_NOTE)}; set: $(limits_changed)$([ "$f" -gt 1 ] && echo "; QA x$f for $QA_ITEMS steps and expectations: \$$QA_USD, $QA_MIN min")"
 if [ "$QA" = yes ]; then
+  # Data the Runtime check builds through the app costs every QA round its steps; a fixture puts it in place once.
+  steps=$(ui_setup_steps "$TICKET_FILE")
+  [ -z "$steps" ] || needs_fixtures_or_provided "$RUN_ASSESSMENT" \
+    || ev "WARN test needs: the Runtime check builds its data through the app (steps $steps) and no fixture puts it in place: every QA round repeats them (factory.sh fixture $TICKET <name>)"
   needs_preflight "$RUN_ASSESSMENT"
   if [ -n "$NEEDS_MISSING" ]; then
     printf '%s' "$NEEDS_MISSING" > "$RUN/needs-missing.txt"

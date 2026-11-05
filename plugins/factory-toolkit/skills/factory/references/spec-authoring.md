@@ -31,7 +31,10 @@ Written by `factory.sh assess <KEY>` once the spec is: the size class (the run's
 VM must contain, and how each is met). Edit it to overrule; `SIZE` or any limit in `<KEY>.sh` beats its Size line.
 [test-needs.md](test-needs.md). Write the Runtime check's steps as if their data were there, and make sure each thing
 they need is a need line: a fixture, a resource the user provides, a `qa-setup` step, or `unmet` (then QA can't check
-it, and the hand-back says so).
+it, and the hand-back says so). Never script the scenario's data set as steps (add a folder, then six entries, one by
+one): every QA round, exploration and base re-check repeats them, and a UI detail in them (a field that fills itself)
+fails the round for nothing. Write a fixture for it with the spec, the cheapest that works: an import file, or the
+app's data files saved from a VM where you made the data once. `factory.sh check` and the run warn about such steps.
 
 ## <KEY>.fixtures/<name>/
 A fixture the assessment names: the ticket's own, written with the spec (`factory.sh fixture <KEY> <name>`), never
