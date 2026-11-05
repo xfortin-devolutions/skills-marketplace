@@ -96,8 +96,9 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
    `<KEY>.sh` (PROFILE, PLATFORM, ACCEPT_TEST, ACCEPT_FILTER, ORACLE_PATHS, SCOPE_REGEX); `factory.sh check` then flags an
    ACCEPT_TEST outside the profile's CODE_PATHS.
 6. Write the oracle test **before** any fix, in a test project the target's guest runs (any of the product's test
-   projects: the guest is Windows for RDM and the Console). Prove it red on the base in the guest:
-   `bash $F/run-loop.sh <KEY> --test-only HEAD` (background) must **fail, for the reason the ticket states**. A test that
+   projects: the guest is Windows for RDM and the Console). Prove it red on the base in the guest: `bash $F/run-loop.sh
+   <KEY> --test-only HEAD --expect red` (background) must **fail, for the reason the ticket states**: it ends "red, as
+   expected", a success (green on the dashboard); "expected red, got green" means the oracle is wrong. A test that
    passes on buggy code is the most common spec bug: assert on what the user sees.
 7. Assess it: `bash $F/factory.sh assess <KEY>` writes `<KEY>.assessment.md` next to the spec: a size class (which sets
    the run's limits) and the test needs (what QA's VM must contain, and how: a fixture, a resource only a human can
@@ -106,8 +107,8 @@ Follow [references/spec-authoring.md](references/spec-authoring.md). In short:
    user for it now (`factory.sh provide <name>`), they are here; a `fixture:` need: write it for this ticket
    (`factory.sh fixture <KEY> <name>`, from `templates/fixture/`), or change the line to `qa-setup` or `unmet`. A
    fixture is the ticket's own, never the profile's: it lives and dies with the ticket.
-8. If there is a Runtime check and a golden VM: `bash $F/run-loop.sh <KEY> --qa-only HEAD` must come back FAIL for the
-   stated reason (it applies the test needs, so do it after step 7). Record both red runs in the ticket.
+8. If there is a Runtime check and a golden VM: `bash $F/run-loop.sh <KEY> --qa-only HEAD --expect red` must come back
+   FAIL for the stated reason (it applies the test needs, so do it after step 7). Record both red runs in the ticket.
 9. Show the spec to the user and stop: give them its path (`factory.sh spec <KEY>`; `--open` opens it), the red output,
    the assessment (size, what it sets: `factory.sh limits <KEY>`, and the test needs), and the Jira enrichment you'd post. The oracle is already committed (the red runs need it); if they change the spec,
    amend the oracle commit to match (branch commits: no `[TICKET]` prefix, no `CR:`).
@@ -160,12 +161,14 @@ bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loo
   runs, spend, the hand-back path, the QA verdict with its screenshots (Read the PNGs and show the decisive ones), and
   the Exploratory QA section: walk the user through the tour with its screenshots, then the findings, new ones first.
 
-## qa <KEY> [<ref>] [--explore [--base <ref>]] [--keep-vm]
+## qa <KEY> [<ref>] [--expect red|green] [--explore [--base <ref>]] [--keep-vm]
 
-The QA stage alone, on a commit: `bash $F/run-loop.sh <KEY> --qa-only <ref>` (background). Use it for red-on-base
-(spec step 5), to re-test a branch, or to answer a judge's "does it really work?". It needs no builder and spends only
-the QA budget. `--explore` adds the exploratory QA after a PASS, for the change `<base>..<ref>` (`--base`, default the
-merge-base with `PR_BASE`, or `<ref>~1` when `<ref>` is already on it); its section is `qa-1/exploratory.md` in the run.
+The QA stage alone, on a commit: `bash $F/run-loop.sh <KEY> --qa-only <ref>` (background). `--expect` names the verdict
+the check is for, so the run succeeds on it: `--expect red` on the base (a FAIL is the point), `--expect green` on a
+fix; without it, a PASS succeeds and a FAIL means a new round. Use it for red-on-base (spec step 5), to re-test a
+branch, or to answer a judge's "does it really work?". It needs no builder and spends only the QA budget. `--explore`
+adds the exploratory QA after a PASS, for the change `<base>..<ref>` (`--base`, default the merge-base with `PR_BASE`,
+or `<ref>~1` when `<ref>` is already on it); its section is `qa-1/exploratory.md` in the run.
 
 ## limits <KEY> · assess <KEY>
 
@@ -187,8 +190,8 @@ push.
 State a script can put in QA's VM before the app starts (a file, a setting, a broken or seeded configuration), for one
 ticket: `bash $F/factory.sh fixture <KEY> <name>` starts `<KEY>.fixtures/<name>/` next to the spec. Fill `fixture.md`
 (What, Use: in user terms, no secrets) and `apply.ps1` (idempotent, throws on failure), name it in the assessment
-(`| fixture: <name>`), then prove it on the base with `run-loop.sh <KEY> --qa-only`. Fixtures are never committed and
-never go in a profile; `clean <KEY>` deletes them with the ticket.
+(`| fixture: <name>`), then prove it on the base with `run-loop.sh <KEY> --qa-only <base> --expect red`. Fixtures are
+never committed and never go in a profile; `clean <KEY>` deletes them with the ticket.
 
 ## provide <name> · provided
 
@@ -203,8 +206,10 @@ needs tickets name that aren't.
 `bash $F/factory.sh dashboard` (Bash tool with `run_in_background`: it serves until stopped) opens the repo's live page
 in the browser, at `http://<DASHBOARD_NAME>.factory.localhost:<DASHBOARD_PORT>/` (RDM:
 `http://rdm.factory.localhost:8765/`; one per repo: when it already runs, the command opens it and exits; a port someone
-else holds is an error, not the next free one): every run with its state and spend, filtered by age and by state (a
-finished run by how it ended; a builder's dispute is a `disputed` badge beside that, the judge's to decide, not a
+else holds is an error, not the next free one): every run with its state and spend, coloured by what the runner decided
+comes next (its `results.log`: green goes on as planned, red means a new round or a check to run again, orange needs a
+human, grey was stopped; a run from before 0.7.10 by the verdict its outcome starts with), filtered by age and by state
+(a finished run by how it ended; a builder's dispute is a `disputed` badge beside that, the judge's to decide, not a
 colour); a Bin a finished run goes to in one click, and back (a `BINNED` marker in the run folder, the page's only
 write); per run, a pipeline of its stations round by round (builder, verify, reviewer, charter, runtime QA, exploratory
 QA, re-check), each with its outcome, time and cost; a station's details on click: the agent's live steps (what it
@@ -282,8 +287,8 @@ new `targets/<os>/`, not a new profile.
    and `layer/layer.conf`, rehearse with `factory.sh layer <name> --test`, then `--build` (ask first: it writes a VM
    image), and point the target's `GOLDEN_IMAGE` at the layer.
 5. Prove the target before any builder run, with a probe ticket whose answer you know: `run-loop.sh <KEY> --test-only
-   <ref>` (the build and test scripts) and `--qa-only <ref>` (launch and QA). Both red for the stated reason on the base,
-   green on a fixed commit.
+   <ref>` (the build and test scripts) and `--qa-only <ref>` (launch and QA). Both red for the stated reason on the base
+   (`--expect red`), green on a fixed commit (`--expect green`).
 6. A project in the skill: commit it to the skill's marketplace repo. In the repo's `.factory/`: commit it through the
    repo's normal review. Moving one from the skill to its repo: `projects/README.md`.
 

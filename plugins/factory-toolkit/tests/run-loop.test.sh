@@ -54,6 +54,9 @@ expect_no_event() { ! grep -qE "$1" "$RUN/events.log" || fail "unexpected event 
 expect_calls() { local n; n=$(grep -c "^$1 " "$FAKE_STATE/calls.log" 2> /dev/null); [ "${n:-0}" = "$2" ] || fail "$1 sessions: wanted $2, got ${n:-0}"; }
 hb() { echo "$(ls -d "$R"/.claude/worktrees/demo-1-build-*/ | head -1)handback/factory-demo-1-build-$(basename "$RUN" | sed 's/^demo-1-//')"; }
 expect_file() { grep -qE "$2" "$1" 2> /dev/null || fail "$(basename "$1"): no /$2/"; }
+# expect_result <station|end> <code>: the runner's last code for it in results.log (run-loop.sh: result).
+expect_result() { local got; got=$(awk -v k="$1" '$1 == k { c = $2 } END { print c }' "$RUN/results.log" 2> /dev/null)
+  [ "$got" = "$2" ] || fail "result $1: wanted $2, got ${got:-none}"; }
 one_vm() { [ "$(cat "$FAKE_STATE/vms-max" 2> /dev/null)" = 1 ] || fail "the run held $(cat "$FAKE_STATE/vms-max" 2> /dev/null) VMs at once"; }
 
 # The scenarios. Each writes the agents it changes into $T/scenario.sh (see fakes/agents.sh for the defaults).
@@ -69,6 +72,7 @@ t_happy() {
   expect_file "$(hb)/verification-record.md" '^\| 3 \| .*/guest test --no-build Accept.Tests \| 0 \| 3 passed, 0 failed, 0 skipped \|$'
   expect_file "$(hb)/hand-back.md" '^- Verification record: .* → PASS \(written by the runner\)'
   expect_file "$(hb)/hand-back.md" '^- Defects: not reported$'
+  for k in build-1 verify-1 review-1 charter-1 qa-1 explore-1 end; do expect_result $k proceed; done
   # The charter's line naming a code file never reaches the explorer.
   expect_file "$FAKE_STATE/explorer-1.prompt" 'Use the feature twice'
   ! grep -q OtherWindow "$FAKE_STATE/explorer-1.prompt" || fail "a charter line naming code reached the explorer"
@@ -102,6 +106,7 @@ EOF
   expect_event 'build-1: its unfinished work checkpointed as [0-9a-f]+'
   expect_event 'build-1 outcome=time box .* verify=red: stopped by its limit before committing'
   expect_file "$FAKE_STATE/builder-2.prompt" 'checkpoint [0-9a-f]+, on the branch: go on from it'
+  expect_result build-1 new-round; expect_result verify-1 new-round; expect_result build-2 proceed; expect_result end proceed
   [ -e "$FAKE_STATE/saw-half" ] || fail "the second builder did not find the first one's work"
   git -C "$(ls -d "$R"/.claude/worktrees/demo-1-build-*/ | head -1)" log --format=%s | grep -q 'Work in progress, checkpointed by the runner' \
     || fail "no checkpoint commit on the branch"
@@ -116,6 +121,7 @@ EOF
   expect_end '^ready for the judge'
   expect_calls builder 2; expect_calls qa 2
   expect_file "$FAKE_STATE/builder-2.prompt" 'runtime check failed \(QA run 1\): the groups do not move'
+  expect_result qa-1 new-round; expect_result qa-2 proceed; expect_result end proceed
   expect_no_event 'explore-1:'
   # The second review is a re-review from the code the first one saw; the default fake doesn't say what changed.
   expect_file "$FAKE_STATE/reviewer-2.prompt" 'This is a re-review: .* the code at [0-9a-f]+'
@@ -198,6 +204,7 @@ EOF
   loop
   expect_end '^reject: iteration cap \(5 builder runs\)'
   expect_calls builder 5
+  expect_result review-5 new-round; expect_result end rejected
 }
 
 t_flaky() {
@@ -242,6 +249,7 @@ t_accept_passes_on_base() {
   touch "$FAKE_STATE/accept-always-passes"
   loop
   expect_end '^harness error in verify: the acceptance test passes on the base'
+  expect_result verify-1 rerun; expect_result end rerun
 }
 
 t_build_fails() {
@@ -274,6 +282,7 @@ builder() {
 }
 EOF
   loop
+  expect_result end human
   expect_end '^needs a human: the builder disputes the acceptance test \(Accept.Tests.It'
   expect_calls builder 1
   expect_event 'notify: the builder disputes the acceptance test'
@@ -312,10 +321,12 @@ t_pause_resume() {
   echo 'builder_1() { commit_code done; write_handback; touch "$(run_dir)PAUSE"; }' > "$T/scenario.sh"
   loop
   expect_end '^paused before review 1 \(verified\): factory.sh resume demo-1-'
+  expect_result end stopped
   [ -f "$RUN/state.sh" ] || fail "no state.sh"
   (cd "$R" && bash "$SKILL/scripts/factory.sh" resume "$(basename "$RUN")" > "$T/out2" 2>&1)
   expect_event 'run resumed before review'
   expect_end '^ready for the judge'
+  expect_result end proceed
   expect_calls builder 1; expect_calls reviewer 1
   [ "$(ls -d "$FAKE_RUNS"/demo-1-* | wc -l | tr -d ' ')" = 1 ] || fail "resume made a new run folder"
 }
@@ -325,6 +336,7 @@ t_stop_then_resume() {
 builder_2() { commit_code "done 2"; write_handback; }' > "$T/scenario.sh"
   loop
   expect_end '^stopped: STOP file$'
+  expect_result qa-1 new-round; expect_result end stopped
   (cd "$R" && bash "$SKILL/scripts/factory.sh" resume "$(basename "$RUN")" > "$T/out2" 2>&1)
   expect_end '^ready for the judge'
   expect_calls builder 2
@@ -362,6 +374,8 @@ EOF
   expect_end '^ready for the judge \(Recommend: merge; runtime QA PASS; exploratory QA: 0 finding'
   expect_calls builder 2; expect_calls recheck 1
   expect_file "$FAKE_STATE/builder-2.prompt" 'exploratory QA \(run 1\) found blockers .* F1'
+  expect_result explore-1 new-round; expect_result recheck-1 new-round; expect_result qa-1 proceed
+  expect_result explore-2 proceed; expect_result end proceed
   one_vm
 }
 
@@ -508,16 +522,33 @@ t_qa_needs_input() {
   echo 'qa_1() { printf "Verdict: NEEDS-INPUT\nSummary: no server\nInput: a licensed Hyper-V host to connect to\nHuman: none\n"; }' > "$T/scenario.sh"
   loop
   expect_end '^needs input for runtime QA: a licensed Hyper-V host to connect to; provide it'
+  expect_result qa-1 human; expect_result end human
   expect_calls builder 1
   (cd "$R" && bash "$SKILL/scripts/factory.sh" resume "$(basename "$RUN")" > "$T/out2" 2>&1)
   expect_end '^ready for the judge'
   expect_calls builder 1; expect_calls qa 2
 }
 
+# --test-only: the result asked for (--expect) succeeds, red as much as green; the other one needs a human; with no
+# --expect, nothing says which was wanted. --expect alone, without a check to apply it to, is refused.
+t_test_expect() {
+  loop --test-only HEAD --expect red
+  expect_end '^red, as expected: the acceptance test fails on [0-9a-f]+'
+  expect_result test proceed; expect_result end proceed
+  loop --test-only HEAD --expect green
+  expect_end '^expected green, got red: the acceptance test fails on'
+  expect_result end human
+  loop --test-only HEAD
+  expect_end '^red: the acceptance test fails on'
+  expect_result end unknown
+  (cd "$R" && bash "$SKILL/scripts/run-loop.sh" DEMO-1 --expect red > "$T/out3" 2>&1); rc=$?
+  [ "$rc" = 2 ] && grep -q -- '--expect goes with --test-only or --qa-only' "$T/out3" || fail "--expect alone: rc $rc, $(head -1 "$T/out3")"
+}
+
 ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
   failing_listed_test listed_red_on_base_too accept_passes_on_base build_fails restore_flake_on_clean accept_dispute handback_rewritten_nested_docs accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
   assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture fixture_missing provided_missing provided_check_then_resume
-  qa_needs_input"
+  qa_needs_input test_expect"
 for t in ${*:-$ALL}; do
   ok=yes
   setup

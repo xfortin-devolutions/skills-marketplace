@@ -10,10 +10,12 @@
 #   run-loop.sh <TICKET> [--open-pr] [--qa | --no-qa] [--no-explore] [--keep-vm]
 #                                    the loop; QA runs when the ticket has a Runtime check, exploration after a QA PASS;
 #                                    --keep-vm leaves the last QA VM running (factory.sh down)
-#   run-loop.sh <TICKET> --qa-only <ref> [--explore [--base <ref>]] [--keep-vm]
+#   run-loop.sh <TICKET> --qa-only <ref> [--expect red|green] [--explore [--base <ref>]] [--keep-vm]
 #                                    the QA stage alone on <ref> (red-on-base check); --explore adds the exploratory QA,
 #                                    the change being <base>..<ref> (default: the merge-base with PR_BASE, else <ref>~1)
-#   run-loop.sh <TICKET> --test-only <ref>                           the acceptance test alone on <ref>, in a build VM
+#   run-loop.sh <TICKET> --test-only <ref> [--expect red|green]      the acceptance test alone on <ref>, in a build VM
+#                                    --expect (both modes): the result the check is for (red: it must fail, on the base);
+#                                    the run succeeds when it gets that one, and says so
 #   run-loop.sh <TICKET> --resume <run branch> "<judge's reason>"     a judge's send back on a finished run: merges the
 #                                                                    ticket branch (the updated spec) into the run branch,
 #                                                                    then the loop continues in that run's worktree
@@ -40,7 +42,7 @@ TICKET=${1:-}
 [ -n "$TICKET" ] && [ "${TICKET#-}" = "$TICKET" ] || usage
 shift
 OPEN_PR=no QA=auto KEEP_VM=no QA_ONLY="" TEST_ONLY="" RESUME="" JUDGE_REASON="" CONTINUE=no EXPLORE_CLI="" QA_BASE="" RESUME_RUN=""
-ASSESS_ONLY="" LIMITS_ONLY="" CLI_SIZE="" CLI_SETS=""
+ASSESS_ONLY="" LIMITS_ONLY="" CLI_SIZE="" CLI_SETS="" EXPECT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --open-pr) OPEN_PR=yes ;;
@@ -52,6 +54,7 @@ while [ $# -gt 0 ]; do
     --base) QA_BASE=${2:-}; [ -n "$QA_BASE" ] || usage; shift ;;
     --qa-only) QA_ONLY=${2:-}; [ -n "$QA_ONLY" ] || usage; shift ;;
     --test-only) TEST_ONLY=${2:-}; [ -n "$TEST_ONLY" ] || usage; shift ;;
+    --expect) EXPECT=${2:-}; case "$EXPECT" in red|green) ;; *) usage ;; esac; shift ;;
     --resume) RESUME=${2:-} JUDGE_REASON=${3:-}; [ -n "$RESUME" ] && [ -n "$JUDGE_REASON" ] || usage; shift 2 ;;
     --continue) RESUME=${2:-} JUDGE_REASON=${3:-} CONTINUE=yes; [ -n "$RESUME" ] && [ -n "$JUDGE_REASON" ] || usage; shift 2 ;;
     --resume-run) RESUME_RUN=${2:-}; [ -n "$RESUME_RUN" ] || usage; shift ;;
@@ -63,6 +66,8 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+[ -z "$EXPECT" ] || [ -n "$TEST_ONLY$QA_ONLY" ] || { echo "--expect goes with --test-only or --qa-only" >&2; exit 2; }
 
 X=$(cd "$(dirname "$0")" && pwd)
 # The engine's own tests (tests/run-loop.test.sh) swap the VM layer and the guest tool for fakes.
@@ -184,6 +189,17 @@ BUILD_VM_UP=no X_STATUS="" X_FINDINGS="" X_NEW="" X_LINES="" RC_STATUS="not need
 CHARTER_TOOLS=("${REVIEW_TOOLS[@]}")
 
 ev() { echo "$(date -u +%FT%TZ) $*" | tee -a "$EV"; }
+# result <station|end> <code>: what the runner decided, one line each in results.log, which the dashboard colours by (a
+# resumed round appends again: the last line wins). The codes say what comes next, not how the agent felt about it:
+#   proceed    the run goes on as planned (green)
+#   new-round  the change goes back to the builder (red)
+#   rerun      the factory could not judge: the same check has to run again (red)
+#   rejected   the run gave up on the change (red)
+#   human      a human decides, provides something or has a look (orange)
+#   stopped    stopped or paused by hand, or the session was killed (grey)
+# RESULT is the run's, written by finish with its end line.
+result() { echo "$1 $2" >> "$RUN/results.log"; }
+RESULT=""
 # The runner's PID: the dashboard tells a live run from one that died without its end line.
 echo $$ > "$RUN/runner.pid"
 # A host sleep freezes the VMs and every station waits on them (GAPS V43): keep the Mac awake while this runner lives.
@@ -788,6 +804,7 @@ qa_stage() {
     { echo; echo "Human verdict: ${v:-none}"; } >> "$q/report.md"
   fi
   ev "qa-$n: $QA_VERDICT"
+  result "qa-$n" "$(verdict_code "$QA_VERDICT")"
   cp "$q"/*.png "$q/report.md" "$RUN/qa-$n/" 2> /dev/null
   if [ "$EXPLORE" = yes ] && [ "${QA_VERDICT#PASS}" != "$QA_VERDICT" ]; then
     if [ -e "$RUN/STOP" ]; then X_STATUS="not run: STOP file"; else explore_stage "$n" "$ref"; fi
@@ -802,6 +819,38 @@ qa_stage() {
     [ -n "$qwt" ] && git -C "$REPO" worktree remove --force "$qwt" 2>> "$EV"
     provided_release
   fi
+}
+
+# verdict_code <QA verdict>: its result code. PASS goes on and FAIL sends the change back; with --expect (a QA-only run,
+# the red on the base most often) the one expected goes on, and the other needs a human: the check or the spec is wrong.
+verdict_code() {
+  local got
+  case "$1" in
+    PASS*) got=green ;;
+    FAIL*) got=red ;;
+    ERROR*) echo rerun; return ;;
+    *) echo human; return ;;
+  esac
+  if [ -n "$EXPECT" ]; then [ "$got" = "$EXPECT" ] && echo proceed || echo human
+  else [ "$got" = green ] && echo proceed || echo new-round
+  fi
+}
+
+# explore_results <n> <yes when new blockers send the change back>: the explorer's and the base re-check's codes, once the
+# re-check has classified the findings: new blockers send it back, or wait for the judge when no send back is left.
+explore_results() {
+  local c
+  case "$X_STATUS" in
+    "") return ;;
+    "not run: STOP"*) c=stopped ;;
+    "not run"*|"no usable"*) c=human ;;
+    *) if [ -z "$X_NEW" ]; then c=proceed; elif [ "$2" = yes ]; then c=new-round; else c=human; fi ;;
+  esac
+  result "explore-$1" "$c"
+  case "$RC_STATUS" in
+    "could not run"*) result "recheck-$1" human ;;
+    "build of"*) result "recheck-$1" "$c" ;;
+  esac
 }
 
 # Exploratory QA. Kept apart from the acceptance verdict, which is fixed before any of it runs: a separate read-only
@@ -836,6 +885,8 @@ charter_stage() {
     CHARTER_WHY="no usable charter (charter-$n.json)"; out=$CHARTER_WHY
   fi
   row "$n" charter "charter-$n" "$out"
+  # No charter, no exploration: the run goes on without it, which a human should know.
+  result "charter-$n" "$([ -n "$CHARTER" ] && echo proceed || echo human)"
 }
 
 # explore_stage <n> <commit>: on qa_stage's VM, the app restarted, the blind explorer tours the change led by $CHARTER.
@@ -1070,8 +1121,10 @@ assess_stage() {
     { echo "<!-- The factory's assessment of $TICKET, by $A_MODEL on $(date -u +%F), from $BASE. Edit it to overrule the assessor: Size sets the run's limits (SIZE in $TICKET.sh, --size and --set beat it), each Needs line what QA gets. -->"
       sed -n '/^Size: /,$p' "$raw"; } > "$RUN_ASSESSMENT"
     out="size $(assessment_field "$RUN_ASSESSMENT" Size), $(needs_lines "$RUN_ASSESSMENT" | grep -c .) test need(s)"
+    result assess proceed
   else
     out="no usable assessment (assess.json): size $SIZE_DEFAULT, no test needs"
+    result assess rerun
   fi
   read -r t0 t1 _ < "$RUN/assess.time"
   read -r st tu co de <<< "$(fields "$RUN/assess.json")"
@@ -1082,6 +1135,7 @@ assess_stage() {
 
 finish() {
   provided_release
+  result end "${RESULT:-unknown}"
   ev "end: $STATUS · spent \$$SPENT"
   rmdir "$QA_ROOT" 2> /dev/null
   exit 0
@@ -1097,11 +1151,11 @@ if [ -n "$ASSESS_ONLY" ]; then
     # The ticket's last assessment, edits and all, stays next to it.
     [ -f "$ASSESSMENT" ] && cp "$ASSESSMENT" "$ASSESSMENT.prev"
     cp "$RUN_ASSESSMENT" "$ASSESSMENT"
-    STATUS="assessed: size $(assessment_field "$ASSESSMENT" Size), $(needs_lines "$ASSESSMENT" | grep -c .) test need(s)"
+    STATUS="assessed: size $(assessment_field "$ASSESSMENT" Size), $(needs_lines "$ASSESSMENT" | grep -c .) test need(s)" RESULT=proceed
     cat "$ASSESSMENT"
     echo "written: $ASSESSMENT$([ -f "$ASSESSMENT.prev" ] && echo " (the one before: $TICKET.assessment.md.prev)")"
   else
-    STATUS="error: no usable assessment ($RUN/assess.json)"
+    STATUS="error: no usable assessment ($RUN/assess.json)" RESULT=rerun
     echo "$STATUS"
   fi
   finish
@@ -1115,7 +1169,7 @@ fi
 # A resumed run keeps the --size and --set it started with; the ones given to the resume win.
 if [ -n "$RESUME_RUN" ]; then CLI_SIZE=${CLI_SIZE:-${S_CLI_SIZE:-}}; CLI_SETS="${S_CLI_SETS:-}$CLI_SETS"; fi
 resolve_limits "$([ -s "$RUN_ASSESSMENT" ] && echo "$RUN_ASSESSMENT")" "$CLI_SIZE" "$CLI_SETS" \
-  || { STATUS="error: the limits don't resolve (see above)"; finish; }
+  || { STATUS="error: the limits don't resolve (see above)" RESULT=human; finish; }
 printf '%s' "$LIMITS_LOG" > "$RUN/limits.txt"
 # QA's limits grow with what the Runtime check asks (steps and expectations), unless set on purpose.
 QA_ITEMS=$(section "$TICKET_FILE" "Runtime check" | grep -cE '^ *([0-9]+\.|- E[0-9]+)')
@@ -1126,7 +1180,7 @@ if [ "$QA" = yes ]; then
   needs_preflight "$RUN_ASSESSMENT"
   if [ -n "$NEEDS_MISSING" ]; then
     printf '%s' "$NEEDS_MISSING" > "$RUN/needs-missing.txt"
-    STATUS="needs input before the run: $(printf '%s' "$NEEDS_MISSING" | paste -sd ';' - | sed 's/;/; /g'); then run it again"
+    STATUS="needs input before the run: $(printf '%s' "$NEEDS_MISSING" | paste -sd ';' - | sed 's/;/; /g'); then run it again" RESULT=human
     notify "the run needs input: $(printf '%s' "$NEEDS_MISSING" | head -1)"
     echo "$STATUS"
     finish
@@ -1150,9 +1204,17 @@ if [ -n "$QA_ONLY" ]; then
     charter_stage 1 "$REF" "$REPO"
   fi
   qa_stage 1 "$REF"
-  STATUS=$QA_VERDICT
+  RESULT=$(verdict_code "$QA_VERDICT")
+  case "$EXPECT/$QA_VERDICT" in
+    red/FAIL*|green/PASS*) STATUS="$EXPECT, as expected: $QA_VERDICT" ;;
+    red/PASS*|green/FAIL*) STATUS="expected $EXPECT, got: $QA_VERDICT" ;;
+    *) STATUS=$QA_VERDICT ;;
+  esac
   if [ -n "$X_STATUS" ]; then
     recheck_stage 1 "$XB"
+    # No loop to send it back to: new blockers are the judge's.
+    explore_results 1 no
+    [ "$RESULT" = proceed ] && [ -n "$X_NEW" ] && RESULT=human
     [ -n "$CHARTER" ] && cp "$CHARTER" "$RUN/qa-1/charter.md"
     explore_section 1 "$RUN/qa-1" > "$RUN/qa-1/exploratory.md"
     STATUS="$STATUS; $(x_summary)"
@@ -1174,15 +1236,24 @@ if [ -n "$TEST_ONLY" ]; then
     rc=$?
     cp "$BUILD_VM/test.log" "$RUN/test.log" 2> /dev/null
     case $rc in
-      0) STATUS="green: the acceptance test passes on ${REF:0:11}" ;;
-      1) STATUS="red: the acceptance test fails on ${REF:0:11}: $(first_errors "$RUN/test.out")" ;;
-      *) STATUS="error: $(harness_why "$RUN/test.out")" ;;
+      0) got=green STATUS="the acceptance test passes on ${REF:0:11}" ;;
+      1) got=red STATUS="the acceptance test fails on ${REF:0:11}: $(first_errors "$RUN/test.out")" ;;
+      *) got="" STATUS="error: $(harness_why "$RUN/test.out")" RESULT=rerun ;;
     esac
+    # The result is the one asked for (--expect), red as much as green: an oracle proven red on the base succeeds. With no
+    # --expect, nothing says which one was wanted: the run reports it, uncoloured.
+    if [ -n "$got" ]; then
+      if [ -z "$EXPECT" ]; then STATUS="$got: $STATUS" RESULT=unknown
+      elif [ "$got" = "$EXPECT" ]; then STATUS="$got, as expected: $STATUS" RESULT=proceed
+      else STATUS="expected $EXPECT, got $got: $STATUS" RESULT=human
+      fi
+    fi
     "$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1
   else
-    STATUS="error: build VM did not come up: $(tail -1 "$RUN/build-vm.log")"
+    STATUS="error: build VM did not come up: $(tail -1 "$RUN/build-vm.log")" RESULT=rerun
   fi
   git -C "$REPO" worktree remove --force "$twt" 2>> "$EV"
+  result test "${RESULT:-unknown}"
   echo "$STATUS"
   echo "Output: $RUN/test.out · full log: $RUN/test.log"
   finish
@@ -1249,10 +1320,10 @@ while :; do
   fi
   if [ -z "$SKIP" ]; then
     save_state build
-    if [ $((builds - FIRST)) -ge "$ITER_CAP" ]; then STATUS="reject: iteration cap ($ITER_CAP builder runs); last reason: $reason"; break; fi
-    if [ -e "$RUN/PAUSE" ]; then STATUS="paused before builder run $((builds + 1)): factory.sh resume $ID"; break; fi
-    if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file"; break; fi
-    if over "$SPENT + $B_USD" "$LOOP_USD"; then STATUS="stopped: loop budget (\$$SPENT spent)"; break; fi
+    if [ $((builds - FIRST)) -ge "$ITER_CAP" ]; then RESULT=rejected STATUS="reject: iteration cap ($ITER_CAP builder runs); last reason: $reason"; break; fi
+    if [ -e "$RUN/PAUSE" ]; then RESULT=stopped STATUS="paused before builder run $((builds + 1)): factory.sh resume $ID"; break; fi
+    if [ -e "$RUN/STOP" ]; then RESULT=stopped STATUS="stopped: STOP file"; break; fi
+    if over "$SPENT + $B_USD" "$LOOP_USD"; then RESULT=human STATUS="stopped: loop budget (\$$SPENT spent)"; break; fi
     builds=$((builds + 1))
     name=build-$builds
     fill "$SKILL/prompts/goal.txt" > "$RUN/$name.prompt"
@@ -1298,15 +1369,31 @@ while :; do
       v=$(verify "$builds")
     fi
     row "$builds" builder "$name" "$out; verify $v"
+    # The builder handed over (success, or a limit after its commit), was killed (exit 143/137: stopped by hand), left a
+    # checkpoint (the round goes again), or its session failed.
+    case "$rc" in
+      143|137) bres=stopped ;;
+      *) if [ -n "$ckpt" ]; then bres=new-round
+         elif [ "$out" = success ] || [ "$rc" = 142 ] || [ "$st" = error_max_budget_usd ]; then bres=proceed
+         else bres=rerun
+         fi ;;
+    esac
+    case "$v" in
+      green) vres=proceed ;;
+      error*) vres=rerun ;;
+      *) vres=new-round ;;
+    esac
+    [ "$bres" = stopped ] && vres=stopped
+    result "build-$builds" "$bres"; result "verify-$builds" "$vres"
     ev "$name outcome=$out verify=$v spent=\$$SPENT"
     if [ "$(progress_sig "$([ "$from" = review ] && echo hand-back)")" = "$sig0" ]; then stall=$((stall + 1)); else stall=0; fi
     # After a green verify the send back came from the reviewer or QA: a run that changes nothing only sends the same
     # binaries back.
     if [ "$v" = green ] && [ "$last_v" = green ] && [ "$stall" -gt 0 ]; then
-      STATUS="needs a human: send back $builds changed no code and disputed nothing (${reason})"; break
+      RESULT=human STATUS="needs a human: send back $builds changed no code and disputed nothing (${reason})"; break
     fi
     if [ "$stall" -ge "$STALL_CAP" ]; then
-      STATUS="needs a human: $stall builder runs in a row changed nothing (code, disputes or tests); last reason: $reason"; break
+      RESULT=human STATUS="needs a human: $stall builder runs in a row changed nothing (code, disputes or tests); last reason: $reason"; break
     fi
     last_v=$v
     # An oracle that contradicts the spec can't be fixed by the builder, who may not edit it: a disputed acceptance
@@ -1314,11 +1401,11 @@ while :; do
     if [ "${v#red}" != "$v" ]; then
       acc_d=$(accept_disputes) acc_f=$(paste -sd ';' - < "$RUN/verify-$builds.accept-fails" 2> /dev/null)
       if [ -n "$acc_d" ]; then
-        STATUS="needs a human: the builder disputes the acceptance test ($acc_d; reasons in $HANDBACK/disputes.md): fix the oracle or overrule the dispute, then --continue"
+        RESULT=human STATUS="needs a human: the builder disputes the acceptance test ($acc_d; reasons in $HANDBACK/disputes.md): fix the oracle or overrule the dispute, then --continue"
         notify "the builder disputes the acceptance test: $acc_d"; break
       fi
       if [ -n "$acc_f" ] && [ "$acc_f" = "$last_af" ]; then
-        STATUS="needs a human: the same acceptance tests failed two verifies in a row ($acc_f): the oracle may contradict the spec (the builder's hand-back says why), then --continue"
+        RESULT=human STATUS="needs a human: the same acceptance tests failed two verifies in a row ($acc_f): the oracle may contradict the spec (the builder's hand-back says why), then --continue"
         notify "the same acceptance tests failed twice: $acc_f"; break
       fi
       last_af=$acc_f
@@ -1330,7 +1417,7 @@ while :; do
         # One VM per run at a time: review needs none and QA boots its own clean clone, so the build VM goes now and
         # the next builder round boots a fresh one (the build output lives in the worktree, on the Mac, not in the VM).
         if [ "$BUILD_VM_UP" = yes ]; then "$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1; BUILD_VM_UP=no; fi ;;
-      error*) STATUS="harness error in verify: ${v#error: }"; break ;;
+      error*) RESULT=rerun STATUS="harness error in verify: ${v#error: }"; break ;;
       *) reason="builder run $builds: $out; runner verify $v"; from=verify; STATUS="send back: $reason"; continue ;;
     esac
   fi
@@ -1338,8 +1425,8 @@ while :; do
   if [ -z "$SKIP" ] || [ "$SKIP" = review ]; then
     SKIP=""
     save_state review
-    if [ -e "$RUN/PAUSE" ]; then STATUS="paused before review $builds (verified): factory.sh resume $ID"; break; fi
-    if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file (verified, not reviewed)"; break; fi
+    if [ -e "$RUN/PAUSE" ]; then RESULT=stopped STATUS="paused before review $builds (verified): factory.sh resume $ID"; break; fi
+    if [ -e "$RUN/STOP" ]; then RESULT=stopped STATUS="stopped: STOP file (verified, not reviewed)"; break; fi
     rname=review-$builds
     # The reviewer's limits grow with the diff, unless set on purpose.
     lines=$(git -C "$WT" diff --shortstat "$BASE" HEAD -- . ':(exclude)handback' \
@@ -1347,7 +1434,7 @@ while :; do
     f=$(scale_factor "$lines" "$R_SCALE_LINES")
     r_min=$(scaled R_MIN "$f") r_usd=$(scaled R_USD "$f")
     [ "$f" -gt 1 ] && ev "$rname: $lines changed lines: reviewer x$f, \$$r_usd, $r_min min"
-    if over "$SPENT + $r_usd" "$LOOP_USD"; then STATUS="verified, not reviewed (loop budget)"; break; fi
+    if over "$SPENT + $r_usd" "$LOOP_USD"; then RESULT=human STATUS="verified, not reviewed (loop budget)"; break; fi
     # A re-review (an earlier review is in the hand-back, from this run or the one it continues) starts from what changed
     # since the code that review saw, and says so: a re-review that only restates the last one checks nothing.
     rev_code=$(git -C "$WT" log -1 --format=%h -- . ':(exclude)handback')
@@ -1363,7 +1450,8 @@ while :; do
     rec=$(grep -m1 '^- Recommend:' "$RUN/$rname.md" | sed 's/^- Recommend: *//')
     if [ -z "$rec" ]; then
       row "$builds" reviewer "$rname" "no usable review output"
-      STATUS="verified, review missing"; break
+      result "$rname" rerun
+      RESULT=rerun STATUS="verified, review missing"; break
     fi
     since=""
     if [ -n "$rev_prev" ] && ! grep -m1 '^- Design:' "$RUN/$rname.md" | grep -qi "since $rev_prev"; then
@@ -1376,6 +1464,7 @@ while :; do
     wtgit add "$HANDBACK/hand-back.md"
     wtgit commit -q -m "handback: $TICKET review"
     row "$builds" reviewer "$rname" "Recommend: $rec"
+    case "$rec" in merge*) result "$rname" proceed ;; *) result "$rname" new-round ;; esac
     ev "$rname recommend='$rec' spent=\$$SPENT"
     case "$rec" in
       merge*) ;;
@@ -1386,16 +1475,16 @@ while :; do
   SKIP=""
 
   save_state qa
-  if [ "$QA" != yes ]; then STATUS="ready for the judge (Recommend: merge; no runtime QA)"; break; fi
-  if [ -e "$RUN/PAUSE" ]; then STATUS="paused before runtime QA $builds (reviewed): factory.sh resume $ID"; break; fi
-  if [ -e "$RUN/STOP" ]; then STATUS="stopped: STOP file (reviewed, no runtime QA)"; break; fi
-  if over "$SPENT + $QA_USD" "$LOOP_USD"; then STATUS="reviewed, no runtime QA (loop budget)"; break; fi
+  if [ "$QA" != yes ]; then RESULT=proceed STATUS="ready for the judge (Recommend: merge; no runtime QA)"; break; fi
+  if [ -e "$RUN/PAUSE" ]; then RESULT=stopped STATUS="paused before runtime QA $builds (reviewed): factory.sh resume $ID"; break; fi
+  if [ -e "$RUN/STOP" ]; then RESULT=stopped STATUS="stopped: STOP file (reviewed, no runtime QA)"; break; fi
+  if over "$SPENT + $QA_USD" "$LOOP_USD"; then RESULT=human STATUS="reviewed, no runtime QA (loop budget)"; break; fi
   head=$(git -C "$WT" rev-parse HEAD)
   CHARTER="" CHARTER_WHY=""
   [ "$EXPLORE" = yes ] && charter_stage "$builds" "$head" "$WT"
   qa_stage "$builds" "$head" "$WT"
   case "$QA_VERDICT" in
-    ERROR*) STATUS="reviewed; runtime QA could not run: ${QA_VERDICT#ERROR: }"; break ;;
+    ERROR*) RESULT=rerun STATUS="reviewed; runtime QA could not run: ${QA_VERDICT#ERROR: }"; break ;;
   esac
   X_NEW="" X_LINES="" RC_STATUS="not needed"
   [ -n "$X_STATUS" ] && recheck_stage "$builds" "$BASE"
@@ -1404,19 +1493,22 @@ while :; do
   case "$QA_VERDICT" in
     PASS*) if [ -n "$X_NEW" ] && [ "$xsend" -lt "$EXPLORE_SENDBACKS" ]; then
              xsend=$((xsend + 1))
+             explore_results "$builds" yes
              reason="exploratory QA (run $builds) found blockers that the base commit's build does not show:$X_NEW. Findings, repro steps and screenshots: $HANDBACK/qa-$builds/explore/report.md (the base re-check: $HANDBACK/qa-$builds/recheck/)"
              from=explore; STATUS="send back: exploratory QA"; continue
            fi
            d=$(disputed_ids)
+           explore_results "$builds" no
+           RESULT=$([ -n "$X_NEW" ] && echo human || echo proceed)
            STATUS="ready for the judge (Recommend: merge; runtime QA PASS"
            [ -n "$X_NEW" ] && STATUS="ready for the judge (Recommend: the judge decides the new exploratory blockers$X_NEW, still there after $xsend send back(s); runtime QA PASS"
            [ -n "$X_STATUS" ] && STATUS="$STATUS; $(x_summary)"
            [ "$d" != none ] && STATUS="$STATUS; disputed by the builder: $d; the judge decides"
            STATUS="$STATUS)"
            break ;;
-    NEEDS-HUMAN*) STATUS="reviewed; runtime QA waiting for a human: ${QA_VERDICT#NEEDS-HUMAN: }"; break ;;
+    NEEDS-HUMAN*) RESULT=human STATUS="reviewed; runtime QA waiting for a human: ${QA_VERDICT#NEEDS-HUMAN: }"; break ;;
     # A resource only a human can provide: the run pauses before QA (its state says so) and goes on once it is there.
-    NEEDS-INPUT*) STATUS="needs input for runtime QA: ${QA_VERDICT#NEEDS-INPUT: }; provide it (factory.sh provide <name>), then factory.sh resume $ID"
+    NEEDS-INPUT*) RESULT=human STATUS="needs input for runtime QA: ${QA_VERDICT#NEEDS-INPUT: }; provide it (factory.sh provide <name>), then factory.sh resume $ID"
                   notify "QA needs input: ${QA_VERDICT#NEEDS-INPUT: }"; break ;;
     *) reason="runtime check failed (QA run $builds): ${QA_VERDICT#FAIL: }. QA report and screenshots: $HANDBACK/qa-$builds/"
        from=qa; STATUS="send back: runtime QA" ;;

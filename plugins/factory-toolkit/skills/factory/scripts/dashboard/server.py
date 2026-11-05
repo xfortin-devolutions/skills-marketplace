@@ -124,7 +124,8 @@ def run_summary(run):
         state = "waiting"
     spent = sum(as_float(r["cost"]) for r in rows(run))
     # A finished run's dot shows how it ended, not just that it ended.
-    cls = "neutral" if status.startswith(("stopped", "paused")) else outcome_class(status)
+    code = results(run).get("end") if ended else None
+    cls = outcome_class(status, "test" if run_kind(run_id) == "test" else "run", code)
     return {"id": run_id, "ticket": ticket_of(run_id), "kind": run_kind(run_id), "state": state, "status": status,
             "cls": cls, "disputed": disputed(status),
             "started": evs[0]["t"] if evs else None, "updated": evs[-1]["t"] if evs else None,
@@ -198,21 +199,57 @@ def disputed(text):
 KILLED = re.compile(r"\(exit (143|137)\)")
 
 
-def outcome_class(text):
-    t = DISPUTE.sub("", text or "").lower()
-    if not t.strip():
-        return "neutral"
+# Colours: green when the run goes on as planned; red when the change goes back to the builder, the check has to run
+# again or the run gave up; orange when a human decides, provides something or has a look; grey when stopped by hand.
+# The runner writes what it decided, station by station and for the run, in results.log (run-loop.sh: result); runs from
+# before it are read from the verdict their outcome starts with (PREFIX below), never from words found further on.
+CODES = {"proceed": "good", "new-round": "bad", "rerun": "bad", "rejected": "bad", "human": "warn", "stopped": "neutral"}
+
+
+def results(run):
+    """The runner's codes: the last one per station (build-2, qa-3, assess, test) and the run's ("end")."""
+    out = {}
+    for line in (read(os.path.join(run, "results.log")) or "").splitlines():
+        k, _, c = line.strip().partition(" ")
+        if k:
+            out[k] = c
+    return out
+
+
+# The verdict each outcome starts with, for runs without results.log. Anything else is grey, never green.
+PREFIX = {
+    "run": [(r"ready for the judge \(Recommend: the judge decides", "warn"), (r"ready for the judge", "good"),
+            (r"(assessed|PASS):", "good"), (r"(reject|FAIL):", "bad"), (r"(stopped|paused)", "neutral"),
+            (r"(needs a human|needs input|NEEDS-HUMAN|NEEDS-INPUT|reviewed; runtime QA waiting|verified, not reviewed|"
+             r"reviewed, no runtime QA|stopped: loop budget)", "warn"),
+            (r"(harness error|error:|ERROR:|reviewed; runtime QA could not run|verified, review missing)", "bad")],
+    "build": [(r"success\b", "good"), (r"(time box|cap:)", "good"), (r"error", "bad")],
+    "verify": [(r"green\b", "good"), (r"(red|error)\b", "bad")],
+    "review": [(r"Recommend: merge\b", "good"), (r"Recommend:", "bad"), (r"no usable", "bad")],
+    "charter": [(r"\d+ items?\b", "good"), (r".", "warn")],
+    "qa": [(r"PASS\b", "good"), (r"(FAIL|ERROR)\b", "bad"), (r"NEEDS", "warn")],
+    "explore": [(r"\d+ finding", "good"), (r"not run: STOP", "neutral"), (r".", "warn")],
+    "recheck": [(r"\d+ of \d+ on the base", "good"), (r"could not run", "warn")],
+    "assess": [(r"size \w+", "good"), (r".", "bad")],
+    # A test run's red or green only says something against what it was for, which runs before results.log don't
+    # record: grey; an error is the factory's own failure either way.
+    "test": [(r"error", "bad")],
+}
+
+
+def outcome_class(text, kind="run", code=None):
+    """The colour of a run (kind "run") or a station (its name): the runner's code when it wrote one, else the verdict
+    the text starts with."""
+    if code:
+        return CODES.get(code, "neutral")
+    t = DISPUTE.sub("", text or "").strip()
     # A session killed with SIGTERM or SIGKILL did nothing to judge: stopped, like a run stopped by hand.
-    if KILLED.search(t):
+    if not t or KILLED.search(t):
         return "neutral"
-    # The guest, not the change, failed: a resume re-runs the round, so a run that ends on it needs a look.
-    if "harness error" in t:
-        return "warn"
-    if re.search(r"\b(fail|red|send back|error|harness|not met|blocker)", t) and "verify green" not in t:
-        return "bad"
-    if re.search(r"needs[- ]a?[- ]?human|needs[- ]input|waiting|can't tell|disputed", t):
-        return "warn"
-    return "good"
+    for pat, cls in PREFIX.get(kind, []):
+        if re.match(pat, t, re.I):
+            return cls
+    return "neutral"
 
 
 def add(a, b):
@@ -226,6 +263,7 @@ def nodes(run):
     """The run's stations, round by round, with their state and one-line outcome."""
     rs = rows(run)
     evs = events(run)
+    res = results(run)
     kind = run_kind(os.path.basename(run))
     # A resumed run re-runs its round under the same number and appends a row: the last row is the round's outcome, the
     # earlier ones are attempts the resume superseded (a harness error, a killed session), shown as a note.
@@ -243,7 +281,8 @@ def nodes(run):
         test = read(os.path.join(run, "test.out"))
         end = next((e["msg"][5:] for e in evs if e["msg"].startswith("end: ")), None)
         out.append({"key": "test", "title": TITLES["test"], "round": 1, "state": "done" if end else "running",
-                    "outcome": end or (evs[-1]["msg"] if evs else ""), "cls": outcome_class(end),
+                    "outcome": end or (evs[-1]["msg"] if evs else ""),
+                    "cls": outcome_class(end, "test", res.get("test")),
                     "has_detail": test is not None})
         return out
     # The assessor runs once, before the first round (round 0).
@@ -253,7 +292,7 @@ def nodes(run):
         text = r["outcome"] if r else (last_event(evs, "assess") or ("working" if a == "running" else ""))
         if a == "running" and over:
             a, text = "stopped", "stopped: the run ended first"
-        out.append(node("assess", 0, a, text, "neutral" if not r else ("warn" if "no usable" in text else "good"),
+        out.append(node("assess", 0, a, text, "neutral" if not r else outcome_class(text, "assess", res.get("assess")),
                         cost=r["cost"] if r else None, minutes=r["min"] if r else None))
     rounds = set()
     for f in os.listdir(run):
@@ -273,8 +312,8 @@ def nodes(run):
                     text = v.group(1) if v else b["outcome"]
                     # A builder killed before its commit leaves verify nothing to check: that red is the kill's.
                     killed = KILLED.search(b["outcome"].split("; verify ", 1)[0])
-                    out.append(node(st, n, "done", text, "good" if text.startswith("green") else "neutral" if killed
-                                    else outcome_class(text),
+                    out.append(node(st, n, "done", text, "neutral" if killed and name not in res
+                                    else outcome_class(text, "verify", res.get(name)),
                                     earlier=[re.sub(r"^.*?verify ", "", o) for o in earlier.get(("builder", str(n)), [])]))
                 elif session_state(run, f"build-{n}") == "done":
                     base = any(e["msg"].startswith(f"verify-{n}: listed tests red") for e in evs)
@@ -296,7 +335,8 @@ def nodes(run):
                     if not done and over:
                         out.append(node(st, n, "stopped", "stopped: the run ended first", "neutral"))
                     else:
-                        out.append(node(st, n, "done" if done else "preparing", last, outcome_class(last) if done else "neutral"))
+                        out.append(node(st, n, "done" if done else "preparing", last,
+                                        outcome_class(last, st, res.get(name)) if done else "neutral"))
                 continue
             if state is None:
                 continue
@@ -312,7 +352,7 @@ def nodes(run):
             # station shows: the builder is coloured by its own part only.
             own = text.split("; verify ", 1)[0] if st == "build" else text
             prev = earlier.get((ROLES[st], str(n)), [])
-            out.append(node(st, n, state, text, outcome_class(own) if r else "neutral",
+            out.append(node(st, n, state, text, outcome_class(own, st, res.get(name)) if r else "neutral",
                             cost=r["cost"] if r else None, minutes=r["min"] if r else None,
                             earlier=[o.split("; verify ", 1)[0] if st == "build" else o for o in prev]))
     return out

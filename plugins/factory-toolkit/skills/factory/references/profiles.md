@@ -13,7 +13,7 @@ of the target OS, through the target's scripts.
 Start one with `factory.sh new-profile <name> [--skill <project>]` (it copies `templates/profile/` into the repo's
 project; a repo with none gets one, in the skill with `--skill`, else in its `.factory/`), fill every `TODO`, then `factory.sh check <name>` until it says OK. `check` validates everything below
 that can be checked without running a VM; prove the rest with `run-loop.sh <KEY> --test-only <ref>` and
-`--qa-only <ref>` on a commit whose answer you know.
+`--qa-only <ref>` on a commit whose answer you know, with `--expect red|green`.
 
 ## Layout
 
