@@ -391,6 +391,8 @@ async function refresh() {
   try { await loadRuns(); await loadRun(); $("#clock").textContent = "updated " + new Date().toLocaleTimeString(); }
   catch (e) { $("#clock").textContent = "server not answering (" + e.message + ")"; }
 }
+// The repo's name in the title and header, so the tab says which repo's runs it shows.
+get("/api/whoami").then(w => { document.title = `${w.name} · Factory runs`; $("header h1").textContent = `${w.name} · Factory runs`; }).catch(() => {});
 readHash();
 window.addEventListener("hashchange", () => { readHash(); refresh(); });
 $("#filter").value = filterDays();

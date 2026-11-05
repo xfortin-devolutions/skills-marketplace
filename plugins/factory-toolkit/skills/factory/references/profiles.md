@@ -19,7 +19,7 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
 
 ```
 <project>/                         <skill>/projects/<project>/ for now, <repo>/.factory/ once adopted
-  config.sh                        team defaults: DEFAULT_PROFILE, models and caps (REPO_MATCH in the skill)
+  config.sh                        team defaults: DEFAULT_PROFILE, models and caps, DASHBOARD_NAME/PORT (REPO_MATCH in the skill)
   profiles/<name>/
     profile.sh                     the product
     reviewer.md                    the reviewer's standards for it

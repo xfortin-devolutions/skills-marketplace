@@ -26,7 +26,8 @@
 #   factory.sh check [profile]           which project this repo uses, then check a profile (default: every one)
 #   factory.sh which <path>...           the profile whose CODE_PATHS own each repo path (how the spec step picks one)
 #   factory.sh spec <KEY> [--open]       a ticket's spec files (and open the .md in the default app)
-#   factory.sh dashboard [--port N] [--no-open]   live view of the runs in the browser (local; Ctrl-C stops)
+#   factory.sh dashboard [--port N] [--no-open]   live view of the runs in the browser, one per repo, at
+#                                        http://<DASHBOARD_NAME>.factory.localhost:<DASHBOARD_PORT>/ (local; Ctrl-C stops)
 #   factory.sh clean <KEY> [--dry-run]   a finished ticket: delete its spec, fixtures, run logs and VM folders; list the
 #                                        worktrees and branches left (removing those stays a human's call)
 #   factory.sh layer <profile> --test|--build   rehearse (throwaway clone) or build and freeze the profile's VM layer
@@ -265,14 +266,34 @@ case "$cmd" in
       *) echo "-> profile: $found" ;;
     esac ;;
   dashboard)
-    port=8765 open_it=yes
+    port=$DASHBOARD_PORT open_it=yes
     while [ $# -gt 0 ]; do
-      case "$1" in --port) port=${2:-8765}; shift ;; --no-open) open_it=no ;; esac
+      case "$1" in --port) port=${2:-$DASHBOARD_PORT}; shift ;; --no-open) open_it=no ;; esac
       shift
     done
     command -v python3 > /dev/null || die "the dashboard needs python3"
+    url="http://$DASHBOARD_NAME.factory.localhost:$port/"
+    # One dashboard per repo: when this repo's is already up, open it rather than start another.
+    who=$(curl -s -m 2 "http://127.0.0.1:$port/api/whoami" 2> /dev/null)
+    if [ -n "$who" ]; then
+      mine=$( (cd "$RUNS" 2> /dev/null && pwd -P) || echo "$RUNS")
+      held=$(printf %s "$who" | python3 -I -c 'import json,sys
+try: print(json.load(sys.stdin).get("runs") or "")
+except ValueError: print("")')
+      if [ "$held" = "$mine" ]; then
+        echo "factory dashboard: $url (already running)"
+        [ "$open_it" = yes ] && open "$url"
+        exit 0
+      fi
+      if [ -n "$held" ]; then die "port $port is another repo's dashboard ($held): set DASHBOARD_PORT for this one"
+      elif curl -s -m 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/runs" | grep -q 200; then
+        die "port $port is an older factory dashboard: stop it (kill $(lsof -tiTCP:"$port" -sTCP:LISTEN | head -1)), then start this one"
+      else die "port $port is taken by another program: free it, or set DASHBOARD_PORT"
+      fi
+    fi
     log=$(mktemp -t factory-dashboard)
-    python3 -I "$X/dashboard/server.py" --runs "$RUNS" --vm-root "$FACTORY_VM_ROOT" --port "$port" > "$log" 2>&1 &
+    python3 -I "$X/dashboard/server.py" --runs "$RUNS" --vm-root "$FACTORY_VM_ROOT" --port "$port" --name "$DASHBOARD_NAME" \
+      > "$log" 2>&1 &
     srv=$!
     trap 'kill $srv 2> /dev/null; rm -f "$log"' EXIT INT TERM
     for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q http "$log" && break; sleep 0.3; done

@@ -41,7 +41,7 @@ the repo it is run from. The skill is the engine; what a repo's products need is
 `projects/<project>/`, picked by `REPO_MATCH` against the repo's `origin`; the supported ones are listed in
 [projects/README.md](projects/README.md) (today `devolutions-rdm`: RDM and Devolutions Console, on Windows). A repo's own
 `.factory/profiles/` wins, which is how a project moves into its repo later. `factory.sh check` says which one is used.
-- `<project>/config.sh`: team defaults (models, caps, `DEFAULT_PROFILE`, `REPO_MATCH`).
+- `<project>/config.sh`: team defaults (models, caps, `DEFAULT_PROFILE`, `REPO_MATCH`, `DASHBOARD_NAME`, `DASHBOARD_PORT`).
 - `<project>/profiles/<name>/`: one per product (`rdm`, `console`, …): `profile.sh` (app name, `CODE_PATHS`, targets,
   protected paths, branch prefix), `reviewer.md` (review standards), `targets/<os>/` (guest image and build/test/launch
   scripts).
@@ -200,15 +200,17 @@ needs tickets name that aren't.
 
 ## dashboard
 
-`bash $F/factory.sh dashboard` (Bash tool with `run_in_background`: it serves until stopped) opens a live page on
-`127.0.0.1` in the browser: every run with its state and spend, filtered by age and by state (a finished run by how it
-ended; a builder's dispute is a `disputed` badge beside that, the judge's to decide, not a colour); a Bin a finished run
-goes to in one click, and back (a `BINNED` marker in the run folder, the page's only write); per run, a pipeline of its
-stations round by round (builder, verify, reviewer, charter, runtime QA, exploratory QA, re-check), each with its
-outcome, time and cost; a station's details on click: the agent's live steps (what it reads, runs, edits), the builder's
-changes in its worktree, the QA report and screenshots (live, as the agent takes them), the answer, the prompt and
-stderr. Nothing leaves the Mac. Offer it when a run starts, and whenever the user asks how things are going. `--port N`,
-`--no-open`.
+`bash $F/factory.sh dashboard` (Bash tool with `run_in_background`: it serves until stopped) opens the repo's live page
+in the browser, at `http://<DASHBOARD_NAME>.factory.localhost:<DASHBOARD_PORT>/` (RDM:
+`http://rdm.factory.localhost:8765/`; one per repo: when it already runs, the command opens it and exits; a port someone
+else holds is an error, not the next free one): every run with its state and spend, filtered by age and by state (a
+finished run by how it ended; a builder's dispute is a `disputed` badge beside that, the judge's to decide, not a
+colour); a Bin a finished run goes to in one click, and back (a `BINNED` marker in the run folder, the page's only
+write); per run, a pipeline of its stations round by round (builder, verify, reviewer, charter, runtime QA, exploratory
+QA, re-check), each with its outcome, time and cost; a station's details on click: the agent's live steps (what it
+reads, runs, edits), the builder's changes in its worktree, the QA report and screenshots (live, as the agent takes
+them), the answer, the prompt and stderr. Nothing leaves the Mac. Offer it when a run starts, and whenever the user asks
+how things are going. `--port N`, `--no-open`.
 
 ## status [run] · show [run] · human [run] · judge [run] pass|fail <why> · stop · pause · resume [run] · down [run]
 
