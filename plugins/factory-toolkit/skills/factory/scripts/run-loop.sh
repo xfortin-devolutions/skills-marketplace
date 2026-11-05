@@ -915,6 +915,19 @@ explore_stage() {
   row "$n" explorer "explore-$n" "$X_STATUS"
 }
 
+# recheck_base: the commit the base re-check builds. A ticket branch holds the oracle only, so its tip is the product
+# without the change. One that also carries product code (the change, squashed onto it for a PR) would have the re-check
+# compare the change with itself: then it builds the merge-base with PR_BASE, and says so.
+recheck_base() {
+  local mb files
+  mb=$(git -C "$REPO" merge-base "$BASE" "origin/$PR_BASE" 2> /dev/null || git -C "$REPO" merge-base "$BASE" "$PR_BASE" 2> /dev/null)
+  [ -n "$mb" ] || { echo "$BASE"; return; }
+  files=$(git -C "$REPO" diff --name-only "$mb" "$BASE" -- . $(for p in $ORACLE_PATHS; do printf ':(exclude)%s ' "$p"; done) | head -3)
+  if [ -z "$files" ]; then echo "$BASE"; return; fi
+  ev "recheck: the ticket branch at ${BASE:0:11} carries product code beyond the oracle ($(echo "$files" | paste -sd ' ' -)…): the re-check builds the merge-base with $PR_BASE, ${mb:0:11}, not the change itself" >&2
+  echo "${mb:0:12}"
+}
+
 # recheck_stage <n> <base commit>: the explorer's findings re-tried by the same blind agent on a build of the base, in a
 # VM of their own; the build VM is powered off to free its slot (VM_MAX) and the loop boots it again if it goes on.
 # Sets RC_STATUS, then recheck_classify.
@@ -1491,7 +1504,7 @@ while :; do
     ERROR*) RESULT=rerun STATUS="reviewed; runtime QA could not run: ${QA_VERDICT#ERROR: }"; break ;;
   esac
   X_NEW="" X_LINES="" RC_STATUS="not needed"
-  [ -n "$X_STATUS" ] && recheck_stage "$builds" "$BASE"
+  [ -n "$X_STATUS" ] && recheck_stage "$builds" "$(recheck_base)"
   [ -n "$X_STATUS" ] && LAST_X=$(x_summary)
   write_qa "$builds"
   case "$QA_VERDICT" in
