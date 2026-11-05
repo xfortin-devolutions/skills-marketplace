@@ -41,6 +41,13 @@ events", "a DVLS data source with a Dashboard entry"), and how it is met, the fi
 4. `unmet: <why>`: nothing can provide it (say why): what needs it goes untested, and the hand-back says so.
 Prefer a fixture to QA's setup, and both to a human. No need beyond a fresh install: write `Needs: none`.
 
+Steps that build data through the app before the behaviour under test (add a folder, add entries one by one, create a
+vault or a user, change settings) hide a need: the data is still missing from a fresh install, the spec just has QA
+make it, and every QA round, exploration and base re-check repeats those steps. List it as a need like any other, met
+by a fixture (an import file or a data source the app reads at startup, put in place by a script), and say which steps
+the fixture replaces ("replaces steps 1-2"). Keep `qa-setup` for one or two small items, never for the scenario's data
+set. `Needs: none` means the steps start from a fresh install as it is.
+
 Answer with exactly this, and nothing before or after it:
 ```
 Size: <one class>

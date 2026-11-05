@@ -13,6 +13,7 @@ errs=0 warns=0
 err() { echo "  ERROR $*"; errs=$((errs + 1)); }
 warn() { echo "  WARN  $*"; warns=$((warns + 1)); }
 has() { grep -q -- "$2" "$1" 2> /dev/null; } # has <file> <text>
+. "$(dirname "$0")/needs.sh"
 
 echo "profile $P"
 if [ ! -f "$D/profile.sh" ]; then
@@ -113,6 +114,9 @@ for k in "$TICKETS_DIR"/*.sh; do
     [ -z "$BUILD_PROJ" ] || err "ticket $n: BUILD_PROJ is gone (verify builds what the target ships)"
     [ -z "${PLATFORM:-}" ] || [ -f "$D/targets/$PLATFORM/target.sh" ] || err "ticket $n: PLATFORM $PLATFORM is not a target of $P"
     a=$TICKETS_DIR/$n.assessment.md
+    steps=$(ui_setup_steps "$TICKETS_DIR/$n.md")
+    [ -z "$steps" ] || needs_fixtures_or_provided "$a" \
+      || echo "  WARN  ticket $n: its Runtime check builds its data through the app (steps $steps), which every QA round repeats: put it in place with a fixture (factory.sh fixture $n <name>), name it in $n.assessment.md and start the steps from it"
     if [ -f "$a" ]; then
       grep -E '^- N[0-9]+: .*\| *fixture: ' "$a" | sed -E 's/.*\| *fixture: *([a-z0-9-]+).*/\1/' | while read -r fx; do
         [ -f "$TICKETS_DIR/$n.fixtures/$fx/fixture.md" ] \

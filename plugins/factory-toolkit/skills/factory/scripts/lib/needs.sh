@@ -13,6 +13,21 @@
 # In the guest, a fixture's files are in C:\factory\fixtures\<name>, a provided resource's in C:\factory\provided\<name>;
 # its scripts run with $Dir set to that folder.
 
+# ui_setup_steps <spec>: the numbers of the Runtime check's steps that build test data through the app (add a folder or
+# an entry, create a vault or a user): every QA round repeats them, where a fixture puts the data in place once.
+ui_setup_steps() {
+  [ -f "${1:-}" ] || return 0
+  awk '/^## Runtime check$/ { on = 1; next } /^## / { on = 0 }
+    on && /^Steps:/ { st = 1; next } on && /^Expectations:/ { st = 0 }
+    on && st && match($0, /^[0-9]+\./) { n = substr($0, 1, RLENGTH - 1) }
+    on && st && n != "" && !(n in seen) && tolower($0) ~ /(→ *add|add +(a +|an +|another +|new +)?(entry|entries|folder|vault|user|credential|data source)|(create|new) +(a +|an +|the +)?(entry|entries|folder|vault|user|credential|data source))/ {
+      seen[n] = 1; printf "%s%s", sep, n; sep = " " }
+    END { if (sep != "") print "" }' "$1"
+}
+
+# needs_fixtures_or_provided <assessment>: true when a need line is met by a fixture or a provided resource
+needs_fixtures_or_provided() { needs_lines "${1:-}" | grep -qE '\| *(fixture|provided):'; }
+
 needs_lines() { [ -f "${1:-}" ] && grep -E '^- N[0-9]+: ' "$1"; return 0; }
 need_id() { echo "$1" | sed -E 's/^- (N[0-9]+): .*/\1/'; }
 need_what() { echo "$1" | sed -E 's/^- N[0-9]+: *//; s/ *\| *(fixture|provided|qa-setup|unmet):.*$//'; }
