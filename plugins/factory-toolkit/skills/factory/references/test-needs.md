@@ -72,7 +72,7 @@ across tickets belongs in the profile's VM layer, not in a fixture. `factory.sh 
 runs over SSH as the desktop user (same profile, no desktop), must be idempotent, and throws on failure (the QA round is
 then a harness error, not the change's fault). The assessor sees the ticket's fixtures and proposes the ones it lacks
 (`fixture: <name>: <what it puts in place>`); `factory.sh check` checks them. Prove a new one with
-`run-loop.sh <KEY> --qa-only` on the base before any builder run.
+`run-loop.sh <KEY> --qa-only <base> --expect red` before any builder run.
 
 ### Resources a human provides
 

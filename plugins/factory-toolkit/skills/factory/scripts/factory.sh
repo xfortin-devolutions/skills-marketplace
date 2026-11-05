@@ -122,7 +122,7 @@ case "$cmd" in
     echo "1. fill $d/fixture.md: What (what it puts in place) and Use (where QA finds it), in user terms; no secrets"
     echo "2. write apply.ps1 (idempotent, throws on failure) and put its data files next to it: copied into each QA VM's"
     echo "   C:\\factory\\fixtures\\$name, run there before the app starts, \$Dir = that folder"
-    echo "3. name it in $key.assessment.md: '| fixture: $name', then factory.sh check, and prove it with run-loop.sh $key --qa-only" ;;
+    echo "3. name it in $key.assessment.md: '| fixture: $name', then factory.sh check, and prove it with run-loop.sh $key --qa-only <base> --expect red" ;;
   provide)
     name=${1:-}
     case "$name" in ''|*[!a-z0-9-]*) die "usage: factory.sh provide <name> (lowercase letters, digits, dashes)" ;; esac

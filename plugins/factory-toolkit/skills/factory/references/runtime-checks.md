@@ -17,7 +17,7 @@ Expectations:
 - E1: <what must be visible on screen, observable without the code>
 - E2: ...
 
-Red on base: <which expectation fails on the base commit, and how>   (confirmed with run-loop.sh --qa-only <base>)
+Red on base: <which expectation fails on the base commit, and how>   (confirmed with run-loop.sh --qa-only <base> --expect red)
 ```
 
 ## Rules
