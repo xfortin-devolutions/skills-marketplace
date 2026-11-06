@@ -1,0 +1,5 @@
+Write the pull request for ticket @TICKET@ on branch @BRANCH@. The change is `git diff @BASE@ @SHA@ -- . ':!handback'` (the commits: `git log --oneline @BASE@..@SHA@`), the ticket is @SPEC@, and the hand-back is @HANDBACK@/hand-back.md. Read a changed file as it is at the commit with `git show @SHA@:<path>`. Edit nothing. Run each command bare: no loops, pipes, `&&` or redirects.
+The ticket's link: @TICKET_URL@ (empty: no link, name the key only).
+Fill this template:
+
+@TEMPLATE@

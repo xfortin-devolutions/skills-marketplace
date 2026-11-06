@@ -42,6 +42,7 @@ the repo it is run from. The skill is the engine; what a repo's products need is
 [projects/README.md](projects/README.md) (today `devolutions-rdm`: RDM and Devolutions Console, on Windows). A repo's own
 `.factory/profiles/` wins, which is how a project moves into its repo later. `factory.sh check` says which one is used.
 - `<project>/config.sh`: team defaults (models, caps, `DEFAULT_PROFILE`, `REPO_MATCH`, `DASHBOARD_NAME`, `DASHBOARD_PORT`).
+- `<project>/pr-template.md` (optional): the description a run's PR fills (**pr**); without it, `templates/pr-template.md`.
 - `<project>/profiles/<name>/`: one per product (`rdm`, `console`, …): `profile.sh` (app name, `CODE_PATHS`, targets,
   protected paths, branch prefix), `reviewer.md` (review standards), `targets/<os>/` (guest image and build/test/launch
   scripts).
@@ -52,7 +53,8 @@ the repo it is run from. The skill is the engine; what a repo's products need is
 - Per machine, never in the repo: `~/.factory/config.sh` (VM root, CPUs, RAM, budget overrides, the size table and
   its ceiling), and `~/.factory/provided/<name>/` (resources only a human can provide, for QA).
 The agents' system prompts, in this skill's `agents/`: `factory-assessor.md` (size and test needs), `factory-reviewer.md`, `factory-qa.md` (acceptance QA),
-`factory-charter.md` and `factory-explorer.md` (exploratory QA: explore, and re-check on the base).
+`factory-charter.md` and `factory-explorer.md` (exploratory QA: explore, and re-check on the base), `factory-pr.md` (the
+PR's title and description).
 
 ## Pick the sub-command
 
@@ -68,6 +70,7 @@ The agents' system prompts, in this skill's `agents/`: `factory-assessor.md` (si
 | "stop it" | **stop** |
 | "set up the VM", first QA on this Mac | **setup** |
 | "use the factory for <product>", a ticket for a product with no profile (`which` says so) | **profile** |
+| "open a PR for DEVEX-123", "write the PR description" | **pr** |
 | "the ticket is merged", "clean up DEVEX-123" | **clean** |
 | "how big is it?", "what will it cost?", "give it more time / budget", "go higher" | **limits** |
 | "QA needs a data source / server / account", a run that needs input | **provide** |
@@ -155,8 +158,8 @@ bash $F/run-loop.sh <KEY>            # Bash tool with run_in_background; the loo
   puts them in each QA VM before the app starts. A missing one stops the run (`needs input before the run`); one that
   can't be reached at QA, or a QA agent that answers NEEDS-INPUT, pauses it before QA (`needs input for runtime QA`):
   **provide**, then `factory.sh resume <run>`.
-- `--open-pr` pushes and opens a **draft** PR when the run is ready: outward-facing, so only when the user asked for it in
-  this conversation.
+- `--open-pr` opens a **draft** PR when the run is ready, the way **pr** does (below): outward-facing, so only when the
+  user asked for it in this conversation.
 - While it runs, answer progress questions with **status**; when it ends, summarise `loop-handback.md`: status, builder
   runs, spend, the hand-back path, the QA verdict with its screenshots (Read the PNGs and show the decisive ones), and
   the Exploratory QA section: walk the user through the tour with its screenshots, then the findings, new ones first.
@@ -238,6 +241,21 @@ stderr. Nothing leaves the Mac. Offer it when a run starts, and whenever the use
   with the same arguments, which writes no Decision line.
 
 The final merge decision is the Judge section of the hand-back, which the human fills in; don't fill it for them.
+
+## pr [run] [--open]
+
+A run's pull request is an ordinary one: what was wrong, how it is fixed, the technical changes and the commits, for the
+team's reviewers. The hand-back stays the judge's record and never goes in the PR: no hand-back, costs, rounds, verdicts,
+station names, VM details or `handback/` paths in the description, and no `handback/` folder in the branch.
+`bash $F/factory.sh pr <run>` has a fresh read-only session (`agents/factory-pr.md`, `PR_MODEL`, `PR_USD`) fill the
+project's `pr-template.md` (else `templates/pr-template.md`) from the ticket's current spec, the diff and the hand-back
+(only for what was tried in the app and the problems the base shows too); the runner adds the commit list (every commit
+touching something outside `handback/`). It writes `pr-title.txt` and `pr.md` in the run folder: show them to the user.
+`--open` (outward-facing: only when the user asked for the PR) drops `handback/` from the branch in its own commit (the
+files stay on disk), pushes the branch and opens a draft PR against `PR_BASE`, or updates the title and description of
+the branch's open PR. A description that names the factory is refused before anything is pushed: fix `pr.md` by hand.
+`run --open-pr` does the same when the run is ready. Use it for a PR the user asks for after judging too, so every
+factory PR reads the same.
 
 ## vm up|env|show|down|list|gc · setup
 

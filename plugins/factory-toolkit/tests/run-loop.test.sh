@@ -545,10 +545,39 @@ t_test_expect() {
   [ "$rc" = 2 ] && grep -q -- '--expect goes with --test-only or --qa-only' "$T/out3" || fail "--expect alone: rc $rc, $(head -1 "$T/out3")"
 }
 
+# open_pr: --open-pr drops handback/ from the branch, writes an ordinary description and opens the PR with it.
+t_open_pr() {
+  git init -q --bare "$T/origin.git" && git -C "$R" remote add origin "$T/origin.git" && git -C "$R" push -q origin master
+  git -C "$R" fetch -q origin
+  loop --open-pr
+  expect_end '^ready for the judge'
+  expect_calls pr 1
+  wt=$(ls -d "$R"/.claude/worktrees/demo-1-build-*/ | head -1)
+  [ -z "$(git -C "$wt" ls-files handback | head -1)" ] || fail "handback/ is still tracked on the branch"
+  [ -f "$(hb)/hand-back.md" ] || fail "the hand-back left the disk"
+  expect_file "$RUN/pr.md" '^- [0-9a-f]{8} - DEMO-1: Changed the feature'
+  ! grep -qiE 'handback|Removed handback' "$RUN/pr.md" || fail "pr.md lists the hand-back: $(grep -m1 -iE 'handback' "$RUN/pr.md")"
+  expect_file "$RUN/pr-title.txt" '^\[DEMO-1\] Fixed the demo feature$'
+  expect_file "$FAKE_STATE/gh.log" 'pr create --draft --base master'
+  expect_event 'PR: https://example.test/pull/1'
+  git -C "$T/origin.git" rev-parse -q --verify "refs/heads/$(git -C "$wt" symbolic-ref --short HEAD)" > /dev/null || fail "the branch was not pushed"
+}
+
+# pr_leak: a description that names the factory is written for a human to fix, and nothing is pushed.
+t_pr_leak() {
+  git init -q --bare "$T/origin.git" && git -C "$R" remote add origin "$T/origin.git" && git -C "$R" push -q origin master
+  echo 'pr() { printf "TITLE: Fixed it\n\nThe builder fixed it in round 2 for \$3.\n"; }' >> "$T/scenario.sh"
+  loop
+  (cd "$R" && bash "$SKILL/scripts/factory.sh" pr "$(basename "$RUN")" > "$T/pr-out" 2>&1) || fail "factory.sh pr without --open failed: $(tail -1 "$T/pr-out")"
+  grep -q 'names the factory' "$T/pr-out" || fail "no leak warning: $(tail -1 "$T/pr-out")"
+  (cd "$R" && bash "$SKILL/scripts/factory.sh" pr "$(basename "$RUN")" --open > "$T/pr-out2" 2>&1) && fail "--open went on with a leaking description"
+  [ ! -s "$FAKE_STATE/gh.log" ] || fail "gh was called: $(cat "$FAKE_STATE/gh.log")"
+}
+
 ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
   failing_listed_test listed_red_on_base_too accept_passes_on_base build_fails restore_flake_on_clean accept_dispute handback_rewritten_nested_docs accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
   assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture fixture_missing provided_missing provided_check_then_resume
-  qa_needs_input test_expect"
+  qa_needs_input test_expect open_pr pr_leak"
 for t in ${*:-$ALL}; do
   ok=yes
   setup

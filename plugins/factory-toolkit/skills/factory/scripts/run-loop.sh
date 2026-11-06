@@ -3,7 +3,7 @@
 #   builder (headless claude, own worktree) -> runner verify (its own checks) -> reviewer (fresh read-only session)
 #   -> runtime QA (throwaway VM, blind QA agent) -> exploratory QA (charter from the diff, blind explorer, findings
 #   re-tried on the base) -> send back with the reason, up to ITER_CAP builder runs -> hand-back. Optional --open-pr
-#   pushes a draft PR.
+#   opens a draft PR, an ordinary one without the hand-back (scripts/pr.sh).
 # Nothing builds on the Mac: one build VM per run (a clone of the target's image, sharing the run's worktree) serves the
 # builder's guest tool and the runner's verify; each QA round gets a fresh clone that launches the verified binaries.
 # Usage (from the repo):
@@ -1521,11 +1521,10 @@ done
 
 PR_URL="none"
 if [ "$OPEN_PR" = yes ] && [ "${STATUS#ready}" != "$STATUS" ]; then
-  git -C "$WT" push -q -u origin "$BRANCH" >> "$EV" 2>&1 \
-    && PR_URL=$(cd "$WT" && gh pr create --draft --base "$PR_BASE" --head "$BRANCH" \
-         --title "[$TICKET] $(head -1 "$TICKET_FILE" | sed -e 's/^# *//' -e "s/^$TICKET *[—-] *//")" \
-         --body-file "$WT/$HANDBACK/hand-back.md" 2>> "$EV")
-  ev "PR: ${PR_URL:-failed, see events.log}"
+  # An ordinary PR (pr.sh): handback/ dropped from the branch, a description of the issue and the fix, never the hand-back.
+  PR_URL=$(cd "$WT" && bash "$X/pr.sh" "$RUN" --open | tail -1)
+  add_usd "$(jq -r '.total_cost_usd // 0' "$RUN/pr.json" 2> /dev/null)"
+  ev "PR: ${PR_URL:-failed, see events.log and pr.err}"
 fi
 
 {

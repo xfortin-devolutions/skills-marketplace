@@ -20,6 +20,9 @@
 #   factory.sh provide <name>            start a resource only a human can provide (~/.factory/provided/<name>/)
 #   factory.sh provided                  the resources provided on this machine, and the tickets that need missing ones
 #   factory.sh down [run]                power off the VMs a run kept (--keep-vm) and remove their worktrees
+#   factory.sh pr [run] [--open]         the run's pull request, an ordinary one (issue, fix, changes, commits; no
+#                                        hand-back): pr-title.txt and pr.md in the run folder; --open drops handback/
+#                                        from the branch, pushes it and opens a draft PR (or updates the branch's open one)
 #   factory.sh new-profile <name> [--skill <project>]   start profiles/<name>/ from the skill's templates, in this repo's
 #                                        project (its own .factory/, or the skill's projects/<project>/ that matches it);
 #                                        a repo with no project gets one: .factory/ in the repo, or with --skill, in the skill
@@ -164,6 +167,10 @@ case "$cmd" in
       rm -f "$k"; n=$((n + 1))
     done
     echo "$(basename "$d"): $n kept VM(s) down" ;;
+  pr)
+    case "${1:-}" in --open|"") d=$(run_dir "") || exit 1 ;; *) d=$(run_dir "$1") || exit 1; shift ;; esac
+    [ -f "$d/state.sh" ] || die "$(basename "$d") is not a loop run (no state.sh): a PR comes from a loop run's branch"
+    exec bash "$X/pr.sh" "$d" "$@" ;;
   judge)
     case "${1:-}" in pass|fail) d=$(run_dir "") || exit 1 ;; *) d=$(run_dir "${1:-}") || exit 1; shift ;; esac
     verdict=${1:-}; shift
