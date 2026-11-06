@@ -28,8 +28,11 @@ ITER_CAP=5                  STALL_CAP=2               LOOP_USD=40
 # The assessor (before the first builder run): sizes the ticket and lists what testing it needs (lib/sizing.sh, the
 # ticket's <KEY>.assessment.md). ASSESS=no skips it: the run then uses SIZE_DEFAULT and no test needs.
 A_MODEL=claude-sonnet-5-5   A_USD=1.5  A_MIN=15  ASSESS=yes
-# The PR writer (scripts/pr.sh: factory.sh pr, run --open-pr): fills the project's pr-template.md from the ticket and the diff.
+# The PR writer (scripts/pr.sh: factory.sh pr, run --open-pr): the PR the repo's own instructions describe.
 PR_MODEL=claude-sonnet-5-5  PR_USD=1   PR_MIN=10
+# The repo's PR instructions (a PR skill, a doc), repo-relative, read first by the PR writer; the project sets them. The
+# writer also looks for the repo's own; with none, it fills templates/pr-template.md and titles are held to PR_TITLE_MAX.
+PR_INSTRUCTIONS=""          PR_TITLE_MAX=72
 # Size classes: each sets the limits it names (absolute values; the ones it leaves out keep the values above). The
 # assessor picks a class; SIZE in the ticket .sh or --size picks one on purpose. SIZE_CEILING caps the values of a class
 # the assessor picked, never one a human or an agent set (ticket .sh, --size, --set): going above it is a decision.

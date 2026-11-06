@@ -1,5 +1,8 @@
-Write the pull request for ticket @TICKET@ on branch @BRANCH@. The change is `git diff @BASE@ @SHA@ -- . ':!handback'` (the commits: `git log --oneline @BASE@..@SHA@`), the ticket is @SPEC@, and the hand-back is @HANDBACK@/hand-back.md. Read a changed file as it is at the commit with `git show @SHA@:<path>`. Edit nothing. Run each command bare: no loops, pipes, `&&` or redirects.
+Write the pull request for ticket @TICKET@ on branch @BRANCH@, in this repo. The change is `git diff @BASE@ @SHA@ -- . ':!handback'` (the commits: `git log --oneline @BASE@..@SHA@`), the ticket is @SPEC@, and the hand-back is @HANDBACK@/hand-back.md. Read a changed file as it is at the commit with `git show @SHA@:<path>`. Edit nothing. Run each command bare: no loops, pipes, `&&` or redirects.
 The ticket's link: @TICKET_URL@ (empty: no link, name the key only).
-Fill this template:
+
+Write the title and the description the way this repo's own instructions say. @INSTRUCTIONS@ Also look for the repo's PR conventions yourself: a PR skill under `.claude/skills/`, docs such as `docs/processes/GIT_PULL_REQUEST.md`, the commit and title conventions in `CLAUDE.md` or `AGENTS.md`. Follow their title format and length limit, the description's sections and their order. Only their non-interactive parts apply to you: never ask a question, never push, never call `gh`, never run a code review or another skill they chain to (e.g. process-copilot-comments); you only write the title and the description.
+
+Only when the repo has no PR instructions at all, fill this template instead, and keep the title to @TITLE_MAX@ characters:
 
 @TEMPLATE@

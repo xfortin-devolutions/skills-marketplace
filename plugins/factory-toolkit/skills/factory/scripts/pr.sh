@@ -1,8 +1,9 @@
 #!/bin/bash
 # pr.sh <run dir> [--open]: the pull request of a finished loop run, an ordinary one: the issue, how it was fixed, the
 # technical changes and the commits, never the factory's record (the hand-back stays the judge's). A fresh read-only
-# session (agents/factory-pr.md) fills the project's pr-template.md (else templates/pr-template.md) from the ticket, the
-# diff and the hand-back; the runner adds the commit list. Writes pr-title.txt and pr.md in the run folder.
+# session (agents/factory-pr.md), in the run's worktree, writes it the way the repo's own PR instructions say
+# (PR_INSTRUCTIONS first, then what it finds; templates/pr-template.md for a repo with none) from the ticket, the diff
+# and the hand-back; the runner adds the commit list. Writes pr-title.txt and pr.md in the run folder.
 #   --open   also drops handback/ from the branch (its own commit; the files stay on disk), pushes the branch and opens
 #            a draft PR against PR_BASE, or updates the title and body of the branch's open PR. Prints the PR URL last.
 # Called by `factory.sh pr` and by run-loop.sh --open-pr. Run from inside the repo.
@@ -40,14 +41,23 @@ SHA=$(git -C "$WT" rev-parse --short HEAD)
 # The PR's base, not the run's: the ticket's own commits (the oracle) are part of the PR.
 MB=$(git -C "$WT" merge-base "origin/$PR_BASE" HEAD 2> /dev/null) || MB=$S_BASE
 MB=$(git -C "$WT" rev-parse --short "$MB")
-TEMPLATE=$PROJECT_DIR/pr-template.md
-[ -n "$PROJECT_DIR" ] && [ -f "$TEMPLATE" ] || TEMPLATE=$SKILL/templates/pr-template.md
+# The repo's own PR instructions come first (the writer runs in the worktree, so its CLAUDE.md and skills load too); the
+# engine's template is the fallback for a repo with none.
+TEMPLATE=$SKILL/templates/pr-template.md
+found="" missing=""
+for f in $PR_INSTRUCTIONS; do
+  if [ -f "$WT/$f" ]; then found="$found \`$f\`"; else missing="$missing $f"; fi
+done
+[ -n "$missing" ] && log "PR_INSTRUCTIONS not in the worktree:$missing"
+if [ -n "$found" ]; then INSTRUCTIONS="Read these first:$found."
+else INSTRUCTIONS="The project names none: find them."; fi
 URL=$(grep -m1 -oE "https?://[^ )>\`]*$TICKET\b" "$SPEC")
 
 { sed -e "s|@TICKET@|$TICKET|g" -e "s|@BRANCH@|$BRANCH|g" -e "s|@BASE@|$MB|g" -e "s|@SHA@|$SHA|g" \
-      -e "s|@SPEC@|$SPEC|g" -e "s|@HANDBACK@|$HANDBACK|g" -e "s|@TICKET_URL@|$URL|g" "$SKILL/prompts/pr.txt" \
+      -e "s|@SPEC@|$SPEC|g" -e "s|@HANDBACK@|$HANDBACK|g" -e "s|@TICKET_URL@|$URL|g" -e "s|@TITLE_MAX@|$PR_TITLE_MAX|g" \
+      -e "s|@INSTRUCTIONS@|$INSTRUCTIONS|g" "$SKILL/prompts/pr.txt" \
     | awk -v t="$TEMPLATE" '$0 == "@TEMPLATE@" { while ((getline l < t) > 0) print l; next } { print }'; } > "$RUN/pr.prompt"
-log "writing the PR for $TICKET ($MB..$SHA, template ${TEMPLATE#$SKILL/})"
+log "writing the PR for $TICKET ($MB..$SHA, instructions:${found:- the repo's own, else the engine's template})"
 ( cd "$WT" && timebox $((PR_MIN * 60)) claude -p "$(cat "$RUN/pr.prompt")" --model "$PR_MODEL" \
     --append-system-prompt "$(awk 'f > 1; /^---$/ { f++ }' "$SKILL/agents/factory-pr.md")" \
     --max-budget-usd "$PR_USD" --tools Read Grep Glob Bash --allowedTools "${REVIEW_TOOLS[@]}" --add-dir "$(dirname "$SPEC")" \
@@ -58,7 +68,11 @@ COST=$(jq -r '.total_cost_usd // 0' "$RUN/pr.json" 2> /dev/null)
 TITLE=$(grep -m1 '^TITLE: ' "$RUN/pr.raw" | sed 's/^TITLE: *//')
 [ "$rc" -eq 0 ] && [ -n "$TITLE" ] || { log "no usable answer (exit $rc): $RUN/pr.json, $RUN/pr.err"; exit 1; }
 case "$TITLE" in "[$TICKET]"*) ;; *) TITLE="[$TICKET] $TITLE" ;; esac
-[ ${#TITLE} -le 72 ] || log "the title is ${#TITLE} characters (72 at most): shorten it in pr-title.txt"
+FORMAT=$(grep -m1 '^FORMAT: ' "$RUN/pr.raw" | sed 's/^FORMAT: *//')
+log "format: ${FORMAT:-not said}"
+# The repo's instructions set the title's limit; the engine holds the template's titles to PR_TITLE_MAX only.
+case "$FORMAT" in repo*) ;; *) [ ${#TITLE} -le "$PR_TITLE_MAX" ] \
+  || log "the title is ${#TITLE} characters ($PR_TITLE_MAX at most): shorten it in pr-title.txt" ;; esac
 printf '%s\n' "$TITLE" > "$RUN/pr-title.txt"
 
 # The commits a reviewer sees: every one that touches something outside handback/.
@@ -66,7 +80,7 @@ COMMITS=$(git -C "$WT" rev-list --reverse "$MB..$SHA" | while read -r c; do
   [ -n "$(git -C "$WT" diff-tree --no-commit-id --name-only -r "$c" | grep -v '^handback/')" ] \
     && git -C "$WT" log -1 --format='- %h - %s' --abbrev=8 "$c"
 done)
-BODY=$(awk 'f; /^TITLE: / { f = 1; getline; if ($0 != "") print }' "$RUN/pr.raw")
+BODY=$(awk 'f && !(started == 0 && /^(FORMAT: |$)/) { started = 1; print; next } /^TITLE: / { f = 1 }' "$RUN/pr.raw")
 # The factory's own words must not reach the PR: a description that names them is the writer's mistake, for a human.
 LEAK=$(printf '%s\n%s\n' "$TITLE" "$BODY" | grep -noiE 'hand-?back|factory|builder|reviewer|verdict|charter|oracle|exploratory|verification record|golden image|time box|\$[0-9]+(\.[0-9]+)?|\bVMs?\b' | head -5 | tr '\n' ' ')
 printf '%s\n' "$BODY" | COMMITS=$COMMITS awk '$0 == "@COMMITS@" { print ENVIRON["COMMITS"]; next } { print }' > "$RUN/pr.md"

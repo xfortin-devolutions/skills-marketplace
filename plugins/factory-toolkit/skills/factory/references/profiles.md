@@ -20,7 +20,6 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
 ```
 <project>/                         <skill>/projects/<project>/ for now, <repo>/.factory/ once adopted
   config.sh                        team defaults: DEFAULT_PROFILE, models and caps, DASHBOARD_NAME/PORT (REPO_MATCH in the skill)
-  pr-template.md                   optional: the PR description a run fills (factory.sh pr); else templates/pr-template.md
   profiles/<name>/
     profile.sh                     the product
     reviewer.md                    the reviewer's standards for it
@@ -33,6 +32,11 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
 <main checkout>/.claude/worktrees/factory-tickets/<KEY>.md, <KEY>.sh   a spec and its inputs (spec-authoring.md), not committed
 ~/.factory/config.sh               per machine, never committed: FACTORY_VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, VM_SLOT_WAIT_MIN, VM_IDLE_MIN, budget overrides
 ```
+
+The project's `config.sh` may set `PR_INSTRUCTIONS`: the repo's own PR instructions, repo-relative (RDM:
+`.claude/skills/pull-request-rdm/SKILL.md docs/processes/GIT_PULL_REQUEST.md`), which the PR writer (`factory.sh pr`)
+reads first and follows; a path missing at run time is logged. Without them it looks for the repo's own, and with none
+it fills the engine's `templates/pr-template.md`.
 
 The project's `config.sh` also sets `DOC_PATHS`: repo path prefixes of docs any change may update (for RDM, the root
 `.claude/skills/ docs/ CLAUDE.md` plus the DVLS and Console folders' own skills and CLAUDE.md). The builder keeps them

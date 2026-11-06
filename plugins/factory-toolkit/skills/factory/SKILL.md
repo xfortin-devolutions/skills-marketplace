@@ -42,7 +42,6 @@ the repo it is run from. The skill is the engine; what a repo's products need is
 [projects/README.md](projects/README.md) (today `devolutions-rdm`: RDM and Devolutions Console, on Windows). A repo's own
 `.factory/profiles/` wins, which is how a project moves into its repo later. `factory.sh check` says which one is used.
 - `<project>/config.sh`: team defaults (models, caps, `DEFAULT_PROFILE`, `REPO_MATCH`, `DASHBOARD_NAME`, `DASHBOARD_PORT`).
-- `<project>/pr-template.md` (optional): the description a run's PR fills (**pr**); without it, `templates/pr-template.md`.
 - `<project>/profiles/<name>/`: one per product (`rdm`, `console`, …): `profile.sh` (app name, `CODE_PATHS`, targets,
   protected paths, branch prefix), `reviewer.md` (review standards), `targets/<os>/` (guest image and build/test/launch
   scripts).
@@ -247,10 +246,16 @@ The final merge decision is the Judge section of the hand-back, which the human 
 A run's pull request is an ordinary one: what was wrong, how it is fixed, the technical changes and the commits, for the
 team's reviewers. The hand-back stays the judge's record and never goes in the PR: no hand-back, costs, rounds, verdicts,
 station names, VM details or `handback/` paths in the description, and no `handback/` folder in the branch.
-`bash $F/factory.sh pr <run>` has a fresh read-only session (`agents/factory-pr.md`, `PR_MODEL`, `PR_USD`) fill the
-project's `pr-template.md` (else `templates/pr-template.md`) from the ticket's current spec, the diff and the hand-back
-(only for what was tried in the app and the problems the base shows too); the runner adds the commit list (every commit
-touching something outside `handback/`). It writes `pr-title.txt` and `pr.md` in the run folder: show them to the user.
+The PR follows the repo it goes into, never a format copied into the factory: `bash $F/factory.sh pr <run>` has a fresh
+read-only session (`agents/factory-pr.md`, `PR_MODEL`, `PR_USD`) run in the run's worktree, so the repo's `CLAUDE.md`
+and skills load, and write the title and description the way the repo's own instructions say: the files the project's
+`PR_INSTRUCTIONS` names first (RDM: the `pull-request-rdm` skill and `docs/processes/GIT_PULL_REQUEST.md`; each checked
+at run time), then whatever it finds; their format, title rules and length limits win. It applies only their
+non-interactive parts (no questions, push, `gh`, review or chained skill). A repo with no PR instructions gets
+`templates/pr-template.md`, its titles held to `PR_TITLE_MAX` (72). The factory's rules stay on top: the ticket's current
+spec, the diff, and from the hand-back only what was tried in the app and the problems the base shows too; Tested and
+Not addressed lines where the repo's format allows; the runner adds the commit list (every commit touching something
+outside `handback/`). It writes `pr-title.txt` and `pr.md` in the run folder: show them to the user.
 `--open` (outward-facing: only when the user asked for the PR) drops `handback/` from the branch in its own commit (the
 files stay on disk), pushes the branch and opens a draft PR against `PR_BASE`, or updates the title and description of
 the branch's open PR. A description that names the factory is refused before anything is pushed: fix `pr.md` by hand.
