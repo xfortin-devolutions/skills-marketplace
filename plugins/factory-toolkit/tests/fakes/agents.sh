@@ -26,4 +26,5 @@ charter() { printf '1. Use the feature twice in a row.\n2. Look at it in OtherWi
 explorer() { printf 'Tour:\n1. used it\nFindings:\n'; }
 recheck() { echo "- F1: same: also on the base"; }
 assessor() { printf 'Size: M\nWhy: one file, fake\nRounds: 1\nSplit: no\nNeeds: none\n'; }
+pr() { printf 'TITLE: Fixed the demo feature\nFORMAT: template\n\n## Ticket\n- DEMO-1\n\n## Description\n\nThe feature was wrong; it works now.\n\n## Commits\n\n@COMMITS@\n'; }
 unknown() { echo "unknown prompt"; }
