@@ -8,7 +8,7 @@ instead: that is where a project goes once its team adopts the factory.
 | Project | Repo | Product (profile) | Code (`CODE_PATHS`) | Platforms (targets) | VM image |
 |---|---|---|---|---|---|
 | `devolutions-rdm` | Devolutions/RDM | `rdm`: Remote Desktop Manager (default) | `RDM/` | windows | `base.qcow2` |
-| | | `console`: Devolutions Console (Avalonia) | `Console/` | windows | `devolutions-console.qcow2` (layer: `profiles/console/layer/`) |
+| | | `console`: Devolutions Console (Avalonia) | `Console/`, `DVLS/Console/Console.Common/` (+ `.Tests/`) | windows | `devolutions-console.qcow2` (layer: `profiles/console/layer/`) |
 
 Not supported yet in that repo: DVLS (`DVLS/`), Hub, DPM and the rest. A ticket there makes the spec step stop and offer
 to set the product up first (`factory.sh which <path>` says "no profile").

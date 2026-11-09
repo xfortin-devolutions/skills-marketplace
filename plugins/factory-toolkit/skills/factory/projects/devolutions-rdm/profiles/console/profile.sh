@@ -9,7 +9,8 @@ TARGETS="windows"
 
 PROTECTED_EXTRA=".github"
 # Where its code is (repo paths, space-separated): `factory.sh which <path>` picks the profile from these.
-CODE_PATHS="Console/"
+# DVLS/Console/Console.Common (and its tests) is the DVLS console's business layer, which the Avalonia Console ships.
+CODE_PATHS="Console/ DVLS/Console/Console.Common/ DVLS/Console/Console.Common.Tests/"
 REVIEW_STANDARDS="$PROFILE_DIR/reviewer.md"
 
 # GitHub only accepts branches under a team prefix (devex/, rdmw/, …): use the ticket's project key.

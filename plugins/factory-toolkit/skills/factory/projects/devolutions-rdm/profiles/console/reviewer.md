@@ -4,6 +4,9 @@ On the changed lines, check:
 - `Console/CLAUDE.md`, which supplements `RDM/Shared/Avalonia/Core/CODING_STANDARDS.md` and
   `RDM/Shared/Avalonia/Core/CLAUDE.md`: explicit types, `this.` on instance members, camelCase private members,
   trailing commas, static lambdas, no `#region`, no `#nullable enable`, no `async void`, no new `///`, minimal `//`.
+- Under `DVLS/Console/Console.Common` (shared with the legacy console and the CLI): `DVLS/CLAUDE.md` instead, with the
+  surrounding files' conventions (`DPS.Console.Common…` namespaces, `#nullable disable` where a file has it); it builds
+  for `Console.Linux` too, so no Windows-only API outside the Windows path.
 - Namespaces follow the folder (`Devolutions.Console…`), except ViewModels (always `Devolutions.Console.ViewModels`) and
   `Views/**` (`Devolutions.Console.Views`). Never the bare `Console` namespace.
 - MVVM is Devolutions.MvvmToolkit (`[ObservableProperty]`) and Devolutions.Roslyn (`[RelayCommand]`), never
