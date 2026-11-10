@@ -1,16 +1,13 @@
 # Profile @PROFILE@ (sourced by the factory's config loader after the ticket's .sh; bash 3.2 compatible).
 # The contract: the factory skill's references/profiles.md. Check it with `factory.sh check @PROFILE@`.
-
-# What the builder and the QA agent are told they work on.
-APP_NAME="TODO: product name"
-# Guest targets under targets/<name>/, space-separated; the first is the default a ticket gets.
-TARGETS="windows"
+# The factory's settings for one product. The product itself (APP_NAME, TARGETS, CODE_PATHS, its targets' build, test
+# and launch scripts, its VM layer) is a VM toolkit product definition: VM_PRODUCT, default the profile's name
+# (`vmt new-product <name>` starts one).
+#VM_PRODUCT="@PROFILE@"
 
 # Paths the builder may never touch, beyond the ticket's oracle, .factory and .claude (space-separated, repo-relative).
 PROTECTED_EXTRA=".github"
 # The reviewer's standards for this product (what to check, what Data flows means here).
-# Where its code is (repo paths, space-separated): `factory.sh which <path>` picks the profile from these.
-CODE_PATHS="TODO/"
 REVIEW_STANDARDS="$PROFILE_DIR/reviewer.md"
 
 # Branches the remote accepts, and the PR target. TICKET is set: e.g. DEVEX-123 -> devex/factory-devex-123-build-<stamp>.

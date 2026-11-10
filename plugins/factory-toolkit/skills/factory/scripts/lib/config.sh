@@ -1,8 +1,11 @@
 # config.sh: the factory's layered configuration, sourced by run-loop.sh and factory.sh (bash 3.2 compatible).
 # Set before sourcing: REPO (the target repo), X (the engine's scripts folder), TICKET (optional).
 # Layers, later wins: engine defaults < <project>/config.sh < <tickets>/<TICKET>.sh (picks PROFILE, PLATFORM)
-#   < profiles/<PROFILE>/profile.sh < profiles/<PROFILE>/targets/<PLATFORM>/target.sh < ~/.factory/config.sh.
-# The project layers say what the products need (shared by the team); the user layer says what this machine has.
+#   < the VM toolkit's product definition VM_PRODUCT (product.sh, then targets/<PLATFORM>/target.sh)
+#   < profiles/<PROFILE>/profile.sh < ~/.vm-toolkit/config.sh < ~/.factory/config.sh.
+# The project layers say what the products need (shared by the team); the user layers say what this machine has. The
+# products themselves (code paths, guest targets, build/test/launch scripts, VM layers) are the VM toolkit's
+# (lib/vmt.sh finds it; its lib/products.sh finds the repo's definitions): the profile adds the factory's settings.
 # The project (config.sh + profiles/) is the repo's own .factory/ when it has profiles; until then, the one bundled with
 # this skill in projects/<name>/ whose REPO_MATCH matches the repo's origin remote. Tickets are working files, never
 # committed: next to the runs in the main checkout's .claude/worktrees/factory-tickets/ (TICKETS_DIR); each run takes a
@@ -10,10 +13,22 @@
 
 FACTORY_DIR=${FACTORY_DIR:-$REPO/.factory}
 SKILL_DIR=$(cd "$X/.." && pwd)
+. "$X/lib/vmt.sh" || return 2
+VMT_DIR=$VMT
+. "$VMT/scripts/lib/products.sh"
+# product_dir <name>: checks that this repo's VM product definitions (the repo's .vm/, else the toolkit's bundled
+# project for it) have that product
+product_dir() {
+  local d
+  d=$(products_dir "$REPO") \
+    || { echo "factory: no VM product definitions for this repo: no .vm/ in it, and no vm-toolkit projects/*/project.sh whose REPO_MATCH matches its origin" >&2; return 2; }
+  [ -f "$d/$1/product.sh" ] || { echo "factory: profile $PROFILE uses product '$1' (VM_PRODUCT), which $d does not define" >&2; return 2; }
+  PRODUCT_DIR=$d/$1
+}
 # Runs and build worktrees live in the main checkout, so they are found from any worktree of the repo.
 MAIN_REPO=$(cd "$(git -C "$REPO" rev-parse --git-common-dir)/.." && pwd)
 FACTORY_DIR_REL=${FACTORY_DIR#$REPO/}
-VM=${FACTORY_VM_DIR:-$X/vm}
+VM=${FACTORY_VM_DIR:-$VMT/scripts/vm}
 
 # Engine defaults. Caps: per run (model, budget, time box), per loop: ITER_CAP builder runs in all, STALL_CAP in a row
 # that change nothing (code, disputes, tests), LOOP_USD dollars, the STOP and PAUSE files.
@@ -59,7 +74,6 @@ GIT_SETTLE_S=60
 FACTORY_RUNS=${FACTORY_RUNS:-$MAIN_REPO/.claude/worktrees/factory-runs}
 # The negative runs (the acceptance test on a base, which must fail), kept per base tree and test across runs.
 NEG_CACHE=${FACTORY_NEG_CACHE:-$FACTORY_RUNS/.negative}
-FACTORY_VM_ROOT=${FACTORY_VM_ROOT:-$HOME/VMs/factory}
 # The dashboard, one per repo: http://<DASHBOARD_NAME>.factory.localhost:<DASHBOARD_PORT>/. The name defaults to the
 # repo folder's, the port to one picked from the name, so two repos' dashboards don't want the same one; a project or
 # ~/.factory/config.sh pins either.
@@ -111,18 +125,21 @@ if [ -n "${TICKET:-}" ] && [ -f "$TICKETS_DIR/$TICKET.sh" ]; then
   PROFILE_DIR=$PROJECT_DIR/profiles/$PROFILE
   [ -n "$PROFILE" ] && [ -f "$PROFILE_DIR/profile.sh" ] \
     || { echo "factory: no profile '$PROFILE' in $PROJECT_FROM (profiles/<name>/profile.sh; set PROFILE in the ticket .sh or DEFAULT_PROFILE)" >&2; return 2; }
+  # The product (what the app is, where its code is, how its VM builds, tests and launches it): the profile's VM_PRODUCT,
+  # read without the rest of the profile, which may use what the product sets. The ticket picks a target (PLATFORM);
+  # the product's first one is the default.
+  VM_PRODUCT=$(VM_PRODUCT=""; . "$PROFILE_DIR/profile.sh" > /dev/null 2>&1; echo "${VM_PRODUCT:-$PROFILE}")
+  product_dir "$VM_PRODUCT" || return 2
+  load_product "$PRODUCT_DIR" "$PLATFORM" || return 2
   . "$PROFILE_DIR/profile.sh"
-  # The ticket picks a target; the profile's first one is the default.
-  PLATFORM=${PLATFORM:-${TARGETS%% *}}
-  TARGET_DIR=$PROFILE_DIR/targets/$PLATFORM
-  if [ -n "$PLATFORM" ]; then
-    [ -f "$TARGET_DIR/target.sh" ] || { echo "factory: profile $PROFILE has no target '$PLATFORM'" >&2; return 2; }
-    . "$TARGET_DIR/target.sh"
-  fi
 fi
 
+# This machine: the VM toolkit's settings (VM root, CPUs, RAM, slots), then the factory's own, which may set them too.
+VMT_USER_CONFIG=${VMT_USER_CONFIG:-$HOME/.vm-toolkit/config.sh}
+[ -f "$VMT_USER_CONFIG" ] && . "$VMT_USER_CONFIG"
 FACTORY_USER_CONFIG=${FACTORY_USER_CONFIG:-$HOME/.factory/config.sh}
 [ -f "$FACTORY_USER_CONFIG" ] && . "$FACTORY_USER_CONFIG"
+export FACTORY_VM_ROOT=${FACTORY_VM_ROOT:-${VM_ROOT:-$HOME/VMs/factory}}
 
 # One golden image per guest OS: <VM root>/<guest os>/base.qcow2. A target may name a layer on it instead (GOLDEN_IMAGE).
 FACTORY_VM_HOME=${FACTORY_VM_HOME:-$FACTORY_VM_ROOT/${GUEST_OS:-windows}}
@@ -152,5 +169,6 @@ REVIEW_TOOLS=(
   "Bash(git diff *)" "Bash(git log *)" "Bash(git show *)")
 
 export VM_IMAGE=$GOLDEN_IMAGE
+export VM_HOME=$FACTORY_VM_HOME
 export FACTORY_VM_HOME VM_CPUS VM_MEM VM_MAX VM_SLOT_WAIT_MIN VM_IDLE_MIN VM_BOOT_MIN VM_XRES VM_YRES
 export VM_SHARE_CHECK=${SHARE_CHECK:-}

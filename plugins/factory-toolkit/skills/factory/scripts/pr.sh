@@ -18,7 +18,7 @@ REPO=$(git rev-parse --show-toplevel 2> /dev/null) || { echo "pr: run this from 
 . "$RUN/state.sh"
 TICKET=$S_TICKET
 . "$X/lib/config.sh" || exit 2
-. "$X/lib/timebox.sh"
+. "$VMT/scripts/lib/timebox.sh"
 PR_MODEL=${PR_MODEL:-claude-sonnet-5-5} PR_USD=${PR_USD:-1} PR_MIN=${PR_MIN:-10}  # defaults: lib/config.sh
 BRANCH=$S_BRANCH WT=$S_WT
 HANDBACK=handback/$(echo "$BRANCH" | tr '/' '-')

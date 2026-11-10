@@ -83,16 +83,11 @@ provided_release() {
   return 0
 }
 
-# guest_script <guest dir> <script> <log>: runs a fixture's or provided resource's script in the guest, $Dir set
-guest_script() {
-  { printf '$ErrorActionPreference = "Stop"\n$Dir = '"'"'%s'"'"'\n' "$1"; cat "$2"; } | "$VM/vmssh" - >> "$3" 2>&1
-}
-
 # needs_apply <assessment> <log file>: puts the ticket's fixtures and provided resources in the VM (vmctl env already
-# exported), before the app starts. Returns 0; 2 when a fixture fails (the harness); 4 when a provided resource is
-# unreachable or in use (a human must act). NEEDS_WHY says why.
+# exported), before the app starts, with the VM toolkit's apply.sh (copy, check.ps1, apply.ps1). Returns 0; 2 when a
+# fixture fails (the harness); 4 when a provided resource is unreachable or in use (a human must act). NEEDS_WHY says why.
 needs_apply() {
-  local line k n src g
+  local line k n src g rc
   NEEDS_WHY=""
   while IFS= read -r line; do
     k=$(need_kind "$line") n=$(need_name "$line")
@@ -103,16 +98,15 @@ needs_apply() {
       *) continue ;;
     esac
     echo "== $k $n" >> "$2"
-    "$VM/vmcp" "$src" "$g" >> "$2" 2>&1 || { NEEDS_WHY="could not copy $k $n into the guest: $(tail -1 "$2")"; return 2; }
-    if [ "$k" = provided ] && [ -f "$src/check.ps1" ]; then
-      guest_script "$g" "$src/check.ps1" "$2" \
-        || { NEEDS_WHY="provided $n: its check fails in the guest: $(tail -1 "$2")"; return 4; }
-    fi
-    if [ -f "$src/apply.ps1" ]; then
-      guest_script "$g" "$src/apply.ps1" "$2" || {
-        NEEDS_WHY="$k $n: apply.ps1 fails in the guest: $(tail -1 "$2")"
-        [ "$k" = provided ] && return 4; return 2; }
-    fi
+    VMT_VM_DIR=$VM "$VMT/scripts/apply.sh" "$src" "$g" "$2"
+    rc=$?
+    case $rc in
+      0) ;;
+      2) NEEDS_WHY="could not copy $k $n into the guest: $(tail -1 "$2")"; return 2 ;;
+      4) NEEDS_WHY="$k $n: its check fails in the guest: $(tail -1 "$2")"; return 4 ;;
+      *) NEEDS_WHY="$k $n: apply.ps1 fails in the guest: $(tail -1 "$2")"
+         [ "$k" = provided ] && return 4; return 2 ;;
+    esac
     ev "needs: $k $n in place" > /dev/null
   done < <(needs_lines "$1")
   return 0

@@ -70,15 +70,15 @@ done
 [ -z "$EXPECT" ] || [ -n "$TEST_ONLY$QA_ONLY" ] || { echo "--expect goes with --test-only or --qa-only" >&2; exit 2; }
 
 X=$(cd "$(dirname "$0")" && pwd)
-# The engine's own tests (tests/run-loop.test.sh) swap the VM layer and the guest tool for fakes.
-VM=${FACTORY_VM_DIR:-$X/vm}
-GUEST_SH=${FACTORY_GUEST_SH:-$X/guest.sh}
 # The repo is the one the command runs from: the engine is installed apart from it (a plugin), never inside it.
 REPO=$(git rev-parse --show-toplevel 2> /dev/null) || { echo "factory: run this from inside the repo (no git repo here)" >&2; exit 2; }
 SKILL=$(cd "$X/.." && pwd)
 case "$SKILL/" in "$REPO"/*) SKILL_REL=${SKILL#$REPO/} SKILL_IN_REPO=$SKILL_REL ;; *) SKILL_REL=$SKILL SKILL_IN_REPO="" ;; esac
 . "$X/lib/config.sh" || exit 2
-. "$X/lib/timebox.sh"
+# The VM toolkit's (lib/vmt.sh): the VM tools ($VM, from lib/config.sh), the guest tool, the time box and the lease. The
+# engine's own tests (tests/run-loop.test.sh) swap the VM tools and the guest tool for fakes.
+GUEST_SH=${FACTORY_GUEST_SH:-$VMT/scripts/guest.sh}
+. "$VMT/scripts/lib/timebox.sh"
 . "$X/lib/sizing.sh"
 . "$X/lib/needs.sh"
 TICKET_FILE=$TICKETS_DIR/$TICKET.md
@@ -102,7 +102,7 @@ fi
 
 # Every build and test runs in the guest, so every mode but the assessor's needs the target's image and scripts.
 [ -n "$ASSESS_ONLY" ] || [ -f "$FACTORY_VM_HOME/$GOLDEN_IMAGE" ] && command -v qemu-system-aarch64 > /dev/null \
-  || { echo "no $GOLDEN_IMAGE in $FACTORY_VM_HOME (or no QEMU): see $SKILL_REL/references/vm-setup.md" >&2; exit 2; }
+  || { echo "no $GOLDEN_IMAGE in $FACTORY_VM_HOME (or no QEMU): see $VMT/references/vm-setup.md" >&2; exit 2; }
 [ -n "${GUEST_BUILD:-}" ] && [ -n "${GUEST_TEST:-}" ] || { echo "profile $PROFILE, target '$PLATFORM': no GUEST_BUILD/GUEST_TEST" >&2; exit 2; }
 [ -n "${ACCEPT_TEST:-}" ] || { echo "no ACCEPT_TEST in $TICKETS_DIR/$TICKET.sh" >&2; exit 2; }
 # Optional: most tickets run their whole accept project. Read bare in the negative run's cache key, so set here.
@@ -176,7 +176,7 @@ fi
 HANDBACK=handback/$(echo "$BRANCH" | tr '/' '-')
 BASE=$(git -C "$REPO" rev-parse --short HEAD)
 [ -n "$RESUME_RUN" ] && BASE=$S_BASE
-# The run's build VM, and the tool the builder and the reviewer call to build and test in it (scripts/guest.sh).
+# The run's build VM, and the tool the builder and the reviewer call to build and test in it (the toolkit's guest.sh).
 BUILD_VM=$QA_ROOT/vm-build
 GUEST=$RUN/guest
 ACCEPT_CMD="$GUEST test $ACCEPT_TEST${ACCEPT_FILTER:+ $ACCEPT_FILTER}"
@@ -594,9 +594,9 @@ base_check() {
         if ! git -C "$REPO" worktree add -q --detach "$bwt" "$BASE" 2>> "$EV"; then
           why="base worktree add failed"; bwt=""
         else
-          # One VM a run at a time (V63): the build VM boots again on its next use (lib/lease.sh).
+          # One VM a run at a time (V63): the build VM boots again on its next use (the toolkit's lib/lease.sh).
           "$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1
-          if "$VM/vmctl.sh" up "$vmrun" "$bwt" >> "$out" 2>&1; then guest_conf "$vmrun" "$bwt"; else why="base VM did not come up"; fi
+          if VM_TITLE=$(vm_title "$vmrun") "$VM/vmctl.sh" up "$vmrun" "$bwt" >> "$out" 2>&1; then guest_conf "$vmrun" "$bwt"; else why="base VM did not come up"; fi
         fi
       fi
       if [ -z "$why" ]; then
@@ -641,15 +641,33 @@ first_errors() { # first_errors <guest.sh output>: three error or failed-test li
   grep -E ': ([A-Za-z]+ )?error |^ *Failed [^!]' "$1" | awk '!seen[$0]++' | head -3 | tr '\n' ' '
 }
 
-# guest_conf <vm run dir> <worktree>: what scripts/guest.sh needs to build and test in that VM
+# vm_title <vm run dir>: the VM's window title in Screen Sharing (vmctl.sh's VM_TITLE): the ticket, what the VM is for
+# and the run id, e.g. "DEVEX-514 QA round 5 - devex-514-20261104T182338Z" (<vm run dir> is <VM root>/runs/<run id>/<vm
+# folder>).
+vm_title() {
+  local dir id what
+  dir=$(basename "$1"); id=$(basename "$(dirname "$1")")
+  case $dir in
+    vm-build) what="build" ;;
+    vm-base-*) what="base re-check round ${dir#vm-base-}" ;;
+    vm-basetest-*) what="tests on the base round ${dir#vm-basetest-}" ;;
+    vm-[0-9]*) what="QA round ${dir#vm-}" ;;
+    *) what=$dir ;;
+  esac
+  # The ticket is everything before the run's stamp (and its kind): a key may go on after its number (DEVEX-514R).
+  echo "$(echo "$id" | sed -nE 's/-(qa|test|assess)-([0-9]{8}T[0-9]{6}Z)/-\2/; s/^(.+)-[0-9]{8}T[0-9]{6}Z.*/\1/p' | tr '[:lower:]' '[:upper:]') $what - $id" | sed 's/^ //'
+}
+
+# guest_conf <vm run dir> <worktree>: what the toolkit's guest.sh needs to build and test in that VM (its guest.conf)
 guest_conf() {
   printf "WORKTREE='%s'\nGUEST_BUILD='%s'\nGUEST_TEST='%s'\nGUEST_BUILD_MIN=%s\nGUEST_LAUNCH='%s'\nAPP_SHOT_CAP=%s\n" \
     "$2" "$GUEST_BUILD" "$GUEST_TEST" "$GUEST_BUILD_MIN" "${GUEST_LAUNCH:-}" "$APP_SHOT_CAP" > "$1/guest.conf"
 }
 
 # build_vm_up <worktree>: sets up the run's build VM and writes the guest tool. The VM itself boots on demand: the first
-# build or test goes through lib/lease.sh, which boots it (waiting for a free slot), and it powers off after VM_IDLE_MIN
-# minutes unused, so a builder that is reading or thinking holds no slot. It is powered off when the runner exits.
+# build or test goes through the toolkit's lib/lease.sh, which boots it (waiting for a free slot), and it powers off
+# after VM_IDLE_MIN minutes unused, so a builder that is reading or thinking holds no slot. It is powered off when the
+# runner exits.
 build_vm_up() {
   local v
   trap '"$VM/vmctl.sh" down "$BUILD_VM" >> "$EV" 2>&1' EXIT
@@ -659,10 +677,11 @@ build_vm_up() {
   # The builder's sessions run the tool too, so it carries the VM settings rather than relying on their environment.
   {
     printf '#!/bin/bash\n# Builds, tests and runs this run'"'"'s worktree in its build VM (booted on first use): build [<project>] [--clean] | test [--no-build] <project> [<filter>] | app launch|wait|shot|click|type|key|scroll|stop | run <powershell> | info\n'
-    for v in FACTORY_VM_HOME VM_IMAGE VM_SHARE_CHECK VM_CPUS VM_MEM VM_MAX VM_SLOT_WAIT_MIN VM_BOOT_MIN VM_XRES VM_YRES VM_IDLE_MIN; do
+    for v in FACTORY_VM_HOME VM_HOME VM_IMAGE VM_SHARE_CHECK VM_CPUS VM_MEM VM_MAX VM_SLOT_WAIT_MIN VM_BOOT_MIN VM_XRES VM_YRES VM_IDLE_MIN; do
       printf 'export %s=%q\n' "$v" "${!v:-}"
     done
-    printf 'exec %q %q %q %q %q %q %q "$@"\n' "$SKILL/scripts/lib/lease.sh" "$VM/vmctl.sh" "$BUILD_VM" "$1" "$EV" "$GUEST_SH" "$BUILD_VM"
+    printf 'export VM_TITLE=%q\n' "$(vm_title "$BUILD_VM")"
+    printf 'exec %q %q %q %q %q %q %q "$@"\n' "$VMT/scripts/lib/lease.sh" "$VM/vmctl.sh" "$BUILD_VM" "$1" "$EV" "$GUEST_SH" "$BUILD_VM"
   } > "$GUEST"
   chmod +x "$GUEST"
 }
@@ -717,7 +736,7 @@ app_launch() { "$VM/vmssh" - < "$GUEST_LAUNCH" > "$1" 2>&1 && grep -q '^LAUNCH O
 app_up() {
   local vmrun=$1 share=$2 built=$3 log=$4 rc
   APP_WHY=""
-  "$VM/vmctl.sh" up "$vmrun" "$share" > "$log/vm.log" 2>&1 || { APP_WHY="VM did not come up: $(tail -1 "$log/vm.log")"; return 2; }
+  VM_TITLE=$(vm_title "$vmrun") "$VM/vmctl.sh" up "$vmrun" "$share" > "$log/vm.log" 2>&1 || { APP_WHY="VM did not come up: $(tail -1 "$log/vm.log")"; return 2; }
   eval "$("$VM/vmctl.sh" env "$vmrun")"
   if [ "$built" = no ]; then
     ev "$(basename "$log"): guest build (time box $GUEST_BUILD_MIN min)"

@@ -1,16 +1,20 @@
 #!/bin/bash
 # run-loop.test.sh: the factory's runner end to end, on a throwaway repo, with fakes for claude, the VM layer and the
-# guest (tests/fakes/). Each scenario scripts the agents' sessions and checks how the run ends. No VM, no model, no
-# money: a scenario takes seconds. Run it after any change to run-loop.sh, factory.sh or the prompts it reads.
+# guest (tests/fakes/, and the VM toolkit's tests/fakes/vm/). Each scenario scripts the agents' sessions and checks how
+# the run ends. No VM, no model, no money: a scenario takes seconds. Run it after any change to run-loop.sh, factory.sh
+# or the prompts it reads.
 #   tests/run-loop.test.sh [scenario...]      all scenarios, or the ones named
 # bash 3.2 compatible.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 SKILL=$(cd "$HERE/../skills/factory" && pwd)
 FAKES=$HERE/fakes
+# The VM tools are the VM toolkit's (the sibling plugin); their fakes live with it.
+VM_FAKES=$(cd "$HERE/../../vm-toolkit/tests/fakes/vm" && pwd)
 PASSED=0 FAILED=0 FAILS=""
 
-# setup: a fresh repo with a demo project (.factory/), a ticket and the fakes' environment.
+# setup: a fresh repo with a demo project (.factory/) and its VM product definition (.vm/), a ticket and the fakes'
+# environment.
 setup() {
   T=$(mktemp -d "${TMPDIR:-/tmp}/factory-test.XXXXXX")
   T=$(cd "$T" && pwd -P)
@@ -20,12 +24,13 @@ setup() {
   (
     cd "$R" || exit 1
     git init -q -b master && git config user.email test@example.com && git config user.name Test
-    mkdir -p .factory/profiles/demo/targets/windows src tests
+    mkdir -p .factory/profiles/demo .vm/demo/targets/windows src tests
     printf 'DEFAULT_PROFILE=demo\nDOC_PATHS="docs/"\n' > .factory/config.sh
-    printf 'APP_NAME=Demo\nTARGETS=windows\nCODE_PATHS="src/"\nBRANCH_PREFIX=factory/\nREVIEW_STANDARDS=none\n' > .factory/profiles/demo/profile.sh
+    printf 'BRANCH_PREFIX=factory/\nREVIEW_STANDARDS=none\n' > .factory/profiles/demo/profile.sh
+    printf 'APP_NAME=Demo\nTARGETS=windows\nCODE_PATHS="src/"\n' > .vm/demo/product.sh
     printf 'GUEST_OS=windows\nGUEST_DESC="Fake OS"\nGUEST_BUILD=$TARGET_DIR/build.ps1\nGUEST_TEST=$TARGET_DIR/test.ps1\nGUEST_LAUNCH=$TARGET_DIR/launch.ps1\n' \
-      > .factory/profiles/demo/targets/windows/target.sh
-    for f in build test launch; do echo "# fake" > ".factory/profiles/demo/targets/windows/$f.ps1"; done
+      > .vm/demo/targets/windows/target.sh
+    for f in build test launch; do echo "# fake" > ".vm/demo/targets/windows/$f.ps1"; done
     echo app > src/app.txt
     echo "the oracle" > tests/accept.txt
     git add -A && git commit -qm "base with the oracle"
@@ -34,7 +39,7 @@ setup() {
   printf "PROFILE=demo\nACCEPT_TEST=Accept.Tests\nORACLE_PATHS=tests/\nSCOPE_REGEX='^src/'\n" > "$T/tickets/DEMO-1.sh"
   printf 'FACTORY_VM_ROOT=%s/vms\nGIT_SETTLE_S=2\n' "$T" > "$T/user.sh"
   : > "$T/scenario.sh"
-  export FACTORY_TICKETS=$T/tickets FACTORY_USER_CONFIG=$T/user.sh FACTORY_VM_DIR=$FAKES/vm FACTORY_GUEST_SH=$FAKES/guest.sh
+  export FACTORY_TICKETS=$T/tickets FACTORY_USER_CONFIG=$T/user.sh FACTORY_VM_DIR=$VM_FAKES VMT_USER_CONFIG=$T/vmt-user.sh FACTORY_GUEST_SH=$FAKES/guest.sh
   export FACTORY_NEG_CACHE=$T/negative FACTORY_PROVIDED=$T/provided FAKE_STATE=$T/state FAKE_SCENARIO=$T/scenario.sh FAKE_SKILL=$SKILL
   export FAKE_RUNS=$R/.claude/worktrees/factory-runs
   export PATH=$FAKES/bin:$PATH

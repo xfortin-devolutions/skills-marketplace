@@ -1,15 +1,32 @@
 {
   "name": "xfortin-skills-marketplace",
-  "version": "0.7.14",
+  "version": "0.8.0",
   "description": "Xavier Fortin's experimental Claude Code skills, incubated here before they move to Devolutions/skills-marketplace",
-  "owner": { "name": "Xavier Fortin", "email": "xfortin@devolutions.net" },
+  "owner": {
+    "name": "Xavier Fortin",
+    "email": "xfortin@devolutions.net"
+  },
   "plugins": [
     {
       "name": "factory-toolkit",
-      "description": "[EXPERIMENTAL] Software factory: Jira ticket -> spec with a red oracle -> unattended builder, verify, reviewer and blind VM QA loop -> hand-back for a human judge. Builds and tests in QEMU VMs of the target OS, driven from a Mac",
-      "version": "0.7.14",
-      "author": { "name": "Xavier Fortin", "email": "xfortin@devolutions.net" },
+      "description": "[EXPERIMENTAL] Software factory: Jira ticket -> spec with a red oracle -> unattended builder, verify, reviewer and blind VM QA loop -> hand-back for a human judge. Builds and tests in QEMU VMs of the target OS, driven from a Mac (needs vm-toolkit)",
+      "version": "0.8.0",
+      "author": {
+        "name": "Xavier Fortin",
+        "email": "xfortin@devolutions.net"
+      },
       "source": "./plugins/factory-toolkit",
+      "category": "development"
+    },
+    {
+      "name": "vm-toolkit",
+      "description": "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS, driven from a Mac: build and test a worktree in the guest, launch the app, screenshots and input, Screen Sharing. A skill and an MCP server, for any agent",
+      "version": "0.1.0",
+      "author": {
+        "name": "Xavier Fortin",
+        "email": "xfortin@devolutions.net"
+      },
+      "source": "./plugins/vm-toolkit",
       "category": "development"
     }
   ]
