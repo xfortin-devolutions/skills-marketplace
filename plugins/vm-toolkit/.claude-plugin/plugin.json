@@ -1,6 +1,6 @@
 {
   "name": "vm-toolkit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS, driven from a Mac: golden image and layers, per-run copy-on-write clones sharing a worktree, build and test in the guest, app launch, screenshots and input, Screen Sharing. A skill and an MCP server, for any agent",
   "author": {
     "name": "Xavier Fortin",

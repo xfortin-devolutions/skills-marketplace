@@ -66,7 +66,7 @@ case "$cmd" in
         for t in $TARGETS; do
           ( load_product "$d/$p" "$t" > /dev/null 2>&1 || exit 0
             img=$(home_of "${GUEST_OS:-$t}")/$GOLDEN_IMAGE
-            echo "  target $t: $GUEST_DESC, image $GOLDEN_IMAGE$([ -f "$img" ] || echo " (not on this machine)")" )
+            echo "  target $t: $GUEST_DESC, image $GOLDEN_IMAGE ($([ -f "$img" ] || echo "not ")on this machine)" )
         done
       )
     done ;;

@@ -21,7 +21,7 @@
     {
       "name": "vm-toolkit",
       "description": "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS, driven from a Mac: build and test a worktree in the guest, launch the app, screenshots and input, Screen Sharing. A skill and an MCP server, for any agent",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "Xavier Fortin",
         "email": "xfortin@devolutions.net"
