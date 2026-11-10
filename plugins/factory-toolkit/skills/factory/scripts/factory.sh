@@ -27,13 +27,15 @@
 #                                        project (its own .factory/, or the skill's projects/<project>/ that matches it);
 #                                        a repo with no project gets one: .factory/ in the repo, or with --skill, in the skill
 #   factory.sh check [profile]           which project this repo uses, then check a profile (default: every one)
-#   factory.sh which <path>...           the profile whose CODE_PATHS own each repo path (how the spec step picks one)
+#   factory.sh which <path>...           the profile for each repo path: the VM toolkit's product whose CODE_PATHS own
+#                                        it, and the profile using that product (how the spec step picks one)
 #   factory.sh spec <KEY> [--open]       a ticket's spec files (and open the .md in the default app)
 #   factory.sh dashboard [--port N] [--no-open]   live view of the runs in the browser, one per repo, at
 #                                        http://<DASHBOARD_NAME>.factory.localhost:<DASHBOARD_PORT>/ (local; Ctrl-C stops)
 #   factory.sh clean <KEY> [--dry-run]   a finished ticket: delete its spec, fixtures, run logs and VM folders; list the
 #                                        worktrees and branches left (removing those stays a human's call)
-#   factory.sh layer <profile> --test|--build   rehearse (throwaway clone) or build and freeze the profile's VM layer
+#   factory.sh layer <profile> --test|--build   rehearse (throwaway clone) or build and freeze the VM layer of the
+#                                        profile's product (vmt layer)
 # [run] is a run id or a prefix of one (devex-528-2026…); default: the newest run.
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
@@ -82,7 +84,7 @@ case "$cmd" in
     d=$(run_dir "${1:-}") || exit 1
     v=$(live_vm "$d")
     [ -n "$v" ] || die "no running VM for $(basename "$d") (VMs live while the run does, and after a QA stage with --keep-vm)"
-    "$X/vm/vmctl.sh" show "$v" ;;
+    "$VM/vmctl.sh" show "$v" ;;
   human) d=$(run_dir "${1:-}") || exit 1; touch "$d/HUMAN"; echo "the next QA verdict of $(basename "$d") waits for you" ;;
   stop) d=$(run_dir "${1:-}") || exit 1; touch "$d/STOP"; echo "$(basename "$d") stops before its next station" ;;
   pause)
@@ -162,7 +164,7 @@ case "$cmd" in
     n=0
     for k in "$FACTORY_VM_ROOT"/*/runs/"$(basename "$d")"/vm-*/factory-kept; do
       [ -f "$k" ] || continue
-      "$X/vm/vmctl.sh" down "$(dirname "$k")"
+      "$VM/vmctl.sh" down "$(dirname "$k")"
       [ -s "$k" ] && git -C "$REPO" worktree remove --force "$(cat "$k")" 2> /dev/null
       rm -f "$k"; n=$((n + 1))
     done
@@ -231,11 +233,14 @@ case "$cmd" in
     cp -R "$X/../templates/profile/" "$dest/"
     find "$dest" -type f -exec sed -i '' "s/@PROFILE@/$name/g" {} +
     echo "created $dest: fill every TODO, then factory.sh check $name"
+    pd=$(products_dir "$REPO") && [ -f "$pd/$name/product.sh" ] \
+      || echo "the product itself (code paths, targets, build/test/launch scripts) is a VM toolkit definition: $VMT/scripts/vmt new-product $name"
     find "$dest" -type f | sed "s|^$PROJECT_DIR/|  |" ;;
   check)
     n=0 bad=0
     [ -n "$PROJECT_DIR" ] || die "no project for this repo: no $FACTORY_DIR_REL/profiles, and no skill projects/*/config.sh whose REPO_MATCH matches its origin (factory.sh new-profile)"
     echo "project: $PROJECT_FROM"
+    echo "VM toolkit: $VMT ($(vmt_version "$VMT"); V=$VMT/scripts)"
     for d in "$PROJECT_DIR"/profiles/${1:-*}/; do
       [ -d "$d" ] || die "no profile '${1:-}' in $PROJECT_DIR/profiles"
       "$X/lib/check-profile.sh" "$REPO" "$TICKETS_DIR" "$PROJECT_DIR" "$(basename "$d")" || bad=$((bad + 1))
@@ -245,24 +250,33 @@ case "$cmd" in
   layer)
     name=${1:-}; mode=${2:-}
     [ -n "$name" ] && [ "$mode" = --test -o "$mode" = --build ] || die "usage: factory.sh layer <profile> --test|--build"
-    [ -f "$PROJECT_DIR/profiles/$name/layer/layer.conf" ] || die "profile $name has no layer/layer.conf"
-    FACTORY_VM_HOME=$FACTORY_VM_ROOT/windows exec "$X/vm/golden/layer-build.sh" "$PROJECT_DIR/profiles/$name/layer" "$mode" ;;
+    [ -n "$PROJECT_DIR" ] && [ -f "$PROJECT_DIR/profiles/$name/profile.sh" ] || die "no profile '$name'"
+    # The layer is the product's (the VM toolkit's product definition the profile names).
+    p=$(VM_PRODUCT=""; TICKET=X PROFILE_DIR=$PROJECT_DIR/profiles/$name; . "$PROFILE_DIR/profile.sh" > /dev/null 2>&1; echo "${VM_PRODUCT:-$name}")
+    exec "$VMT/scripts/vmt" --repo "$REPO" layer "$p" "$mode" ;;
   which)
     [ -n "$PROJECT_DIR" ] || die "no project for this repo (factory.sh new-profile)"
     [ $# -gt 0 ] || die "usage: factory.sh which <repo path>..."
+    pd=$(products_dir "$REPO") || die "no VM product definitions for this repo (vmt products says why)"
+    # profile_of <product>: the profiles that use it (VM_PRODUCT, default the profile's name)
+    profile_of() {
+      local d out=""
+      for d in "$PROJECT_DIR"/profiles/*/; do
+        [ -f "${d}profile.sh" ] || continue
+        [ "$(VM_PRODUCT=""; TICKET=X PROFILE_DIR=${d%/}; . "${d}profile.sh" > /dev/null 2>&1; echo "${VM_PRODUCT:-$(basename "$d")}")" = "$1" ] \
+          && out="$out $(basename "$d")"
+      done
+      echo $out
+    }
     found=""
     for path in "$@"; do
-      path=${path#$REPO/} best="" blen=0
+      path=${path#$REPO/} best=""
       doc=no
       for c in $DOC_PATHS; do case "$path" in "$c"*) doc=yes ;; esac; done
       [ "$doc" = yes ] && { echo "$path: docs (any profile)"; continue; }
-      for d in "$PROJECT_DIR"/profiles/*/; do
-        cps=$(TICKET=X PROFILE_DIR=${d%/} CODE_PATHS=""; . "${d}profile.sh" > /dev/null 2>&1; echo "$CODE_PATHS")
-        for c in $cps; do
-          case "$path" in "$c"*) [ ${#c} -gt $blen ] && best=$(basename "$d") blen=${#c} ;; esac
-        done
-      done
-      echo "$path: ${best:-no profile}"
+      prod=$(product_for_path "$pd" "$path")
+      [ -n "$prod" ] && best=$(profile_of "$prod")
+      echo "$path: ${best:-no profile}${prod:+ (product $prod)}"
       found="$found ${best:-none}"
     done
     found=$(echo $found | tr ' ' '\n' | sort -u | tr '\n' ' ')
@@ -340,5 +354,5 @@ except ValueError: print("")')
     brs=$(git -C "$REPO" branch --list "*$k*" | sed 's/^[*+ ] */  /')
     [ -z "$wts$brs" ] || printf 'left for you to remove (git worktree remove / git branch -D):\n%s%s\n' "${wts:+$wts
 }" "$brs" ;;
-  *) sed -n '2,31p' "$0"; exit 2 ;;
+  *) sed -n '2,/^# \[run\]/p' "$0"; exit 2 ;;
 esac

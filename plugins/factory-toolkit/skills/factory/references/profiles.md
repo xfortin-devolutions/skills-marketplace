@@ -5,12 +5,16 @@ The engine knows nothing about a product. A repo's **project** says what its pro
 experimental, it ships with the skill in `projects/<project>/`, picked by its `REPO_MATCH` against the repo's `origin`
 (supported projects and how to move one into its repo: `projects/README.md`). The repo's `.factory/profiles/` wins when
 both exist. Tickets are working files, never committed: `.claude/worktrees/factory-tickets/` in the main checkout. Each product
-is a **profile**, and each guest OS the product ships on is a **target** of that profile. RDM on Windows, macOS and
-Linux is one profile with three targets, not three profiles: standards, scope rules and branch naming are the same, only
-the guest image, build, test and launch differ. **Nothing builds or tests on the Mac**: every build and test runs in a VM
-of the target OS, through the target's scripts.
+is a **profile**. **Nothing builds or tests on the Mac**: every build and test runs in a VM of the target OS.
 
-Start one with `factory.sh new-profile <name> [--skill <project>]` (it copies `templates/profile/` into the repo's
+A product has two halves. What it is and how its VMs build, test and launch it (`APP_NAME`, `CODE_PATHS`, its guest
+**targets** and their scripts, its VM layer) is the **VM toolkit**'s product definition (the `vm-toolkit` plugin, its
+`references/products.md`): the repo's `.vm/`, else the one the toolkit bundles for the repo. RDM on Windows, macOS and
+Linux is one product with three targets. The profile here is the factory's half on top: review standards, branch
+naming, protected paths, and which product it is (`VM_PRODUCT`, default the profile's name).
+
+Start the product definition first when it doesn't exist (`vmt new-product <name>`), then the profile with
+`factory.sh new-profile <name> [--skill <project>]` (it copies `templates/profile/` into the repo's
 project; a repo with none gets one, in the skill with `--skill`, else in its `.factory/`), fill every `TODO`, then `factory.sh check <name>` until it says OK. `check` validates everything below
 that can be checked without running a VM; prove the rest with `run-loop.sh <KEY> --test-only <ref>` and
 `--qa-only <ref>` on a commit whose answer you know, with `--expect red|green`.
@@ -21,16 +25,12 @@ that can be checked without running a VM; prove the rest with `run-loop.sh <KEY>
 <project>/                         <skill>/projects/<project>/ for now, <repo>/.factory/ once adopted
   config.sh                        team defaults: DEFAULT_PROFILE, models and caps, DASHBOARD_NAME/PORT (REPO_MATCH in the skill)
   profiles/<name>/
-    profile.sh                     the product
+    profile.sh                     the factory's settings for the product
     reviewer.md                    the reviewer's standards for it
-    targets/<os>/target.sh         one guest target: image and scripts
-    targets/<os>/build.ps1         builds what ships, in the guest
-    targets/<os>/test.ps1          runs one test project, in the guest
-    targets/<os>/launch.ps1        starts the build in the guest's desktop session
-    layer/layer.conf, setup.ps1    optional: the VM layer the targets start from
-    layer.md                       optional: notes on how the layer was worked out
+<definitions>/<product>/           the VM toolkit's: <repo>/.vm/, else its bundled projects/<project>/ (references/products.md there)
 <main checkout>/.claude/worktrees/factory-tickets/<KEY>.md, <KEY>.sh   a spec and its inputs (spec-authoring.md), not committed
-~/.factory/config.sh               per machine, never committed: FACTORY_VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, VM_SLOT_WAIT_MIN, VM_IDLE_MIN, budget overrides
+~/.vm-toolkit/config.sh            per machine, never committed: VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, VM_SLOT_WAIT_MIN, VM_IDLE_MIN
+~/.factory/config.sh               per machine, never committed: budget overrides (VM settings here still apply, and win)
 ```
 
 The project's `config.sh` may set `PR_INSTRUCTIONS`: the repo's own PR instructions, repo-relative (RDM:
@@ -47,21 +47,20 @@ a nested one, the builder writes the new file at `handback/<branch>/docs/<path w
 (`docs/claude/…`, `docs/DVLS/claude/…`) and the runner copies it into place in its own commit, before verify.
 
 Load order, later wins: engine defaults (`scripts/lib/config.sh`) < the project's `config.sh` < the ticket's `.sh` <
-`profile.sh` < `target.sh` < `~/.factory/config.sh`. All are bash 3.2 (the macOS default): no associative arrays.
+the product's `product.sh` and `target.sh` < `profile.sh` < `~/.vm-toolkit/config.sh` < `~/.factory/config.sh`. All are bash 3.2 (the macOS default): no associative arrays.
 
 ## profile.sh
 
 | Variable | Required | Meaning | Example (console) |
 |---|---|---|---|
-| `APP_NAME` | yes | what the builder and the QA agent are told they work on | `Devolutions Console` |
-| `CODE_PATHS` | yes | where the product's code is: repo paths, space-separated; `factory.sh which <path>` picks the profile with the longest match | `Console/` |
-| `TARGETS` | yes | targets under `targets/`, space-separated; the first is a ticket's default | `windows` |
+| `VM_PRODUCT` | no | the VM toolkit product it is, when not named like the profile | `console` |
 | `REVIEW_STANDARDS` | yes | the reviewer's standards file: absolute, or repo-relative | `$PROFILE_DIR/reviewer.md` |
 | `BRANCH_PREFIX` | yes | prefix of the run's branch; `TICKET` is set when it is read | `devex/factory-` |
 | `PR_BASE` | yes | the draft PR's target branch | `master` |
 | `PROTECTED_EXTRA` | no | paths the builder may never touch, beyond the oracle, `.factory` and `.claude` | `.github` |
 
-No build or test command lives here: that is the targets' job, in the guest.
+No build or test command lives here, nor the app name, code paths or targets: those are the product definition's.
+`factory.sh which <path>` maps a path to its product (the toolkit's `CODE_PATHS`), then to the profile using it.
 
 ## reviewer.md
 
@@ -69,76 +68,31 @@ What a reviewer from another team would miss on this product: the coding standar
 product rules and the skills that hold them, and what **Data flows** means for this codebase (UI-thread, async I/O,
 persistence, secrets…). Short: the reviewer reads the whole file for every review.
 
-## Targets
+## Targets and layers
 
-`target.sh`:
+The product definition's: the VM toolkit's `references/products.md` (scripts, their inputs, `EXIT CODE` rules, layers).
+`factory.sh layer <profile> --test|--build` builds the layer of the profile's product (`vmt layer`).
 
-| Variable | Required | Meaning |
-|---|---|---|
-| `GUEST_OS` | yes | the guest OS folder under `FACTORY_VM_ROOT` (`windows`) |
-| `GUEST_DESC` | yes | the guest as the agents are told about it (`Windows 11 ARM64 with IIS, …`) |
-| `GOLDEN_IMAGE` | no | the image clones start from: `base.qcow2` (default) or a layer this profile builds (`<LAYER>.qcow2`) |
-| `SHARE_CHECK` | yes | a repo-relative file the shared worktree must contain (proves the right repo is shared) |
-| `GUEST_BUILD`, `GUEST_TEST`, `GUEST_LAUNCH` | yes | the three scripts, usually `$TARGET_DIR/build.ps1`, … |
+How the loop uses the targets: one VM per run at a time, and only while in use. The build VM, booted by the first build
+or test and powered off after `VM_IDLE_MIN` unused, serves the builder (`guest build|test|info`) and the runner's verify
+(`build`, one clean rebuild on red, then the ticket's `test`) and goes down once verify is green; each QA round boots a
+fresh clone that runs `launch` on what verify built, without rebuilding.
 
-The scripts run in the guest with the worktree at `R:` (Windows), sent by `vmssh`, which runs in SSH's session 0 (no
-desktop). The runner and the builder call them through `scripts/guest.sh`, which sets their inputs and reads their
-verdict:
-
-| Script | Inputs | Must | Ends with |
-|---|---|---|---|
-| `build` | `$Project` (empty: build what ships) | stop the running app first (it locks its files on the share) | `BUILD EXIT CODE: <n>` |
-| `test` | `$Project`, `$Filter` (may be empty), `$NoBuild` | run that test project only; with `$NoBuild`, on what the last whole build left (`dotnet test --no-build`): verify sets it after its build | `TEST EXIT CODE: <n>` |
-| `launch` | none | stop any running instance; start the built app in the signed-in desktop session (run again to restart it for the exploratory QA, and on a base build for its re-check). A server or web app: deploy or start it, wait until it answers, then open the browser at its URL in the desktop session | `LAUNCH OK` once it is starting (a server: once its page answers) |
-
-Exit code rules: a non-zero code with restore or SDK errors (`NU…`, `NETSDK…`, `MSB4236`) is a harness error; any other
-non-zero code is the change's fault. When the harness is at fault (no `R:`, no SDK), stop **without** printing the
-`EXIT CODE` line: the runner then reports ERROR and never sends the change back for it.
-
-How the loop uses them: one VM per run at a time, and only while in use. The build VM, booted by the first build or
-test and powered off after `VM_IDLE_MIN` unused, serves the builder (`guest build|test|info`) and the runner's verify
-(`build`, one clean rebuild on red, then the ticket's `test`) and goes down once verify is green; each QA round boots a fresh clone that runs `launch` on
-what verify built, without rebuilding.
-
-## Layers
-
-One golden image per guest OS (`<FACTORY_VM_ROOT>/<os>/base.qcow2`, references/vm-setup.md), shared by every profile.
-Disk is the limit: never an image per scenario or per ticket. Software a product needs on the machine (servers,
-databases, services) goes in a **layer**: a qcow2 overlay on `base.qcow2` that stores only its own changes (the
-Console's IIS, SQL Server Express, PostgreSQL and four DVLS instances: 6 GB). State one ticket needs belongs in a fixture
-run inside the throwaway clone, where it costs time, not disk. A fixture is the ticket's, not the profile's:
-`<KEY>.fixtures/<name>/` next to its spec (`factory.sh fixture <KEY> <name>`), which the runner applies in each QA VM
-before the app starts when the ticket's assessment names it ([test-needs.md](test-needs.md)). A profile has no
-`fixtures/`. What only a human can provide (a real server, an
+State one ticket needs belongs in a fixture run inside the throwaway clone, where it costs time, not disk. A fixture is
+the ticket's, not the profile's: `<KEY>.fixtures/<name>/` next to its spec (`factory.sh fixture <KEY> <name>`), which
+the runner applies in each QA VM before the app starts when the ticket's assessment names it
+([test-needs.md](test-needs.md)). A profile has no `fixtures/`. What only a human can provide (a real server, an
 account) is not a fixture: it lives on the machine, `factory.sh provide <name>`.
-
-`layer/layer.conf` (bash, read with `FACTORY_VM_HOME` set):
-
-| Variable | Required | Meaning |
-|---|---|---|
-| `LAYER` | yes | the image name: `<LAYER>.qcow2`, which a target names in `GOLDEN_IMAGE` |
-| `LAYER_FILES` | no | host files copied to the guest's `C:\factory\layer\` (installers without a public URL live in `<VM home>/installers/`, never in the repo) |
-| `LAYER_DIRS` | no | `<guest folder>=<host folder>` pairs, copied to `C:\factory\layer\<guest folder>\` |
-
-It may print why it can't build on this machine and `return 1` (a missing installer).
-
-`layer/setup.ps1` runs in the guest, elevated, in the desktop session (installers such as PostgreSQL's fail from SSH).
-Every step checks whether it is already done and skips it, so a failed run is started again rather than from scratch
-(the template's `Step` helper). It logs to `C:\factory\layer\setup.log` and ends it with `LAYER SETUP OK` or
-`LAYER SETUP FAILED: <why>`. Generated credentials go to `C:\factory\secrets\` (administrators only), never to the log.
-
-`factory.sh layer <profile> --test` rehearses it on a throwaway clone of `base.qcow2`, left up to inspect;
-`--build` creates the layer, fills it, removes the setup's files, trims, shuts down and freezes it.
 
 ## Tickets
 
 `<KEY>.sh` (next to `<KEY>.md` in `factory-tickets/`) picks `PROFILE` (default `DEFAULT_PROFILE`; pick it with
-`factory.sh which`) and `PLATFORM` (default: the profile's first target), and sets `ACCEPT_TEST` (a test project),
+`factory.sh which`) and `PLATFORM` (default: the product's first target), and sets `ACCEPT_TEST` (a test project),
 `ACCEPT_FILTER`, `ORACLE_PATHS` and `SCOPE_REGEX`: references/spec-authoring.md. `factory.sh check` checks the tickets of
-each profile too, and warns when `ACCEPT_TEST` is outside the profile's `CODE_PATHS`. Each run copies the spec into its
+each profile too, and warns when `ACCEPT_TEST` is outside the product's `CODE_PATHS`. Each run copies the spec into its
 run folder; `factory.sh clean <KEY>` deletes it with the runs once the ticket is done.
 
 ## What stays out of a profile
 
 Credentials (NuGet feeds, VM keys, generated passwords), installers, VM images and anything specific to one machine. The
-first three live under the VM home or `~/.factory/`, never in the repo.
+first three live under the VM home, `~/.vm-toolkit/` or `~/.factory/`, never in the repo.

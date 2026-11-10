@@ -1,0 +1,189 @@
+#!/bin/bash
+# vmt: the VM toolkit's command line. Product definitions come from the repo the command runs in (or --repo <path>):
+# its .vm/ folder, else the bundled projects/<name>/ whose REPO_MATCH matches its origin (lib/products.sh).
+#   vmt products                         the repo's definitions folder, its products and their targets and images
+#   vmt which <repo path>...             the product each path belongs to (longest CODE_PATHS prefix)
+#   vmt check [<product>]                checks the definitions (references/products.md) and this machine's images
+#   vmt new-product <name>               starts a definition from templates/product/ in the repo's .vm/ (or the
+#                                        definitions folder it already uses)
+#   vmt layer <product> --test|--build   rehearse (throwaway clone) or build and freeze the product's VM layer
+#   vmt init <vm dir> <worktree> [--product <p>] [--target <os>] [--title <text>]
+#                                        sets up a VM folder for a worktree: which product, image and scripts
+#                                        (<vm dir>/guest.conf). --product is needed when the repo has several.
+#   vmt up <vm dir> [--keep]             boots it, sharing the worktree as R:. Without --keep it powers off after
+#                                        VM_IDLE_MIN idle minutes (the next guest command boots it again)
+#   vmt guest <vm dir> <command>...      scripts/guest.sh on it, booting it first if needed: build [<project>] [--clean]
+#                                        | test [--no-build] <project> [<filter>] | app launch|wait|shot|click|type|
+#                                        key|scroll|stop | run '<powershell>' | info
+#   vmt apply <vm dir> <folder> [<guest folder>]   puts a setup folder in the VM (scripts/apply.sh); the guest folder
+#                                        defaults to C:\factory\setup\<folder name>
+#   vmt env|alive|show <vm dir>          vmctl.sh's: export lines, running?, open Screen Sharing on this Mac
+#   vmt down <vm dir> [--keep-disk]      power off and free the slot
+#   vmt list | vmt gc                    the running VMs of every guest OS; free dead slots
+#   vmt root                             the VM root (images per guest OS, and the MCP server's VM folders in mcp/)
+# Machine settings: lib/config.sh (~/.vm-toolkit/config.sh). bash 3.2 compatible.
+set -u
+X=$(cd "$(dirname "$0")" && pwd)
+VMT_DIR=$(cd "$X/.." && pwd)
+. "$X/lib/config.sh"
+. "$X/lib/products.sh"
+die() { echo "vmt: $*" >&2; exit 1; }
+usage() { sed -n '2,/^# Machine settings/p' "$0" >&2; exit 2; }
+
+REPO_ARG=.
+if [ "${1:-}" = --repo ]; then REPO_ARG=${2:-}; shift 2; fi
+
+# defs: the repo's definitions folder, or die saying why there is none
+defs() {
+  git -C "$REPO_ARG" rev-parse --show-toplevel > /dev/null 2>&1 || die "not in a git repo ($REPO_ARG); run from inside one or pass --repo <path>"
+  products_dir "$REPO_ARG" \
+    || die "no product definitions for $(git -C "$REPO_ARG" rev-parse --show-toplevel): no .vm/ folder, and no bundled projects/*/project.sh whose REPO_MATCH matches its origin"
+}
+repo_top() { git -C "$REPO_ARG" rev-parse --show-toplevel; }
+# product <defs> <name>: the product's folder
+product() { [ -f "$1/$2/product.sh" ] || die "no product '$2' in $1 ($(products_list "$1" | tr '\n' ' '))"; echo "$1/$2"; }
+
+# vm_conf <vm dir>: loads the VM folder's guest.conf (written by init) and exports what vmctl.sh reads from it
+vm_conf() {
+  [ -f "$1/guest.conf" ] || die "no $1/guest.conf: vmt init <vm dir> <worktree> first"
+  . "$1/guest.conf"
+  export VM_HOME VM_IMAGE VM_SHARE_CHECK VM_TITLE
+}
+
+# home_of <guest os>: the image folder for that guest OS
+home_of() { echo "${VM_HOME:-$VM_ROOT/$1}"; }
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  products)
+    d=$(defs)
+    echo "definitions: $d"
+    for p in $(products_list "$d"); do
+      (
+        load_product "$d/$p" > /dev/null || exit 0
+        echo "$p: $APP_NAME; code: $CODE_PATHS"
+        for t in $TARGETS; do
+          ( load_product "$d/$p" "$t" > /dev/null 2>&1 || exit 0
+            img=$(home_of "${GUEST_OS:-$t}")/$GOLDEN_IMAGE
+            echo "  target $t: $GUEST_DESC, image $GOLDEN_IMAGE$([ -f "$img" ] || echo " (not on this machine)")" )
+        done
+      )
+    done ;;
+  which)
+    [ $# -gt 0 ] || usage
+    d=$(defs) top=$(repo_top)
+    for path in "$@"; do
+      path=${path#$top/}
+      echo "$path: $(product_for_path "$d" "$path" || echo "no product")"
+    done ;;
+  check)
+    d=$(defs) top=$(repo_top) bad=0 n=0
+    echo "definitions: $d"
+    for p in ${1:-$(products_list "$d")}; do
+      echo "product $p"
+      "$X/lib/check-product.sh" "$top" "$(product "$d" "$p")" || bad=$((bad + 1))
+      n=$((n + 1))
+    done
+    [ "$bad" -eq 0 ] && echo "$n product(s) OK" || { echo "$bad of $n product(s) need work"; exit 1; } ;;
+  new-product)
+    name=${1:-}
+    case "$name" in ''|*[!a-z0-9-]*) die "usage: vmt new-product <name> (lowercase letters, digits, dashes)" ;; esac
+    d=$(products_dir "$REPO_ARG" || echo "$(repo_top)/.vm")
+    [ -e "$d/$name" ] && die "$d/$name already exists"
+    mkdir -p "$d/$name"
+    cp -R "$VMT_DIR/templates/product/" "$d/$name/"
+    find "$d/$name" -type f -exec sed -i '' "s/@PRODUCT@/$name/g" {} +
+    echo "created $d/$name: fill every TODO (delete layer/ if the product needs no VM layer), then vmt check $name"
+    find "$d/$name" -type f | sed "s|^$d/|  |" ;;
+  layer)
+    name=${1:-} mode=${2:-}
+    [ -n "$name" ] && { [ "$mode" = --test ] || [ "$mode" = --build ]; } || die "usage: vmt layer <product> --test|--build"
+    p=$(product "$(defs)" "$name")
+    [ -f "$p/layer/layer.conf" ] || die "product $name has no layer/layer.conf"
+    load_product "$p" || exit 2
+    VM_HOME=$(home_of "$GUEST_OS") exec "$X/vm/golden/layer-build.sh" "$p/layer" "$mode" ;;
+  init)
+    D=${1:-} W=${2:-}
+    [ -n "$D" ] && [ -n "$W" ] || usage
+    shift 2
+    P="" TGT="" TITLE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --product) P=${2:-}; shift ;;
+        --target) TGT=${2:-}; shift ;;
+        --title) TITLE=${2:-}; shift ;;
+        *) usage ;;
+      esac
+      shift
+    done
+    [ -d "$W" ] || die "no worktree $W"
+    W=$(cd "$W" && pwd)
+    REPO_ARG=$W
+    d=$(defs)
+    if [ -z "$P" ]; then
+      P=$(products_list "$d")
+      [ "$(echo "$P" | grep -c .)" = 1 ] || die "the repo has several products ($(echo $P)): pass --product"
+    fi
+    load_product "$(product "$d" "$P")" "$TGT" || exit 2
+    # A new session on the folder: the last one's screenshots go (guest.sh caps a folder's screenshots, APP_SHOT_CAP).
+    mkdir -p "$D/app" && rm -f "$D"/app/shot-*.png "$D/app.running"
+    D=$(cd "$D" && pwd)
+    {
+      printf 'WORKTREE=%q\nPRODUCT=%q\nPLATFORM=%q\nAPP_NAME=%q\nGUEST_DESC=%q\n' "$W" "$P" "$PLATFORM" "$APP_NAME" "${GUEST_DESC:-}"
+      printf 'GUEST_BUILD=%q\nGUEST_TEST=%q\nGUEST_LAUNCH=%q\nGUEST_BUILD_MIN=%s\nAPP_SHOT_CAP=%s\n' \
+        "${GUEST_BUILD:-}" "${GUEST_TEST:-}" "${GUEST_LAUNCH:-}" "$GUEST_BUILD_MIN" "$APP_SHOT_CAP"
+      printf 'VM_HOME=%q\nVM_IMAGE=%q\nVM_SHARE_CHECK=%q\nVM_TITLE=%q\n' \
+        "$(home_of "${GUEST_OS:-$PLATFORM}")" "$VM_IMAGE" "$VM_SHARE_CHECK" "${TITLE:-$P $(basename "$W") - $(basename "$D")}"
+    } > "$D/guest.conf"
+    echo "$D: $APP_NAME on $PLATFORM ($VM_IMAGE), sharing $W" ;;
+  up)
+    D=${1:-}; [ -n "$D" ] || usage
+    vm_conf "$D"
+    "$X/vm/vmctl.sh" alive "$D" && { echo "already running: $D"; exit 0; }
+    if [ "${2:-}" = --keep ]; then
+      : > "$D/keep"
+      exec "$X/vm/vmctl.sh" up "$D" "$WORKTREE"
+    fi
+    rm -f "$D/keep"
+    # The lease boots it, runs a no-op on it and leaves the idle reaper watching it.
+    "$X/lib/lease.sh" "$X/vm/vmctl.sh" "$D" "$WORKTREE" - true || exit 3
+    tail -2 "$D/lease-up.log" 2> /dev/null ;;
+  guest)
+    D=${1:-}; [ -n "$D" ] && [ $# -ge 2 ] || usage
+    shift
+    vm_conf "$D"
+    # A kept VM (up --keep) is never powered off behind its user's back: no lease, no reaper.
+    if [ -f "$D/keep" ]; then
+      "$X/vm/vmctl.sh" alive "$D" || die "the VM of $D is down: vmt up $D --keep"
+      exec "$X/guest.sh" "$D" "$@"
+    fi
+    exec "$X/lib/lease.sh" "$X/vm/vmctl.sh" "$D" "$WORKTREE" - "$X/guest.sh" "$D" "$@" ;;
+  apply)
+    D=${1:-} src=${2:-}
+    [ -n "$D" ] && [ -d "$src" ] || usage
+    vm_conf "$D"
+    "$X/vm/vmctl.sh" alive "$D" || die "the VM of $D is down: vmt up $D"
+    eval "$("$X/vm/vmctl.sh" env "$D")"
+    g=${3:-"C:\\factory\\setup\\$(basename "$src")"}
+    "$X/apply.sh" "$src" "$g"
+    rc=$?
+    case $rc in 0) echo "in place: $g" ;; 2) echo "could not copy $src into the guest" ;; 3) echo "apply.ps1 failed in the guest" ;; 4) echo "check.ps1 failed: the resource is not reachable from the guest" ;; esac
+    exit $rc ;;
+  env|alive|show)
+    D=${1:-}; [ -n "$D" ] || usage
+    vm_conf "$D"
+    exec "$X/vm/vmctl.sh" "$cmd" "$D" ;;
+  down)
+    D=${1:-}; [ -n "$D" ] || usage
+    vm_conf "$D"
+    rm -f "$D/keep"
+    exec "$X/vm/vmctl.sh" down "$D" ${2:+"$2"} ;;
+  root) echo "$VM_ROOT" ;;
+  list|gc)
+    for h in "$VM_ROOT"/*/; do
+      [ -d "$h/slots" ] || continue
+      VM_HOME=${h%/} "$X/vm/vmctl.sh" "$cmd" | sed "s|^|$(basename "$h"): |"
+    done ;;
+  *) usage ;;
+esac
