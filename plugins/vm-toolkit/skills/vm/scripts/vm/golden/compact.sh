@@ -7,8 +7,8 @@
 #
 # First run on the Windows image (2026-10-23): 42 GB to 18.3 GB, clones boot and build as fast as before.
 # Clones read through the decompression; their own writes go to uncompressed overlays.
-# Refuses while factory VMs run or while a layer is backed by base.qcow2: a layer stores block differences against the
-# exact file under it, so rewriting that file would corrupt the layer.
+# Refuses while factory VMs run, while a layer is backed by base.qcow2 or while checkpoints exist: a layer (a checkpoint
+# too) stores block differences against the exact file under it, so rewriting that file would corrupt it.
 # bash 3.2 compatible.
 set -euo pipefail
 
@@ -33,6 +33,8 @@ for f in *.qcow2; do
         die "$f is a layer on base.qcow2: merge it (qemu-img commit) or delete it first"
     fi
 done
+# Checkpoints (vmt checkpoint) are cut from base.qcow2 too, directly or through a layer.
+ls checkpoints/*.qcow2 > /dev/null 2>&1 && die "checkpoints are cut from this image: vmt checkpoint list, then rm them first"
 echo "before: $(qemu-img info base.qcow2 | sed -n 's/^disk size: //p')"
 
 if [ "$GUEST" = 1 ]; then
