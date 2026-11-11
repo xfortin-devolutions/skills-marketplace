@@ -57,7 +57,7 @@ S=<skill dir>/scripts/vm; R=$(mktemp -d)
 $S/vmctl.sh up $R "$(git rev-parse --show-toplevel)"     # prints slot, SSH and VNC ports; returns when SSH answers
 eval "$($S/vmctl.sh env $R)"; $S/vmssh 'hostname; Get-ChildItem R:\ | Select-Object -First 5'
 python3 $S/vm.py shot $R/check.png                         # the desktop
-$S/vmctl.sh show $R                                        # Screen Sharing opens on it
+$S/vmctl.sh show $R                                        # TigerVNC (else Screen Sharing) opens on it
 $S/vmctl.sh down $R                                        # overlay deleted; base.qcow2 untouched
 ```
 Two `up`s in parallel must get different slots/ports (`VM_MAX` caps how many run at once). With every slot taken, `up`
@@ -71,3 +71,9 @@ waits for one (`VM_SLOT_WAIT_MIN`, default 120) and says so on stderr.
 - Windows inside each clone is the same installation; activation and the computer name are shared. Fine for local
   testing; don't expose the VMs to a network (they only listen on 127.0.0.1).
 - QEMU's `-vnc` password is limited to 8 characters; it's random per VM and kept in `<vm dir>/vm/vnc.pass`.
+- Clipboard: `show` opens TigerVNC (`brew install --cask tigervnc-viewer`) when it's installed, and the clipboard is then
+  shared both ways. Clones carry QEMU's vdagent port, and `show` puts the SPICE agent in the VM the first time it's shown
+  (`scripts/vm/clipboard.sh`: the ARM64 virtio-serial driver from virtio-win.iso, and the x64 agent, which runs under
+  emulation; ~5 s). Not in the golden image, so the layers cut from it stay valid. TigerVNC exchanges the clipboard when
+  its window takes focus: copy, click into the VM, paste. Screen Sharing can't (no VNC extended clipboard);
+  `VM_VIEWER=screensharing` still picks it.

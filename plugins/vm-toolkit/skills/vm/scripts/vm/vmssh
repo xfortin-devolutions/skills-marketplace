@@ -4,7 +4,8 @@
 #   vmssh - < script.ps1                        script from stdin, sent as -EncodedCommand (no quoting issues)
 # Which VM: VM_SSH_PORT and VM_KNOWN_HOSTS (set by vmctl.sh env <run dir>) and VM_HOME (the golden image folder, which
 # holds the guest key; FACTORY_VM_HOME is read too); without them, a golden/start.sh VM on port 2222. VM_USER is the
-# guest account (default rdmtest, the one golden/install.sh creates).
+# guest account (default rdmtest, the one golden/install.sh creates). VM_NO_SHARE=1 skips mapping R: (~15 s a call) for
+# commands that don't use it.
 set -uo pipefail
 
 VM_HOME="${VM_HOME:-${FACTORY_VM_HOME:-$HOME/VMs/factory/windows}}"
@@ -13,7 +14,8 @@ SSH=(ssh -i "$VM_HOME/id_ed25519" -p "${VM_SSH_PORT:-2222}" -o UserKnownHostsFil
 
 # SSH sessions don't inherit the desktop's drive mappings, so every call maps R: itself. QEMU starts the host's smbd on
 # the guest's first connection, which can take seconds (longer with two VMs booting): retry for up to 60 s.
-PRELUDE='$ProgressPreference = "SilentlyContinue"; for ($i = 0; $i -lt 30 -and -not (Test-Path R:\); $i++) { net use R: \\10.0.2.4\qemu 2>&1 | Out-Null; if (-not (Test-Path R:\)) { Start-Sleep 2 } }'
+PRELUDE='$ProgressPreference = "SilentlyContinue"'
+[ -n "${VM_NO_SHARE:-}" ] || PRELUDE="$PRELUDE"'; for ($i = 0; $i -lt 30 -and -not (Test-Path R:\); $i++) { net use R: \\10.0.2.4\qemu 2>&1 | Out-Null; if (-not (Test-Path R:\)) { Start-Sleep 2 } }'
 if [ "${1:-}" = "-" ]; then
     BODY="$(cat)"
 else

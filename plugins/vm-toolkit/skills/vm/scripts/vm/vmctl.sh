@@ -3,7 +3,8 @@
 #   vmctl.sh up <run dir> <worktree>   boot headless with <worktree> shared as R:, return when the guest's SSH answers
 #   vmctl.sh env <run dir>             export lines for vm.py / vmssh:  eval "$(vmctl.sh env <run dir>)"
 #   vmctl.sh alive <run dir>           exit 0 when the VM is running (env still answers after a down: it reads a file)
-#   vmctl.sh show <run dir>            open the VM's screen in macOS Screen Sharing (VNC on localhost, password)
+#   vmctl.sh show <run dir>            open the VM's screen in TigerVNC with a shared clipboard (clipboard.sh), else in
+#                                      macOS Screen Sharing (VM_VIEWER=screensharing forces it); VNC on localhost, password
 #   vmctl.sh down <run dir> [--keep-disk]   power off, free the slot, delete the overlay unless kept
 #   vmctl.sh list                      running VMs and their slots
 #   vmctl.sh gc                        free the slots of dead VMs and delete their overlays
@@ -29,6 +30,7 @@ VM_XRES=${VM_XRES:-1600}
 VM_YRES=${VM_YRES:-900}
 VM_BOOT_MIN=${VM_BOOT_MIN:-10}
 VM_SLOT_WAIT_MIN=${VM_SLOT_WAIT_MIN:-120}
+TIGERVNC=${TIGERVNC:-/Applications/TigerVNC.app}
 
 die() { echo "vmctl: $*" >&2; exit 1; }
 alive() { [ -f "$1/qemu.pid" ] && kill -0 "$(cat "$1/qemu.pid")" 2> /dev/null; }
@@ -87,7 +89,7 @@ up() {
   rt=$(smb_runtime "$n")
   rm -rf "$rt"
   mkdir -p "$d/smb" "$rt/private" "$rt/lock" "$rt/state" "$rt/cache" "$rt/ncalrpc"
-  rm -f "$d/disk.qcow2" "$d/known_hosts" "$d/.screen-size"
+  rm -f "$d/disk.qcow2" "$d/known_hosts" "$d/.screen-size" "$d/clipboard.ok"
   qemu-img create -q -f qcow2 -b "$VM_HOME/$VM_IMAGE" -F qcow2 "$d/disk.qcow2" || { release_slot "$n" "$d"; die "qemu-img failed"; }
   rm -f "$d/vars.fd"
   cp "$VM_HOME/$(image_vars)" "$d/vars.fd" && chmod u+w "$d/vars.fd"
@@ -138,6 +140,8 @@ EOF
   # base=localtime: Windows reads the hardware clock as local time; a UTC one puts the guest hours ahead, and MSBuild then
   # takes files edited on the host for older than its outputs on the share and skips rebuilding them (GAPS V38).
   # Plain background process rather than -daemonize: forking after Hypervisor.framework setup is unsafe on macOS.
+  # The vdagent port carries the clipboard between the guest's SPICE agent and VNC clients that speak the extended
+  # clipboard (TigerVNC; not Screen Sharing). mouse=off: the usb-tablet stays the pointer vm.py drives.
   nohup qemu-system-aarch64 \
     -name "$(vm_title "$(dirname "$d")")" \
     -machine virt -accel hvf -cpu host -smp "$VM_CPUS" -m "$VM_MEM" \
@@ -148,6 +152,8 @@ EOF
     -device nvme,drive=disk0,serial=rdmwin0 \
     -device qemu-xhci -device usb-kbd -device usb-tablet -device "virtio-gpu-pci,xres=$VM_XRES,yres=$VM_YRES" \
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$port-:22,guestfwd=tcp:10.0.2.4:445-cmd:$smbd -l $d/smb -s $d/smb/smb.conf" \
+    -device virtio-serial-pci -chardev qemu-vdagent,id=vdagent,clipboard=on,mouse=off \
+    -device virtserialport,chardev=vdagent,name=com.redhat.spice.0 \
     -qmp unix:"$d/qmp.sock",server=on,wait=off \
     -display none -vnc "127.0.0.1:$vnc,password=on" \
     -pidfile "$d/qemu.pid" > "$d/qemu.log" 2>&1 < /dev/null &
@@ -202,7 +208,18 @@ show() {
   d=$(vmdir "${1:-}")
   alive "$d" || die "no VM running for ${1:-}"
   . "$d/vm.env"
+  # TigerVNC shares the clipboard with the guest (clipboard.sh); Screen Sharing can't: it has no extended clipboard.
+  if [ "${VM_VIEWER:-}" != screensharing ] && [ -d "$TIGERVNC" ]; then
+    "$X/clipboard.sh" "$d" || echo "vmctl: opening the VM without a shared clipboard" >&2
+    # TigerVNC's password file is the password DES-encrypted under VNC's fixed key (bits reversed, as VNC reads keys).
+    (umask 077; printf '%s' "$(cat "$d/vnc.pass")" | /usr/bin/openssl enc -des-ecb -nopad -K e84ad660c4721ae0 > "$d/vnc.tigervnc")
+    echo "TigerVNC: 127.0.0.1::$VM_VNC_PORT (password in $d/vnc.pass); the clipboard is shared both ways"
+    open -n -a "$TIGERVNC" --args PasswordFile="$d/vnc.tigervnc" "127.0.0.1::$VM_VNC_PORT"
+    return
+  fi
   echo "Screen Sharing: vnc://127.0.0.1:$VM_VNC_PORT (password in $d/vnc.pass)"
+  [ "${VM_VIEWER:-}" = screensharing ] \
+    || echo "vmctl: no shared clipboard in Screen Sharing; for one: brew install --cask tigervnc-viewer" >&2
   open "vnc://:$(cat "$d/vnc.pass")@127.0.0.1:$VM_VNC_PORT"
 }
 

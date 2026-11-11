@@ -1,6 +1,6 @@
 ---
 name: vm
-description: "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), run from a Mac: build and test a repo's worktree inside a VM that shares it live, launch the built app in the guest's desktop, take screenshots and drive it with mouse and keyboard, apply test data, and open the VM in Screen Sharing for a person. Products (RDM, Devolutions Console, …) are defined per repo: the repo's .vm/ folder, else a definition bundled with this skill. Also the one-time golden image, product VM layers (IIS, SQL Server, DVLS…), and setting up a new product. Use when the user says 'test this branch on Windows', 'build it in a VM', 'show me the app in the VM', 'set up the VM image', 'build the console layer', 'add a product to the VMs', or when an agent needs a real target OS to check a change. The same tools are an MCP server (vm_up, vm_build, vm_screenshot, …) for agents in other harnesses. The factory skill runs its loop on these VMs."
+description: "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), run from a Mac: build and test a repo's worktree inside a VM that shares it live, launch the built app in the guest's desktop, take screenshots and drive it with mouse and keyboard, apply test data, and open the VM's screen for a person (TigerVNC with a shared clipboard, else Screen Sharing). Products (RDM, Devolutions Console, …) are defined per repo: the repo's .vm/ folder, else a definition bundled with this skill. Also the one-time golden image, product VM layers (IIS, SQL Server, DVLS…), and setting up a new product. Use when the user says 'test this branch on Windows', 'build it in a VM', 'show me the app in the VM', 'set up the VM image', 'build the console layer', 'add a product to the VMs', or when an agent needs a real target OS to check a change. The same tools are an MCP server (vm_up, vm_build, vm_screenshot, …) for agents in other harnesses. The factory skill runs its loop on these VMs."
 ---
 
 # VM toolkit
@@ -21,7 +21,7 @@ Windows). Contract: [references/products.md](references/products.md).
 | User says | Do |
 |---|---|
 | "test / build this branch in a VM", "does it build on Windows" | **use a VM** below |
-| "show me the VM", "let me see the app" | `bash $V/vmt show <vm dir>` (Screen Sharing, this Mac only) |
+| "show me the VM", "let me see the app" | `bash $V/vmt show <vm dir>` (TigerVNC with the clipboard shared both ways, else Screen Sharing; this Mac only) |
 | "set up the VMs", no image yet (`vmt products` says "not on this machine") | **setup** |
 | "build / update the console layer" | **layer** |
 | "add DVLS to the VMs", a path with no product (`vmt which` says "no product") | **new product** |
@@ -55,7 +55,7 @@ The plugin declares an MCP server, `vm` (`mcp/server.py`, Python standard librar
 image and its path), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_apply`, `vm_show`, `vm_list`, `vm_down`. A named
 VM's folder is `<VM root>/mcp/<name>`. Claude Code gets it with the plugin; another harness (Codex, Cursor, a FleetView
 agent on another provider) adds `python3 -I <plugin dir>/mcp/server.py` as a stdio MCP server. It runs on the machine
-with the images: a client elsewhere gets screenshots, but `vm_show` opens Screen Sharing on that machine only. A build
+with the images: a client elsewhere gets screenshots, but `vm_show` opens the screen (TigerVNC, else Screen Sharing) on that machine only. A build
 can take many minutes: give the client a long tool timeout.
 
 ## setup

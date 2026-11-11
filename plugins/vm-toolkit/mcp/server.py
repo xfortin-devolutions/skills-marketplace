@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 HERE = os.path.dirname(os.path.abspath(__file__))
 VMT = os.environ.get("VMT_BIN") or os.path.join(HERE, "..", "skills", "vm", "scripts", "vmt")
 LOG_TAIL = 80
@@ -264,7 +264,7 @@ TOOLS = {
                  {"name": NAME, "folder": {"type": "string", "description": "Local folder."},
                   "guest_folder": {"type": "string", "description": "Default C:\\factory\\setup\\<folder name>."}},
                  ["name", "folder"], t_apply),
-    "vm_show": ("Open the VM's screen in Screen Sharing on the machine running this server (for a person there; a remote "
+    "vm_show": ("Open the VM's screen (TigerVNC with a shared clipboard, else Screen Sharing) on the machine running this server (for a person there; a remote "
                 "client sees nothing).", {"name": NAME}, ["name"], t_show),
     "vm_list": ("The named VMs (running or down) and every VM slot in use on this machine.", {}, [], t_list),
     "vm_down": ("Power the VM off and free its slot. Its folder stays, so vm_up can boot it again.",

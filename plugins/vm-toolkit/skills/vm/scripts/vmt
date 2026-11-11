@@ -17,7 +17,7 @@
 #                                        key|scroll|stop | run '<powershell>' | info
 #   vmt apply <vm dir> <folder> [<guest folder>]   puts a setup folder in the VM (scripts/apply.sh); the guest folder
 #                                        defaults to C:\factory\setup\<folder name>
-#   vmt env|alive|show <vm dir>          vmctl.sh's: export lines, running?, open Screen Sharing on this Mac
+#   vmt env|alive|show <vm dir>          vmctl.sh's: export lines, running?, open the screen on this Mac
 #   vmt down <vm dir> [--keep-disk]      power off and free the slot
 #   vmt list | vmt gc                    the running VMs of every guest OS; free dead slots
 #   vmt root                             the VM root (images per guest OS, and the MCP server's VM folders in mcp/)
