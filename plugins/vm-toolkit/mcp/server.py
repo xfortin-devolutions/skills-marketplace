@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 
-VERSION = "0.1.2"
+VERSION = "0.2.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 VMT = os.environ.get("VMT_BIN") or os.path.join(HERE, "..", "skills", "vm", "scripts", "vmt")
 LOG_TAIL = 80
@@ -104,11 +104,19 @@ def t_up(a):
         if os.path.realpath(shared) != os.path.realpath(w):
             return text(f"VM {name!r} is running and shares {shared}: vm_down it first, or give this one another name", True)
         return text(f"VM {name!r} is already running, sharing {w}")
+    # A VM that took a checkpoint starts from it from then on (vmt checkpoint), unless told another one.
+    ck = a.get("from_checkpoint")
+    if not ck and os.path.isfile(conf):
+        m = re.search(r"^VM_IMAGE=checkpoints/([a-z0-9-]+)\.qcow2$", open(conf).read(), re.M)
+        # ...as long as it exists: a deleted one leaves the product's image.
+        ck = m.group(1) if m and vmt("checkpoint", "show", m.group(1))[0] == 0 else None
     os.makedirs(d, exist_ok=True)
     init = ["init", d, w]
     for k in ("product", "target"):
         if a.get(k):
             init += [f"--{k}", a[k]]
+    if ck:
+        init += ["--checkpoint", ck]
     init += ["--title", f"{name} - {os.path.basename(w)}"]
     rc, out = vmt(*init)
     if rc != 0:
@@ -211,6 +219,21 @@ def t_list(a):
     return text("\n".join(lines or ["no named VMs"]) + ("\n-- slots (every VM on this machine)\n" + slots if slots else ""))
 
 
+def t_checkpoint(a):
+    args = ["checkpoint", existing(a["name"]), a["checkpoint"]]
+    if a.get("note"):
+        args += ["--note", a["note"]]
+    if a.get("resume"):
+        args.append("--resume")
+    rc, out = vmt(*args)
+    return text(out, rc != 0)
+
+
+def t_checkpoints(a):
+    rc, out = vmt("checkpoint", "show", a["checkpoint"]) if a.get("checkpoint") else vmt("checkpoint", "list")
+    return text(out, rc != 0)
+
+
 def t_down(a):
     rc, out = vmt("down", existing(a["name"]), *(["--keep-disk"] if a.get("keep_disk") else []))
     return text(out, rc != 0)
@@ -230,7 +253,10 @@ TOOLS = {
                "product": {"type": "string", "description": "Needed when the repo has several (vm_products)."},
                "target": {"type": "string", "description": "Guest target, default the product's first (windows)."},
                "name": {"type": "string", "description": "Default: from the worktree's folder name."},
-               "keep": {"type": "boolean", "description": "Never power it off when idle (until vm_down)."}},
+               "keep": {"type": "boolean", "description": "Never power it off when idle (until vm_down)."},
+               "from_checkpoint": {"type": "string", "description": "Start from this checkpoint (vm_checkpoints) instead "
+                                   "of the product's image: its sign-ins and setup are there. A VM that took a checkpoint "
+                                   "starts from it anyway."}},
               ["worktree"], t_up),
     "vm_build": ("Build the shared worktree in the guest with the product's build script. Can take many minutes.",
                  {"name": NAME, "project": {"type": "string", "description": "One project; default what the target builds."},
@@ -267,6 +293,21 @@ TOOLS = {
     "vm_show": ("Open the VM's screen (TigerVNC with a shared clipboard, else Screen Sharing) on the machine running this server (for a person there; a remote "
                 "client sees nothing).", {"name": NAME}, ["name"], t_show),
     "vm_list": ("The named VMs (running or down) and every VM slot in use on this machine.", {}, [], t_list),
+    "vm_checkpoint": ("Freeze the VM's state as a named checkpoint other VMs can start from (vm_up from_checkpoint): "
+                      "what is on its disk (sign-ins a person did in it, installed tools, data), not the shared worktree. "
+                      "Shuts the guest down cleanly first (about a minute); the VM starts from the checkpoint from then on "
+                      "(the next command boots it). Checkpoints are kept until a person deletes them (vmt checkpoint rm): "
+                      "there is no tool for that.",
+                      {"name": NAME,
+                       "checkpoint": {"type": "string", "description": "Lowercase letters, digits and dashes, e.g. the "
+                                      "branch's: devex-610 (devex-610-2 for a later one)."},
+                       "note": {"type": "string", "description": "What was set up in it, for the VMs that start from it. "
+                                "Never secrets."},
+                       "resume": {"type": "boolean", "description": "Boot it again right away."}},
+                      ["name", "checkpoint"], t_checkpoint),
+    "vm_checkpoints": ("The checkpoints on this machine: size, age, product, branch and the VMs using them; with "
+                       "checkpoint, one's details and its setup note.",
+                       {"checkpoint": {"type": "string", "description": "One checkpoint's name."}}, [], t_checkpoints),
     "vm_down": ("Power the VM off and free its slot. Its folder stays, so vm_up can boot it again.",
                 {"name": NAME, "keep_disk": {"type": "boolean", "description": "Keep the clone's disk for a look later."}},
                 ["name"], t_down),

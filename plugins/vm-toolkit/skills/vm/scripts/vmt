@@ -7,9 +7,10 @@
 #   vmt new-product <name>               starts a definition from templates/product/ in the repo's .vm/ (or the
 #                                        definitions folder it already uses)
 #   vmt layer <product> --test|--build   rehearse (throwaway clone) or build and freeze the product's VM layer
-#   vmt init <vm dir> <worktree> [--product <p>] [--target <os>] [--title <text>]
+#   vmt init <vm dir> <worktree> [--product <p>] [--target <os>] [--title <text>] [--checkpoint <name>]
 #                                        sets up a VM folder for a worktree: which product, image and scripts
 #                                        (<vm dir>/guest.conf). --product is needed when the repo has several.
+#                                        --checkpoint: the VM starts from that checkpoint instead of the product's image
 #   vmt up <vm dir> [--keep]             boots it, sharing the worktree as R:. Without --keep it powers off after
 #                                        VM_IDLE_MIN idle minutes (the next guest command boots it again)
 #   vmt guest <vm dir> <command>...      scripts/guest.sh on it, booting it first if needed: build [<project>] [--clean]
@@ -19,6 +20,13 @@
 #                                        defaults to C:\factory\setup\<folder name>
 #   vmt env|alive|show <vm dir>          vmctl.sh's: export lines, running?, open the screen on this Mac
 #   vmt down <vm dir> [--keep-disk]      power off and free the slot
+#   vmt checkpoint <vm dir> <name> [--note <text>] [--resume]
+#                                        shuts the VM down cleanly and freezes its disk (sign-ins, setup, data; not the
+#                                        worktree) as checkpoint <name>; the VM starts from it from then on, and other
+#                                        VMs can (init --checkpoint). --resume boots it again right away
+#   vmt checkpoint list | show <name> | rm <name>...
+#                                        the checkpoints, their size and users; delete them (refused while in use).
+#                                        Nothing deletes a checkpoint but rm (lib/checkpoints.sh)
 #   vmt list | vmt gc                    the running VMs of every guest OS; free dead slots
 #   vmt root                             the VM root (images per guest OS, and the MCP server's VM folders in mcp/)
 # Machine settings: lib/config.sh (~/.vm-toolkit/config.sh). bash 3.2 compatible.
@@ -27,6 +35,7 @@ X=$(cd "$(dirname "$0")" && pwd)
 VMT_DIR=$(cd "$X/.." && pwd)
 . "$X/lib/config.sh"
 . "$X/lib/products.sh"
+. "$X/lib/checkpoints.sh"
 die() { echo "vmt: $*" >&2; exit 1; }
 usage() { sed -n '2,/^# Machine settings/p' "$0" >&2; exit 2; }
 
@@ -107,10 +116,11 @@ case "$cmd" in
     D=${1:-} W=${2:-}
     [ -n "$D" ] && [ -n "$W" ] || usage
     shift 2
-    P="" TGT="" TITLE=""
+    P="" TGT="" TITLE="" CK=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --product) P=${2:-}; shift ;;
+        --checkpoint) CK=${2:-}; shift ;;
         --target) TGT=${2:-}; shift ;;
         --title) TITLE=${2:-}; shift ;;
         *) usage ;;
@@ -126,6 +136,13 @@ case "$cmd" in
       [ "$(echo "$P" | grep -c .)" = 1 ] || die "the repo has several products ($(echo $P)): pass --product"
     fi
     load_product "$(product "$d" "$P")" "$TGT" || exit 2
+    if [ -n "$CK" ]; then
+      ck_name_ok "$CK" || die "bad checkpoint name '$CK'"
+      c=$(home_of "${GUEST_OS:-$PLATFORM}")/checkpoints/$CK.qcow2
+      [ -f "$c" ] || die "no checkpoint '$CK' for $PLATFORM (vmt checkpoint list)"
+      [ "$(ck_field "$c" PRODUCT)" = "$P" ] || die "checkpoint '$CK' is of product $(ck_field "$c" PRODUCT), not $P"
+      VM_IMAGE=checkpoints/$CK.qcow2
+    fi
     # A new session on the folder: the last one's screenshots go (guest.sh caps a folder's screenshots, APP_SHOT_CAP).
     mkdir -p "$D/app" && rm -f "$D"/app/shot-*.png "$D/app.running"
     D=$(cd "$D" && pwd)
@@ -179,11 +196,33 @@ case "$cmd" in
     vm_conf "$D"
     rm -f "$D/keep"
     exec "$X/vm/vmctl.sh" down "$D" ${2:+"$2"} ;;
+  checkpoint)
+    case "${1:-}" in
+      list) ck_list ;;
+      show) ck_show "${2:-}" ;;
+      rm) shift; ck_rm "$@" ;;
+      *)
+        D=${1:-} N=${2:-}
+        [ -n "$D" ] && [ -n "$N" ] || usage
+        shift 2
+        note="" resume=no
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --note) note=${2:-}; shift ;;
+            --resume) resume=yes ;;
+            *) usage ;;
+          esac
+          shift
+        done
+        vm_conf "$D"
+        ck_take "$(cd "$D" && pwd)" "$N" "$note" "$resume" ;;
+    esac ;;
   root) echo "$VM_ROOT" ;;
   list|gc)
     for h in "$VM_ROOT"/*/; do
       [ -d "$h/slots" ] || continue
       VM_HOME=${h%/} "$X/vm/vmctl.sh" "$cmd" | sed "s|^|$(basename "$h"): |"
-    done ;;
+    done
+    [ "$cmd" = list ] && ck_summary ;;
   *) usage ;;
 esac

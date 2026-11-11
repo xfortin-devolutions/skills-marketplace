@@ -20,7 +20,15 @@ FAKE = r"""#!/bin/bash
 echo "$*" >> "$FAKE_LOG"
 case "$1" in
   root) echo "$FAKE_ROOT" ;;
-  init) mkdir -p "$2" && printf 'WORKTREE=%s\nPRODUCT=rdm\nPLATFORM=windows\n' "$3" > "$2/guest.conf"; echo "$2: RDM on windows" ;;
+  init) mkdir -p "$2" && printf 'WORKTREE=%s\nPRODUCT=rdm\nPLATFORM=windows\n' "$3" > "$2/guest.conf"
+        ck=$(echo "$*" | sed -n 's/.*--checkpoint \([a-z0-9-]*\).*/\1/p')
+        [ -n "$ck" ] && echo "VM_IMAGE=checkpoints/$ck.qcow2" >> "$2/guest.conf"; echo "$2: RDM on windows" ;;
+  checkpoint)
+    case "$2" in
+      list) echo "NAME SIZE"; echo "devex-610 4.9 GB" ;;
+      show) echo "note for $3" ;;
+      *) echo "VM_IMAGE=checkpoints/$3.qcow2" >> "$2/guest.conf"; echo "checkpoint $3" ;;
+    esac ;;
   up) echo "slot 1: SSH 127.0.0.1:2231" ;;
   alive) exit 1 ;;
   list) ;;
@@ -102,6 +110,26 @@ def main():
         check("vm_click maps to guest app click", f"guest {d} app click 10 20 double" in calls, True)
         check("a bad name is refused", (r[5]["result"]["isError"], "bad VM name" in r[5]["result"]["content"][0]["text"]), (True, True))
         check("a missing argument is refused", "missing: project" in r[6]["result"]["content"][0]["text"], True)
+
+        r = session(("vm_checkpoint", {"name": "my-worktree", "checkpoint": "devex-610", "note": "signed in to the SSO tool",
+                                       "resume": True}),
+                    ("vm_checkpoints", {}), ("vm_checkpoints", {"checkpoint": "devex-610"}))
+        calls = open(log).read().splitlines()
+        check("vm_checkpoint maps to vmt checkpoint with its note and --resume",
+              f"checkpoint {d} devex-610 --note signed in to the SSO tool --resume" in calls, True)
+        check("vm_checkpoints lists", "devex-610 4.9 GB" in r[2]["result"]["content"][0]["text"], True)
+        check("vm_checkpoints shows one", r[3]["result"]["content"][0]["text"], "note for devex-610")
+        check("no tool deletes a checkpoint", any("rm" in n or "delete" in n for n in names), False)
+        session(("vm_up", {"worktree": wt}))
+        calls = open(log).read().splitlines()
+        check("a VM that took a checkpoint starts from it on its next vm_up",
+              f"init {d} {wt} --checkpoint devex-610 --title my-worktree - My Worktree" in calls, True)
+        wt2 = os.path.join(t, "qa-wt")
+        os.makedirs(wt2)
+        session(("vm_up", {"worktree": wt2, "name": "qa-devex-610", "from_checkpoint": "devex-610"}))
+        calls = open(log).read().splitlines()
+        check("vm_up from_checkpoint inits from it",
+              f"init {os.path.join(root, 'mcp', 'qa-devex-610')} {wt2} --checkpoint devex-610 --title qa-devex-610 - qa-wt" in calls, True)
 
         open(os.path.join(root, "red"), "w").close()
         r = session(("vm_build", {"name": "my-worktree"}))

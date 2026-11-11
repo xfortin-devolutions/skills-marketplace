@@ -26,6 +26,8 @@ Windows). Contract: [references/products.md](references/products.md).
 | "build / update the console layer" | **layer** |
 | "add DVLS to the VMs", a path with no product (`vmt which` says "no product") | **new product** |
 | "what VMs are running", a slot stuck | `bash $V/vmt list`, `bash $V/vmt gc` (frees dead VMs' slots) |
+| "keep this sign-in / setup for the next VMs", "start QA from the dev's VM" | **checkpoints** |
+| "which checkpoints are there", "clean up the checkpoints" | `bash $V/vmt checkpoint list`, `… rm <name>...` |
 
 ## Use a VM
 
@@ -48,15 +50,37 @@ Windows). Contract: [references/products.md](references/products.md).
 
 A screenshot is evidence of what the app does; a build log is evidence of what compiles. Say which you have.
 
+## checkpoints
+
+A VM's disk goes when it powers off, and with it what was done in the guest: a person's sign-in to an SSO tool,
+installed tools, test data. A **checkpoint** keeps that state for the VMs that come after (a ticket's QA after its dev):
+
+1. In the VM, set up what the work needs; for a sign-in, `vmt show` it and ask the person.
+2. `bash $V/vmt checkpoint <vm dir> <name> [--note '<what was set up>'] [--resume]`: the guest shuts down cleanly
+   (apps write their settings), then its disk becomes the read-only image `<VM root>/<os>/checkpoints/<name>.qcow2`
+   (~1 min, ~1 GB). The VM starts from it from then on; `--resume` boots it again right away. Name it after the
+   branch or ticket (`devex-610`; `devex-610-2` for a later one, which is built on the first). The note is for the
+   VMs that start from it: never secrets.
+3. Other VMs: `vmt init <vm dir> <worktree> --product <p> --checkpoint <name>`, then use them as usual. Each is its
+   own throwaway copy: what one does never reaches another, or the checkpoint.
+
+What the checkpoint holds is the guest's disk, not the worktree: an app that keeps its settings next to its exe (RDM's
+Debug build, in `bin/` on `R:`) keeps them on the Mac, and a VM sharing another worktree doesn't see them.
+Nothing deletes a checkpoint but a person: `vmt checkpoint list` (size, age, branch, users; `vmt list` counts them),
+`vmt checkpoint show <name>` (and its note), `vmt checkpoint rm <name>...`, refused while a running VM or another
+checkpoint is built on it. Agents never delete one: say which can go and let the person run `rm`. The golden image
+can't be compacted while checkpoints exist.
+
 ## Other agents: the MCP server
 
 The plugin declares an MCP server, `vm` (`mcp/server.py`, Python standard library only), with the same jobs as tools:
-`vm_products`, `vm_up`, `vm_build`, `vm_test`, `vm_run`, `vm_app_launch`, `vm_app_stop`, `vm_screenshot` (returns the
-image and its path), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_apply`, `vm_show`, `vm_list`, `vm_down`. A named
-VM's folder is `<VM root>/mcp/<name>`. Claude Code gets it with the plugin; another harness (Codex, Cursor, a FleetView
-agent on another provider) adds `python3 -I <plugin dir>/mcp/server.py` as a stdio MCP server. It runs on the machine
-with the images: a client elsewhere gets screenshots, but `vm_show` opens the screen (TigerVNC, else Screen Sharing) on that machine only. A build
-can take many minutes: give the client a long tool timeout.
+`vm_products`, `vm_up` (`from_checkpoint`), `vm_build`, `vm_test`, `vm_run`, `vm_app_launch`, `vm_app_stop`,
+`vm_screenshot` (returns the image and its path), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_apply`, `vm_show`,
+`vm_checkpoint`, `vm_checkpoints` (list, or one's note), `vm_list`, `vm_down`; none deletes a checkpoint. A named VM's
+folder is `<VM root>/mcp/<name>`. Claude Code gets it with the plugin; another harness (Codex, Cursor, a FleetView agent
+on another provider) adds `python3 -I <plugin dir>/mcp/server.py` as a stdio MCP server. It runs on the machine with
+the images: a client elsewhere gets screenshots, but `vm_show` opens the screen (TigerVNC, else Screen Sharing) on that
+machine only. A build can take many minutes: give the client a long tool timeout.
 
 ## setup
 

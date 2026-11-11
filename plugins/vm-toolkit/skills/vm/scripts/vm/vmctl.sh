@@ -6,6 +6,8 @@
 #   vmctl.sh show <run dir>            open the VM's screen in TigerVNC with a shared clipboard (clipboard.sh), else in
 #                                      macOS Screen Sharing (VM_VIEWER=screensharing forces it); VNC on localhost, password
 #   vmctl.sh down <run dir> [--keep-disk]   power off, free the slot, delete the overlay unless kept
+#   vmctl.sh freeze <run dir> <image>  shut the guest down cleanly and make its disk the read-only image <image> (a path
+#                                      under VM_HOME, e.g. checkpoints/devex-610.qcow2) that later clones start from
 #   vmctl.sh list                      running VMs and their slots
 #   vmctl.sh gc                        free the slots of dead VMs and delete their overlays
 # The golden image (VM_HOME, or FACTORY_VM_HOME, default ~/VMs/factory/windows) is never written: base.qcow2 must be
@@ -51,7 +53,10 @@ up() {
   smbd="$(brew --prefix 2> /dev/null)/sbin/samba-dot-org-smbd"
   [ -x "$smbd" ] || die "the worktree share needs Samba: brew install samba"
   for f in "$VM_IMAGE" "$(image_vars)" id_ed25519; do
-    [ -f "$VM_HOME/$f" ] || die "no $VM_HOME/$f: build the golden image first (references/vm-setup.md)"
+    [ -f "$VM_HOME/$f" ] || case "$f" in
+      checkpoints/*) die "no $VM_HOME/$f: its checkpoint was deleted (vmt checkpoint list)" ;;
+      *) die "no $VM_HOME/$f: build the golden image first (references/vm-setup.md)" ;;
+    esac
   done
   # A writable image can be booted by mistake (golden/start.sh), which corrupts every overlay cut from it; a layer's
   # backing file the same way.
@@ -90,6 +95,8 @@ up() {
   rm -rf "$rt"
   mkdir -p "$d/smb" "$rt/private" "$rt/lock" "$rt/state" "$rt/cache" "$rt/ncalrpc"
   rm -f "$d/disk.qcow2" "$d/known_hosts" "$d/.screen-size" "$d/clipboard.ok"
+  # A checkpoint taken after the clipboard agent went in has it already (freeze).
+  [ -f "$VM_HOME/${VM_IMAGE%.qcow2}.clipboard-agent" ] && touch "$d/clipboard.ok"
   qemu-img create -q -f qcow2 -b "$VM_HOME/$VM_IMAGE" -F qcow2 "$d/disk.qcow2" || { release_slot "$n" "$d"; die "qemu-img failed"; }
   rm -f "$d/vars.fd"
   cp "$VM_HOME/$(image_vars)" "$d/vars.fd" && chmod u+w "$d/vars.fd"
@@ -203,6 +210,40 @@ down() {
   echo "vm down: $d (disk $([ "$keep" = yes ] && echo kept || echo deleted))"
 }
 
+# freeze <run dir> <image>: the VM's state (sign-ins, installed tools, data: everything on its disk, not the shared
+# worktree) as an image clones can start from. The guest shuts down cleanly first, so apps write their settings and
+# Windows flushes its disk; then the overlay and its firmware variables move to <image> and <image>.vars.fd, read-only:
+# clones cut from it would be corrupted by a change to it, like those of base.qcow2. The slot is freed; the run dir
+# keeps no disk (vmt checkpoint points the VM folder at the image).
+freeze() {
+  local d img n pid i
+  d=$(vmdir "${1:-}"); img=${2:-}
+  [ -n "$img" ] || die "usage: vmctl.sh freeze <run dir> <image>"
+  alive "$d" || die "no VM running for ${1:-}"
+  [ -e "$VM_HOME/$img" ] && die "$VM_HOME/$img already exists"
+  n=$(slot_of "$d"); pid=$(cat "$d/qemu.pid")
+  # Once QEMU exits the slot looks dead, and any up's gc would delete the disk before it moves: mark it starting.
+  [ -n "$n" ] && touch "$SLOTS/$n/starting"
+  . "$d/vm.env"
+  # TRIM first: the guest's freed blocks leave the overlay (discard=unmap), so the image keeps only what it uses.
+  VM_NO_SHARE=1 "$X/vmssh" 'Optimize-Volume -DriveLetter C -ReTrim -ErrorAction SilentlyContinue; shutdown /s /t 0' > /dev/null 2>&1
+  i=0
+  while kill -0 "$pid" 2> /dev/null && [ "$i" -lt 300 ]; do sleep 1; i=$((i + 1)); done
+  if kill -0 "$pid" 2> /dev/null; then
+    [ -n "$n" ] && rm -f "$SLOTS/$n/starting"
+    die "the guest did not power off in 5 min; the VM still runs (vmctl.sh show $(dirname "$d"))"
+  fi
+  mkdir -p "$(dirname "$VM_HOME/$img")"
+  mv "$d/disk.qcow2" "$VM_HOME/$img" && mv "$d/vars.fd" "$VM_HOME/${img%.qcow2}.vars.fd" \
+    || die "could not move the disk to $VM_HOME/$img; it is still in $d"
+  [ -f "$d/clipboard.ok" ] && : > "$VM_HOME/${img%.qcow2}.clipboard-agent"
+  chmod a-w "$VM_HOME/$img" "$VM_HOME/${img%.qcow2}.vars.fd"
+  pkill -f "$d/smb/smb.conf" 2> /dev/null
+  [ -n "$n" ] && rmdir_slot "$n"
+  rm -f "$d/qemu.pid" "$d/qmp.sock" "$d/clipboard.ok"
+  echo "frozen after ${i}s: $VM_HOME/$img ($(qemu-img info "$VM_HOME/$img" | sed -n 's/^disk size: //p'))"
+}
+
 show() {
   local d
   d=$(vmdir "${1:-}")
@@ -258,5 +299,6 @@ case "$cmd" in
   down) down "$@" ;;
   list) list ;;
   gc) gc ;;
-  *) sed -n '2,10p' "$0"; exit 2 ;;
+  freeze) freeze "$@" ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
 esac
