@@ -10,6 +10,10 @@
 #                                                       (re)starts the build in the desktop session, shot saves a
 #                                                       screenshot under <vm run dir>/app/ and prints its path; build and
 #                                                       test stop a launched app first (it locks bin/)
+#   guest.sh <vm run dir> app record start [<min>] | stop | caption <text> [<s>]   a video of the screen (vm/record.py):
+#                                                       start records <vm run dir>/app/video-N.mp4 until stop (at most
+#                                                       <min>, default VM_RECORD_MAX_MIN), clicks circled; caption shows
+#                                                       text on it until the next one (or for <s> seconds; "" clears)
 #   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min
 # Exit: 0 green, 1 the build or tests fail, 3 the harness failed (no exit code: time box, SSH, share; restore or SDK
 # errors), 2 usage. It prints the errors and the summary; the full log is <vm run dir>/build.log or test.log.
@@ -19,7 +23,7 @@
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,13p' "$0" >&2; exit 2; }
+usage() { sed -n '3,17p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2
@@ -108,6 +112,30 @@ case "$CMD" in
         [ $# -ge 1 ] || usage
         python3 "$X/vm/vm.py" "$sub" "$@" ;;
       stop) : > "$D/app.running"; app_stop; echo "stopped" ;;
+      record)
+        case "${1:-}" in
+          start)
+            min=${2:-${VM_RECORD_MAX_MIN:-10}}
+            [ "$min" -ge 1 ] 2> /dev/null && [ "$min" -le 60 ] || usage
+            pid=$(cat "$VM_RUN_DIR/record.pid" 2> /dev/null) && kill -0 "$pid" 2> /dev/null \
+              && { echo "already recording: app record stop first"; exit 1; }
+            command -v ffmpeg > /dev/null || { echo "HARNESS ERROR: no ffmpeg on this Mac (brew install ffmpeg)"; exit 3; }
+            [ -S "$VM_RUN_DIR/rec.sock" ] \
+              || { echo "HARNESS ERROR: this VM was started without the recorder's socket: vmt down and up again to record"; exit 3; }
+            n=$(ls "$D/app" 2> /dev/null | sed -n 's/^video-\([0-9]*\)\.mp4$/\1/p' | sort -n | tail -1)
+            n=$((${n:-0} + 1))
+            rm -f "$VM_RUN_DIR/recording"
+            nohup python3 "$X/vm/record.py" run "$D/app/video-$n.mp4" $((min * 60)) > "$VM_RUN_DIR/record.log" 2>&1 < /dev/null &
+            echo $! > "$VM_RUN_DIR/record.pid"
+            for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$VM_RUN_DIR/recording" ] && break; sleep 0.5; done
+            [ -f "$VM_RUN_DIR/recording" ] || { cat "$VM_RUN_DIR/record.log"; echo "HARNESS ERROR: the recorder did not start"; exit 3; }
+            echo "recording $D/app/video-$n.mp4 (stops by itself after $min min): app record stop ends it" ;;
+          stop) "$X/vm/vmctl.sh" record-stop "$D" ;;
+          *) usage ;;
+        esac ;;
+      caption)
+        [ $# -ge 1 ] && [ $# -le 2 ] || usage
+        python3 "$X/vm/record.py" caption "$@" && echo "captioned" ;;
       *) usage ;;
     esac ;;
   run)

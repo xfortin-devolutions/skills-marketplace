@@ -15,7 +15,8 @@
 #                                        VM_IDLE_MIN idle minutes (the next guest command boots it again)
 #   vmt guest <vm dir> <command>...      scripts/guest.sh on it, booting it first if needed: build [<project>] [--clean]
 #                                        | test [--no-build] <project> [<filter>] | app launch|wait|shot|click|type|
-#                                        key|scroll|stop | run '<powershell>' | info
+#                                        key|scroll|stop | app record start [<min>]|stop | app caption <text> [<s>]
+#                                        | run '<powershell>' | info
 #   vmt apply <vm dir> <folder> [<guest folder>]   puts a setup folder in the VM (scripts/apply.sh); the guest folder
 #                                        defaults to C:\factory\setup\<folder name>
 #   vmt env|alive|show <vm dir>          vmctl.sh's: export lines, running?, open the screen on this Mac
@@ -170,6 +171,9 @@ case "$cmd" in
     D=${1:-}; [ -n "$D" ] && [ $# -ge 2 ] || usage
     shift
     vm_conf "$D"
+    # A recording ends with its VM: never boot one to stop or caption it.
+    [ "$*" = "app record stop" ] && exec "$X/vm/vmctl.sh" record-stop "$D"
+    [ "${1:-} ${2:-}" = "app caption" ] && ! "$X/vm/vmctl.sh" alive "$D" && die "nothing is recording: the VM is down"
     # A kept VM (up --keep) is never powered off behind its user's back: no lease, no reaper.
     if [ -f "$D/keep" ]; then
       "$X/vm/vmctl.sh" alive "$D" || die "the VM of $D is down: vmt up $D --keep"

@@ -8,6 +8,7 @@
 #   vmctl.sh down <run dir> [--keep-disk]   power off, free the slot, delete the overlay unless kept
 #   vmctl.sh freeze <run dir> <image>  shut the guest down cleanly and make its disk the read-only image <image> (a path
 #                                      under VM_HOME, e.g. checkpoints/devex-610.qcow2) that later clones start from
+#   vmctl.sh record-stop <run dir>     end the VM's recording (guest.sh app record start) and print the video's path
 #   vmctl.sh list                      running VMs and their slots
 #   vmctl.sh gc                        free the slots of dead VMs and delete their overlays
 # The golden image (VM_HOME, or FACTORY_VM_HOME, default ~/VMs/factory/windows) is never written: base.qcow2 must be
@@ -143,12 +144,14 @@ EOF
 
   local qs i
   qs="$(brew --prefix qemu)/share/qemu"
-  rm -f "$d/qemu.pid" "$d/qmp.sock"
+  rm -f "$d/qemu.pid" "$d/qmp.sock" "$d/rec.sock"
   # base=localtime: Windows reads the hardware clock as local time; a UTC one puts the guest hours ahead, and MSBuild then
   # takes files edited on the host for older than its outputs on the share and skips rebuilding them (GAPS V38).
   # Plain background process rather than -daemonize: forking after Hypervisor.framework setup is unsafe on macOS.
   # The vdagent port carries the clipboard between the guest's SPICE agent and VNC clients that speak the extended
   # clipboard (TigerVNC; not Screen Sharing). mouse=off: the usb-tablet stays the pointer vm.py drives.
+  # rec.sock is record.py's own QMP socket: a QMP socket serves one client at a time, and a recorder holding qmp.sock
+  # would hold back every click and keystroke until it stopped.
   nohup qemu-system-aarch64 \
     -name "$(vm_title "$(dirname "$d")")" \
     -machine virt -accel hvf -cpu host -smp "$VM_CPUS" -m "$VM_MEM" \
@@ -162,6 +165,7 @@ EOF
     -device virtio-serial-pci -chardev qemu-vdagent,id=vdagent,clipboard=on,mouse=off \
     -device virtserialport,chardev=vdagent,name=com.redhat.spice.0 \
     -qmp unix:"$d/qmp.sock",server=on,wait=off \
+    -qmp unix:"$d/rec.sock",server=on,wait=off \
     -display none -vnc "127.0.0.1:$vnc,password=on" \
     -pidfile "$d/qemu.pid" > "$d/qemu.log" 2>&1 < /dev/null &
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
@@ -194,6 +198,7 @@ down() {
   local d keep=no pid s
   d=$(vmdir "${1:-}")
   [ "${2:-}" = "--keep-disk" ] && keep=yes
+  record_end "$d"
   if alive "$d"; then
     pid=$(cat "$d/qemu.pid")
     # A disposable guest needs no clean shutdown: quit right away.
@@ -205,7 +210,7 @@ down() {
   pkill -f "$d/smb/smb.conf" 2> /dev/null
   s=$(slot_of "$d")
   [ -n "$s" ] && rmdir_slot "$s"
-  rm -f "$d/qemu.pid" "$d/qmp.sock"
+  rm -f "$d/qemu.pid" "$d/qmp.sock" "$d/rec.sock"
   if [ "$keep" = no ]; then rm -f "$d/disk.qcow2" "$d/vars.fd"; fi
   echo "vm down: $d (disk $([ "$keep" = yes ] && echo kept || echo deleted))"
 }
@@ -215,6 +220,26 @@ down() {
 # Windows flushes its disk; then the overlay and its firmware variables move to <image> and <image>.vars.fd, read-only:
 # clones cut from it would be corrupted by a change to it, like those of base.qcow2. The slot is freed; the run dir
 # keeps no disk (vmt checkpoint points the VM folder at the image).
+# record_stop <run dir>: end its recording; record.py then lays the captions and clicks over the video (seconds for a
+# few minutes of it). A recording that ended on its own (its time limit, the VM going down) is reported the same way,
+# once. Prints the video's path, or why there is none.
+record_stop() {
+  local d=$1
+  record_end "$d"
+  [ -f "$d/record.log" ] || { echo "nothing is recording"; return 1; }
+  tail -3 "$d/record.log"
+  mv "$d/record.log" "$d/record.last.log"
+  grep -q '\.mp4 [0-9]*s, ' "$d/record.last.log"
+}
+
+# record_end <run dir>: end its recording, if one runs, and wait for its video (down and freeze, before QEMU goes)
+record_end() {
+  local pid i=0
+  pid=$(cat "$1/record.pid" 2> /dev/null) && kill -0 "$pid" 2> /dev/null && kill -TERM "$pid"
+  while [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null && [ "$i" -lt 600 ]; do sleep 1; i=$((i + 1)); done
+  rm -f "$1/record.pid"
+}
+
 freeze() {
   local d img n pid i
   d=$(vmdir "${1:-}"); img=${2:-}
@@ -224,6 +249,7 @@ freeze() {
   n=$(slot_of "$d"); pid=$(cat "$d/qemu.pid")
   # Once QEMU exits the slot looks dead, and any up's gc would delete the disk before it moves: mark it starting.
   [ -n "$n" ] && touch "$SLOTS/$n/starting"
+  record_end "$d"
   . "$d/vm.env"
   # TRIM first: the guest's freed blocks leave the overlay (discard=unmap), so the image keeps only what it uses.
   VM_NO_SHARE=1 "$X/vmssh" 'Optimize-Volume -DriveLetter C -ReTrim -ErrorAction SilentlyContinue; shutdown /s /t 0' > /dev/null 2>&1
@@ -240,7 +266,7 @@ freeze() {
   chmod a-w "$VM_HOME/$img" "$VM_HOME/${img%.qcow2}.vars.fd"
   pkill -f "$d/smb/smb.conf" 2> /dev/null
   [ -n "$n" ] && rmdir_slot "$n"
-  rm -f "$d/qemu.pid" "$d/qmp.sock" "$d/clipboard.ok"
+  rm -f "$d/qemu.pid" "$d/qmp.sock" "$d/rec.sock" "$d/clipboard.ok"
   echo "frozen after ${i}s: $VM_HOME/$img ($(qemu-img info "$VM_HOME/$img" | sed -n 's/^disk size: //p'))"
 }
 
@@ -300,5 +326,6 @@ case "$cmd" in
   list) list ;;
   gc) gc ;;
   freeze) freeze "$@" ;;
-  *) sed -n '2,12p' "$0"; exit 2 ;;
+  record-stop) record_stop "$(vmdir "${1:-}")" ;;
+  *) sed -n '2,13p' "$0"; exit 2 ;;
 esac
