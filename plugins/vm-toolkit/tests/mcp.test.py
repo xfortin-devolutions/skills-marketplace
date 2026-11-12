@@ -131,6 +131,15 @@ def main():
         check("vm_up from_checkpoint inits from it",
               f"init {os.path.join(root, 'mcp', 'qa-devex-610')} {wt2} --checkpoint devex-610 --title qa-devex-610 - qa-wt" in calls, True)
 
+        session(("vm_record_start", {"name": "my-worktree", "max_minutes": 5}),
+                ("vm_caption", {"name": "my-worktree", "text": "Opening the entry's dialog", "seconds": 3}),
+                ("vm_record_stop", {"name": "my-worktree"}))
+        calls = open(log).read().splitlines()
+        check("vm_record_start maps to app record start with its limit", f"guest {d} app record start 5" in calls, True)
+        check("vm_caption maps to app caption with its text and seconds",
+              f"guest {d} app caption Opening the entry's dialog 3" in calls, True)
+        check("vm_record_stop maps to app record stop", f"guest {d} app record stop" in calls, True)
+
         open(os.path.join(root, "red"), "w").close()
         r = session(("vm_build", {"name": "my-worktree"}))
         res = r[1]["result"]

@@ -26,6 +26,8 @@ SOCK = os.environ.get("QMP_SOCK") or os.path.join(VM_HOME, "qmp.sock")
 SSH_PORT = int(os.environ.get("VM_SSH_PORT") or 2222)
 # Per VM, never next to this script: the skill folder is versioned (and read-only once installed as a plugin).
 SIZE_CACHE = os.path.join(os.environ.get("VM_RUN_DIR") or VM_HOME, ".screen-size")
+# While record.py records: its start time and the events file captions and clicks go to.
+RECORDING = os.path.join(os.environ.get("VM_RUN_DIR") or VM_HOME, "recording")
 
 
 class Qmp:
@@ -68,6 +70,18 @@ def screen_size(q):
     w, h = png_size(tmp)
     os.remove(tmp)
     return w, h
+
+
+def add_event(ev):
+    """Note an event (a click, a caption) on the running recording, timed from its start; False when none runs."""
+    try:
+        start, events = open(RECORDING).read().split("\n", 1)
+    except OSError:
+        return False
+    ev["t"] = round(time.time() - float(start), 2)
+    with open(events.strip(), "a") as fh:
+        fh.write(json.dumps(ev) + "\n")
+    return True
 
 
 def abs_events(q, x, y):
@@ -163,6 +177,7 @@ def main():
         q.events(abs_events(q, x, y))
         pause(0.08)
         if op == "click":
+            add_event({"click": [x, y]})
             button = "right" if mode == "right" else "left"
             for _ in range(2 if mode == "double" else 1):
                 q.events([btn(button, True)])

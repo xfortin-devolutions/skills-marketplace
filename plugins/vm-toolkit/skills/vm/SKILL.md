@@ -1,6 +1,6 @@
 ---
 name: vm
-description: "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), run from a Mac: build and test a repo's worktree inside a VM that shares it live, launch the built app in the guest's desktop, take screenshots and drive it with mouse and keyboard, apply test data, and open the VM's screen for a person (TigerVNC with a shared clipboard, else Screen Sharing). Products (RDM, Devolutions Console, …) are defined per repo: the repo's .vm/ folder, else a definition bundled with this skill. Also the one-time golden image, product VM layers (IIS, SQL Server, DVLS…), and setting up a new product. Use when the user says 'test this branch on Windows', 'build it in a VM', 'show me the app in the VM', 'set up the VM image', 'build the console layer', 'add a product to the VMs', or when an agent needs a real target OS to check a change. The same tools are an MCP server (vm_up, vm_build, vm_screenshot, …) for agents in other harnesses. The factory skill runs its loop on these VMs."
+description: "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), run from a Mac: build and test a repo's worktree inside a VM that shares it live, launch the built app in the guest's desktop, take screenshots and drive it with mouse and keyboard, record a demo video with captions, apply test data, and open the VM's screen for a person (TigerVNC with a shared clipboard, else Screen Sharing). Products (RDM, Devolutions Console, …) are defined per repo: the repo's .vm/ folder, else a definition bundled with this skill. Also the one-time golden image, product VM layers (IIS, SQL Server, DVLS…), and setting up a new product. Use when the user says 'test this branch on Windows', 'build it in a VM', 'show me the app in the VM', 'set up the VM image', 'build the console layer', 'add a product to the VMs', or when an agent needs a real target OS to check a change. The same tools are an MCP server (vm_up, vm_build, vm_screenshot, …) for agents in other harnesses. The factory skill runs its loop on these VMs."
 ---
 
 # VM toolkit
@@ -28,6 +28,7 @@ Windows). Contract: [references/products.md](references/products.md).
 | "what VMs are running", a slot stuck | `bash $V/vmt list`, `bash $V/vmt gc` (frees dead VMs' slots) |
 | "keep this sign-in / setup for the next VMs", "start QA from the dev's VM" | **checkpoints** |
 | "which checkpoints are there", "clean up the checkpoints" | `bash $V/vmt checkpoint list`, `… rm <name>...` |
+| "record a demo", "make a video of it" | **use a VM**, step 5 |
 
 ## Use a VM
 
@@ -44,9 +45,14 @@ Windows). Contract: [references/products.md](references/products.md).
 4. The app: `vmt guest <vm dir> app launch`, then `app wait <s>`, `app shot` (prints the PNG's path: read it),
    `app click <x> <y> [right|double]`, `app type <text>`, `app key ctrl-n tab ret`, `app scroll <x> <y> <n>`,
    `app stop`. Coordinates are screenshot pixels. One PowerShell command in the guest: `vmt guest <vm dir> run '<ps>'`.
-5. Test data or a resource the app reads at startup: `vmt apply <vm dir> <folder> [<guest folder>]` before launching
+5. A demo video: `app record start [<max min>]` (default 10), drive the app as in step 4, then `app record stop`
+   (prints the MP4's path: `<vm dir>/app/video-N.mp4`, 15 fps, 1 to 2 MB a minute). Clicks are circled in it; `app caption
+   '<text>' [<s>]` shows a caption from then on, until the next one (or for `<s>` seconds; `''` clears it): say what
+   is being done or what to look at, one short sentence. A recording ends at its limit or with the VM; `stop` then
+   still reports it. Needs ffmpeg (`brew install ffmpeg`) and a VM started by 0.3.0 or later (else down and up).
+6. Test data or a resource the app reads at startup: `vmt apply <vm dir> <folder> [<guest folder>]` before launching
    (copies it, runs its `check.ps1`, then `apply.ps1`, with `$Dir` set).
-6. `bash $V/vmt down <vm dir>` when done. The folder stays; `vmt up` boots a fresh clone from it.
+7. `bash $V/vmt down <vm dir>` when done. The folder stays; `vmt up` boots a fresh clone from it.
 
 A screenshot is evidence of what the app does; a build log is evidence of what compiles. Say which you have.
 
@@ -75,7 +81,8 @@ can't be compacted while checkpoints exist.
 
 The plugin declares an MCP server, `vm` (`mcp/server.py`, Python standard library only), with the same jobs as tools:
 `vm_products`, `vm_up` (`from_checkpoint`), `vm_build`, `vm_test`, `vm_run`, `vm_app_launch`, `vm_app_stop`,
-`vm_screenshot` (returns the image and its path), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_apply`, `vm_show`,
+`vm_screenshot` (returns the image and its path), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_record_start`,
+`vm_caption`, `vm_record_stop` (a demo video's path), `vm_apply`, `vm_show`,
 `vm_checkpoint`, `vm_checkpoints` (list, or one's note), `vm_list`, `vm_down`; none deletes a checkpoint. A named VM's
 folder is `<VM root>/mcp/<name>`. Claude Code gets it with the plugin; another harness (Codex, Cursor, a FleetView agent
 on another provider) adds `python3 -I <plugin dir>/mcp/server.py` as a stdio MCP server. It runs on the machine with
@@ -110,7 +117,7 @@ scripts on a VM (**use a VM**). The `rdm` and `console` definitions in `projects
 | What | Where |
 |---|---|
 | Golden image, layers, guest SSH key, installers | `<VM root>/<os>/` (`vmt root`; default `~/VMs/factory`) |
-| A VM's clone disk, logs, screenshots, settings (`guest.conf`) | its VM folder (`<VM root>/mcp/<name>/` for the MCP server's) |
+| A VM's clone disk, logs, screenshots, videos, settings (`guest.conf`) | its VM folder (`<VM root>/mcp/<name>/` for the MCP server's) |
 | Machine settings: VM root, CPUs, RAM, slots, idle minutes | `~/.vm-toolkit/config.sh` (`~/.factory/config.sh` is read first, for older setups) |
 | Product definitions | the repo's `.vm/`, else `projects/<project>/` in this skill |
 | What is still missing | `GAPS.md` at the plugin's root |

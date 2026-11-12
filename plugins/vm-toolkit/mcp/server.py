@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 VMT = os.environ.get("VMT_BIN") or os.path.join(HERE, "..", "skills", "vm", "scripts", "vmt")
 LOG_TAIL = 80
@@ -23,7 +23,8 @@ LOG_TAIL = 80
 INSTRUCTIONS = """Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), on the machine this server runs on.
 Start with vm_products on the repo or worktree, then vm_up the worktree (the VM shares it live as R:), and build and
 test in it with vm_build / vm_test: nothing needs building on the host. vm_app_launch starts the built app in the
-guest's desktop; vm_screenshot, vm_click, vm_type, vm_key and vm_scroll drive it. Exit meanings: green (0), red (1,
+guest's desktop; vm_screenshot, vm_click, vm_type, vm_key and vm_scroll drive it, and vm_record_start / vm_caption /
+vm_record_stop make a demo video of it. Exit meanings: green (0), red (1,
 the change), harness error (3, the VM or the share, not the change: retry or say so). vm_down when done. A VM not
 started with keep powers off after some idle minutes; the next build, test or app command boots it again."""
 
@@ -191,6 +192,27 @@ def t_scroll(a):
     return text(out or "scrolled", rc != 0)
 
 
+def t_record_start(a):
+    args = ["guest", existing(a["name"]), "app", "record", "start"]
+    if a.get("max_minutes"):
+        args.append(str(int(a["max_minutes"])))
+    rc, out = vmt(*args)
+    return text(out, rc != 0)
+
+
+def t_record_stop(a):
+    rc, out = vmt("guest", existing(a["name"]), "app", "record", "stop")
+    return text(out, rc != 0)
+
+
+def t_caption(a):
+    args = ["guest", existing(a["name"]), "app", "caption", a["text"]]
+    if a.get("seconds"):
+        args.append(str(a["seconds"]))
+    rc, out = vmt(*args)
+    return text(out, rc != 0)
+
+
 def t_apply(a):
     args = ["apply", existing(a["name"]), os.path.abspath(os.path.expanduser(a["folder"]))]
     if a.get("guest_folder"):
@@ -285,6 +307,19 @@ TOOLS = {
     "vm_scroll": ("Scroll the wheel at a screenshot pixel; amount > 0 scrolls down, < 0 up.",
                   {"name": NAME, "x": {"type": "integer"}, "y": {"type": "integer"}, "amount": {"type": "integer"}},
                   ["name", "x", "y", "amount"], t_scroll),
+    "vm_record_start": ("Start recording the guest's screen as an MP4 (15 fps) for a demo: drive the app as usual meanwhile; "
+                        "vm_click's clicks are circled in it. Stops by itself after max_minutes; vm_down ends it too. "
+                        "Explain on screen with vm_caption.",
+                        {"name": NAME, "max_minutes": {"type": "integer", "description": "1-60, default 10."}},
+                        ["name"], t_record_start),
+    "vm_caption": ("Show a caption at the bottom of the recording from now on, until the next caption (or for seconds): "
+                   "what is being done, or what to look at. One short sentence reads best. An empty text clears it.",
+                   {"name": NAME, "text": {"type": "string"},
+                    "seconds": {"type": "number", "description": "Hide it after this long."}},
+                   ["name", "text"], t_caption),
+    "vm_record_stop": ("Stop the recording and return the MP4's path on this machine (takes a few seconds: the captions and "
+                       "clicks are laid over it then). Also reports a recording that ended by itself.",
+                       {"name": NAME}, ["name"], t_record_stop),
     "vm_apply": ("Put a setup folder (test data, settings, a resource) into the guest before launching the app: copies it, "
                  "then runs its check.ps1 and apply.ps1 if it has them ($Dir is the guest folder).",
                  {"name": NAME, "folder": {"type": "string", "description": "Local folder."},
