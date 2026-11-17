@@ -34,7 +34,15 @@ D=$1 CMD=$2
 shift 2
 [ -f "$D/guest.conf" ] || { echo "HARNESS ERROR: no $D/guest.conf (no factory VM there)" >&2; exit 3; }
 . "$D/guest.conf"
-HOST_BUILD=${HOST_BUILD:-}
+HOST_BUILD=${HOST_BUILD:-} HOST_WHY=""
+# The host build may decline this worktree (a commit it can't cross-compile, the wrong SDK): it builds in the guest.
+# Asked only by the commands that build (app and run commands are many, and quick).
+case "$CMD" in build|test|on-host|info) ;; *) HOST_BUILD="" ;; esac
+if [ -n "$HOST_BUILD" ] && ! HOST_WHY=$(WORKTREE=$WORKTREE bash "$HOST_BUILD" --check 2>&1 < /dev/null); then
+  HOST_BUILD=""
+else
+  HOST_WHY=""
+fi
 
 # on_host <command>...: 0 when the command needs no VM (a build on the Mac)
 on_host() { [ -n "$HOST_BUILD" ] && [ "${1:-}" = build ]; }
@@ -53,7 +61,7 @@ fi
 # app_stop: ends what runs from the share (the app the builder launched), which would lock the build's output
 app_stop() {
   [ -e "$D/app.running" ] || return 0
-  [ "$VM_UP" = yes ] && "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1
+  [ "$VM_UP" = yes ] && "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1 < /dev/null
   rm -f "$D/app.running"
 }
 
@@ -66,9 +74,10 @@ run() {
   { printf '%s\n' "$3"; cat "$2"; } | timebox $((GUEST_BUILD_MIN * 60)) "$X/vm/vmssh" - > "$1" 2>&1
   rc=$?
   echo "== vmssh exit $rc (142 = time box)" >> "$1"
-  # The time box ends the SSH session, not what it started: a build left running in the guest holds its log and the
-  # worktree's output, and the next build fails on them.
-  [ $rc -eq 142 ] && "$X/vm/vmssh" 'Get-Process dotnet, MSBuild, testhost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1
+  # The time box ends the SSH session, not what it started: a build or test left running in the guest holds its log and
+  # the worktree's output, and the next command fails on them. The SDK's processes, and anything run from the share (an
+  # xUnit v3 test project is its own exe on R:).
+  [ $rc -eq 142 ] && "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Name -in "dotnet", "MSBuild", "testhost", "VBCSCompiler" -or $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1 < /dev/null
 }
 
 # host_run <log> <project>: the target's HOST_BUILD on the Mac, in the worktree, time-boxed; the full output goes to <log>
@@ -107,6 +116,7 @@ case "$CMD" in
     app_stop
     # Ignored files only: in a run's worktree those are build outputs; tracked files and the hand-back stay.
     [ "$clean" = yes ] && git -C "$WORKTREE" clean -fdXq -- . ':!handback'
+    [ -n "$HOST_WHY" ] && echo "building in the guest, not on the Mac: $HOST_WHY"
     if [ -n "$HOST_BUILD" ]; then host_run "$D/build.log" "$proj"
     else run "$D/build.log" "$GUEST_BUILD" "\$Project = $(ps_str "$proj")"; fi
     report "$D/build.log" BUILD ;;

@@ -6,7 +6,7 @@ experimental, it ships with the skill in `projects/<project>/`, picked by its `R
 (supported projects and how to move one into its repo: `projects/README.md`). The repo's `.factory/profiles/` wins when
 both exist. Tickets are working files, never committed: `.claude/worktrees/factory-tickets/` in the main checkout. Each product
 is a **profile**. **Every test runs in a VM of the target OS**, and so does the build, unless the target cross-compiles
-on the Mac and the machine allows it (`HOST_BUILD` and `VM_HOST_BUILD=yes`, in the toolkit's `references/products.md`):
+on the Mac (`HOST_BUILD`, unless the machine says `VM_HOST_BUILD=no`; the toolkit's `references/products.md`):
 then the VM only tests and runs the app.
 
 A product has two halves. What it is and how its VMs build, test and launch it (`APP_NAME`, `CODE_PATHS`, its guest

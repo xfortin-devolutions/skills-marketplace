@@ -63,10 +63,10 @@ check "init needs --product when the repo has several" \
 ( . "$T/vm2/guest.conf"; check "init: no HOST_BUILD, builds in the guest" "${HOST_BUILD:-none}" "none" )
 echo 'HOST_BUILD=$TARGET_DIR/host-build.sh' >> "$T/skill/projects/acme/app/targets/windows/target.sh"
 "$T/skill/scripts/vmt" init "$T/vm3" "$T/mono" --product app > /dev/null
-( . "$T/vm3/guest.conf"; check "init: HOST_BUILD, but builds in the guest by default" "${HOST_BUILD:-none}" "none" )
-mkdir -p "$HOME/.vm-toolkit" && echo VM_HOST_BUILD=yes > "$HOME/.vm-toolkit/config.sh"
+( . "$T/vm3/guest.conf"; check "init: HOST_BUILD, builds on the Mac by default" "${HOST_BUILD#$T/}" "skill/projects/acme/app/targets/windows/host-build.sh" )
+mkdir -p "$HOME/.vm-toolkit" && echo VM_HOST_BUILD=no > "$HOME/.vm-toolkit/config.sh"
 "$T/skill/scripts/vmt" init "$T/vm3" "$T/mono" --product app > /dev/null
-( . "$T/vm3/guest.conf"; check "init: HOST_BUILD and VM_HOST_BUILD=yes, builds on the Mac" "${HOST_BUILD#$T/}" "skill/projects/acme/app/targets/windows/host-build.sh" )
+( . "$T/vm3/guest.conf"; check "init: HOST_BUILD but VM_HOST_BUILD=no, builds in the guest" "${HOST_BUILD:-none}" "none" )
 rm "$HOME/.vm-toolkit/config.sh"
 check "load_product: a target without HOST_BUILD has none, whatever came before" \
   "$(load_product "$T/skill/projects/acme/app" && load_product "$T/skill/projects/acme/admin" && echo "${HOST_BUILD:-none}")" "none"

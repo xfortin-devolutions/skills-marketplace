@@ -8,9 +8,10 @@ description: "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS (Window
 Throwaway VMs of the OS a product ships on, cloned per use from a read-only golden image (copy-on-write: seconds to
 boot, nothing kept). The VM shares a worktree from this Mac live as `R:`, so a build in the guest sees every edit and its
 output stays in the worktree (incremental across reboots). A target that cross-compiles (`HOST_BUILD`: RDM and the
-Console have one) builds on the Mac instead when `~/.vm-toolkit/config.sh` says `VM_HOST_BUILD=yes`, into the same
-worktree: `guest build` boots no VM, and the VM only tests and runs what the Mac built (`guest test` builds the test
-project on the Mac first). Off by default: a Mac build of RDM misses NuGet packages' native files (RDP, SSH: GAPS V91).
+Console have one) builds on the Mac instead, into the same worktree: `guest build` boots no VM, and the VM only tests
+and runs what the Mac built (`guest test` builds the test project on the Mac first). A worktree the Mac can't build (an
+RDM commit before its cross-compile fix, no .NET 10 SDK) builds in the guest, and says why; `VM_HOST_BUILD=no` in
+`~/.vm-toolkit/config.sh` builds everything in the guest.
 Never run `dotnet` yourself for a target: `guest build` builds it where the target and the machine say.
 
 `V=<skill dir>/scripts`, where `<skill dir>` is this skill's base directory (an absolute path: installed as a plugin,
@@ -45,7 +46,7 @@ Windows). Contract: [references/products.md](references/products.md).
 3. `bash $V/vmt guest <vm dir> build [<project>] [--clean]`, `… test [--no-build] <project> [<filter>]`: the first
    guest command boots the VM (waiting for a free slot), and it powers off after `VM_IDLE_MIN` (10) idle minutes; the
    next command boots it again. `vmt up <vm dir> --keep` instead keeps it up until `vmt down`, for a person looking at
-   it. With `VM_HOST_BUILD=yes`, a target that can build on the Mac (`vmt products` says "can build on the Mac") boots
+   it. A target that can build on the Mac (`vmt products` says "can build on the Mac") boots
    nothing for `build`, and this Mac needs the .NET SDK. Exit 0 green, 1 red (the change), 3 harness error (the VM, the share, a restore: not the change; retry or say so).
    The summary prints the errors and the log's path (`<vm dir>/build.log`, `test.log`).
 4. The app: `vmt guest <vm dir> app launch`, then `app wait <s>`, `app shot` (prints the PNG's path: read it),

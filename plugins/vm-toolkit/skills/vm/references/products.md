@@ -71,20 +71,25 @@ desktop). Callers run them through `scripts/guest.sh` (`vmt guest`, the MCP serv
 
 A target whose toolchain cross-compiles (.NET with `EnableWindowsTargeting`) can build on the Mac, into the shared
 worktree, so its VMs only test and run: a build boots no VM, VMs need less CPU and RAM, and a role that only builds needs
-none. It is used on a machine whose `~/.vm-toolkit/config.sh` says `VM_HOST_BUILD=yes` (off by default); elsewhere the
-target builds in the guest as before. Then:
+none. It is used unless the machine's `~/.vm-toolkit/config.sh` says `VM_HOST_BUILD=no`; then the target builds in the
+guest as before. Then:
 - `guest build` runs `HOST_BUILD` on the Mac, with `$WORKTREE` and `$PROJECT` (empty: what ships) set; it must print
   `BUILD EXIT CODE: <n>`, and stop without it when the harness is at fault (no SDK). Same time box, same verdicts.
 - `guest test <project>` builds that project on the Mac first, then runs the test script in the guest with `$NoBuild`
   always set: the guest never builds a host-built worktree (its restore would rewrite `obj/` with its own paths).
 - A worktree built one way and then the other: `guest build --clean` once.
+- `HOST_BUILD --check` (with `$WORKTREE`): exit 0 when this Mac can build that worktree, else print why and exit non-zero;
+  guest.sh then builds in the guest and says why (`info` and `build` print it). RDM checks for its cross-compile fix
+  in the worktree's commit and a .NET 10 SDK.
 
 The output must be what the guest's build makes, not just compile. Before adding `HOST_BUILD`, prove on a VM that the
 Mac-built app launches and does its main jobs (in RDM: open an RDP and an SSH session, which need native files), and
 that each test project runs with `--no-build`. Traps found on RDM and the Console (2026-11-17): a plain `net10.0` test
 project gets a macOS app host, which xUnit v3 can't start in the guest (`-p:DefaultAppHostRuntimeIdentifier=win-<arch>`);
 projects without `EnableWindowsTargeting` fail with NETSDK1073 (`-p:EnableWindowsTargeting=true`); NuGet packages whose
-`.targets` pick native files by the build host's OS (`IsOSPlatform('Windows')`) copy the Mac's or none (GAPS V91).
+`.targets` pick native files by the build host's OS (`IsOSPlatform('Windows')`) copy the Mac's or none (GAPS V91, fixed in
+RDM's `.props`); RDM's Debug trim keeps only the build machine's `runtimes/` natives in a portable project
+(`-p:RdmTrimDebugOutput=false`).
 
 Exit code rules: a non-zero code with restore or SDK errors (`NU…`, `NETSDK…`, `MSB4236`) is a harness error; any other
 non-zero code is the change's fault. When the harness is at fault (no `R:`, no SDK), stop **without** printing the

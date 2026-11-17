@@ -29,10 +29,10 @@ re-tried on a **build of the base** in its own VM: only a blocker the base doesn
 
 Every test runs in the guest: the product ships on the guest OS, so it is tested there, and by default it is built
 there too. A target that cross-compiles (`HOST_BUILD` in its definition: RDM and the Console have one) builds on the Mac
-on a machine with `VM_HOST_BUILD=yes`, and its VMs then only test and run what the Mac built: the builder's builds boot
-no VM, and VMs stay light (the compile was their heaviest load). Not the default yet: a Mac build of RDM misses native
-files from NuGet packages (the toolkit's GAPS V91). Agents never run `dotnet` themselves: the guest tool builds where
-the target and the machine say.
+instead (unless the machine says `VM_HOST_BUILD=no`), and its VMs then only test and run what the Mac built: the
+builder's builds boot no VM, and VMs stay light (the compile was their heaviest load). A worktree the Mac can't build (an
+RDM commit before its cross-compile fix) still builds in the guest. Agents never run `dotnet` themselves: the guest tool
+builds where the target and the machine say.
 
 Everything a station decides is checked by the next one, and the runner (a script) owns every gate: agents never mark
 their own work done. The human writes and approves the spec, and judges the hand-back; anything in between that needs a

@@ -40,7 +40,7 @@ it too (the MCP server for other harnesses, e.g. a FleetView agent).
 The `factory` skill: turns a Jira ticket into an agent-ready spec with a red oracle, then runs an unattended loop
 (builder in its own worktree, the runner's own verify, a read-only reviewer, blind runtime QA in a throwaway VM, then a
 blind exploratory QA that tours the change and re-tries its findings on the base build) and hands back to a human judge. Every test runs in a QEMU VM of the target OS (vm-toolkit's), and so does the build, unless the product cross-compiles
-and the machine opts in (`VM_HOST_BUILD=yes`): then it builds on the Mac and the VMs only test and run.
+(unless the machine opts out, `VM_HOST_BUILD=no`): then it builds on the Mac and the VMs only test and run.
 
 - **Engine (this plugin):** the runner, prompts, templates, the reviewer's and QA agent's system prompts, and
   [GAPS.md](plugins/factory-toolkit/GAPS.md), what the loop still lacks.

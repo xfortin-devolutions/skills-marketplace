@@ -64,13 +64,16 @@ G app launch > "$T/out" 2>&1; [ $? -eq 3 ] && grep -q 'HARNESS ERROR' "$T/out" &
 
 echo "a guest build stopped by its time box"
 touch "$FAKE_STATE/time-box"; : > "$FAKE_STATE/vmssh.log"
-G build > "$T/out" 2>&1; rc=$?
+G build > "$T/out" 2>&1 <<< "left for the caller"; rc=$?
 rm "$FAKE_STATE/time-box"
-[ $rc -eq 3 ] && grep -q 'Stop-Process' "$FAKE_STATE/vmssh.log" && grep -q 'dotnet, MSBuild' "$FAKE_STATE/vmssh.log" \
+[ $rc -eq 3 ] && grep -q 'Stop-Process' "$FAKE_STATE/vmssh.log" && grep -q '"dotnet", "MSBuild"' "$FAKE_STATE/vmssh.log" && grep -q 'R:' "$FAKE_STATE/vmssh.log" \
   && ok "a harness error, and the build left in the guest is stopped" || fail "time box: rc $rc, $(cat "$FAKE_STATE/vmssh.log")"
+! grep -q 'left for the caller' "$FAKE_STATE/vmssh.log" && ok "and the caller's stdin is left alone (a loop reading a list)" \
+  || fail "the time box's stop read the caller's stdin"
 
 echo "a target that builds on the Mac (HOST_BUILD)"
 cat > "$T/host-build.sh" <<'SH'
+[ "${1:-}" = --check ] && { [ -e "$FAKE_STATE/host-declines" ] && { echo "this commit predates the fix"; exit 1; }; exit 0; }
 echo "host build of '$PROJECT' in $WORKTREE" >> "$FAKE_STATE/host.log"
 [ -e "$FAKE_STATE/host-red" ] && { echo "x.cs(1,1): error CS0103: nope"; echo "BUILD EXIT CODE: 1"; exit; }
 [ -e "$FAKE_STATE/host-no-sdk" ] && { echo "no dotnet SDK on this Mac"; exit; }
@@ -103,5 +106,15 @@ rm "$FAKE_STATE/host-red"; touch "$FAKE_STATE/host-no-sdk"
 G build > "$T/out" 2>&1; [ $? -eq 3 ] && grep -q 'HARNESS ERROR' "$T/out" && ok "no SDK on the Mac is a harness error" \
   || fail "no SDK: $(cat "$T/out")"
 rm "$FAKE_STATE/host-no-sdk"
+touch "$FAKE_STATE/host-declines"; : > "$FAKE_STATE/host.log"; : > "$FAKE_STATE/vmssh.log"
+G on-host build; [ $? -ne 0 ] && ok "a worktree the host build declines is not on the Mac" || fail "on-host build when declined"
+G build > "$T/out" 2>&1
+grep -q 'building in the guest, not on the Mac: this commit predates the fix' "$T/out" && [ ! -s "$FAKE_STATE/host.log" ] \
+  && grep -q '^# build' "$FAKE_STATE/vmssh.log" && ok "a declined worktree builds in the guest, and says why" \
+  || fail "declined: $(cat "$T/out"; cat "$FAKE_STATE/host.log")"
+G test Tests.csproj > /dev/null 2>&1
+[ ! -s "$FAKE_STATE/host.log" ] && grep -q '\$NoBuild = \$false' "$FAKE_STATE/vmssh.log" && ok "and its tests build in the guest" \
+  || fail "declined test: $(cat "$FAKE_STATE/vmssh.log")"
+rm "$FAKE_STATE/host-declines"
 
 [ "$FAILS" -eq 0 ] && echo "guest.sh: all passed" || { echo "guest.sh: $FAILS failed"; exit 1; }

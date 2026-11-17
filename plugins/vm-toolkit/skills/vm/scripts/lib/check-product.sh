@@ -52,7 +52,7 @@ for t in $TARGETS; do
     [ -n "$HOST_BUILD" ] && [ -f "$HOST_BUILD" ] && ! has "$HOST_BUILD" '\$PROJECT' && err "target $t: ${HOST_BUILD#$D/} ignores \$PROJECT"
     [ -n "$HOST_BUILD" ] && [ -f "$GUEST_TEST" ] && ! has "$GUEST_TEST" '\$NoBuild' \
       && err "target $t: ${GUEST_TEST#$D/} ignores \$NoBuild, and with HOST_BUILD the guest must test what the Mac built"
-    [ -n "$HOST_BUILD" ] && [ "${VM_HOST_BUILD:-no}" = yes ] && ! command -v dotnet > /dev/null \
+    [ -n "$HOST_BUILD" ] && [ "${VM_HOST_BUILD:-yes}" = yes ] && ! command -v dotnet > /dev/null \
       && warn "target $t: builds on the Mac (HOST_BUILD, VM_HOST_BUILD=yes), which has no dotnet: install the .NET SDK, or VM_HOST_BUILD=no"
     [ -f "$GUEST_TEST" ] && { has "$GUEST_TEST" '\$Project' && has "$GUEST_TEST" '\$Filter'; } \
       || { [ -f "$GUEST_TEST" ] && err "target $t: ${GUEST_TEST#$D/} must read \$Project and \$Filter"; }

@@ -662,11 +662,11 @@ vm_title() {
 }
 
 # guest_conf <vm run dir> <worktree>: what the toolkit's guest.sh needs to build and test in that VM (its guest.conf).
-# HOST_BUILD: the target builds on the Mac (cross-compiled) and the VM only tests and runs, when VM_HOST_BUILD=yes.
+# HOST_BUILD: the target builds on the Mac (cross-compiled) and the VM only tests and runs, unless VM_HOST_BUILD=no.
 guest_conf() {
   printf "WORKTREE='%s'\nGUEST_BUILD='%s'\nGUEST_TEST='%s'\nGUEST_BUILD_MIN=%s\nGUEST_LAUNCH='%s'\nAPP_SHOT_CAP=%s\nHOST_BUILD='%s'\n" \
     "$2" "$GUEST_BUILD" "$GUEST_TEST" "$GUEST_BUILD_MIN" "${GUEST_LAUNCH:-}" "$APP_SHOT_CAP" \
-    "$([ "${VM_HOST_BUILD:-no}" = yes ] && echo "${HOST_BUILD:-}")" > "$1/guest.conf"
+    "$([ "${VM_HOST_BUILD:-yes}" = yes ] && echo "${HOST_BUILD:-}")" > "$1/guest.conf"
 }
 
 # build_vm_up <worktree>: sets up the run's build VM and writes the guest tool. The VM itself boots on demand: the first

@@ -158,7 +158,7 @@ case "$cmd" in
       printf 'WORKTREE=%q\nPRODUCT=%q\nPLATFORM=%q\nAPP_NAME=%q\nGUEST_DESC=%q\n' "$W" "$P" "$PLATFORM" "$APP_NAME" "${GUEST_DESC:-}"
       printf 'GUEST_BUILD=%q\nGUEST_TEST=%q\nGUEST_LAUNCH=%q\nGUEST_BUILD_MIN=%s\nAPP_SHOT_CAP=%s\n' \
         "${GUEST_BUILD:-}" "${GUEST_TEST:-}" "${GUEST_LAUNCH:-}" "$GUEST_BUILD_MIN" "$APP_SHOT_CAP"
-      # The target builds on the Mac when it can and this machine says so (VM_HOST_BUILD=yes); else in the guest.
+      # The target builds on the Mac when it can, unless this machine says VM_HOST_BUILD=no; else in the guest.
       printf 'HOST_BUILD=%q\n' "$([ "$VM_HOST_BUILD" = yes ] && echo "${HOST_BUILD:-}")"
       printf 'VM_HOME=%q\nVM_IMAGE=%q\nVM_SHARE_CHECK=%q\nVM_TITLE=%q\n' \
         "$(home_of "${GUEST_OS:-$PLATFORM}")" "$VM_IMAGE" "$VM_SHARE_CHECK" "${TITLE:-$P $(basename "$W") - $(basename "$D")}"
