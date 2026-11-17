@@ -16,6 +16,8 @@ mkdir -p "$T/scripts/vm" "$T/state" "$T/vmrun"
 cp "$SKILL/scripts/guest.sh" "$T/scripts/"
 cp -R "$SKILL/scripts/lib" "$T/scripts/lib"
 cp "$HERE/fakes/vm/vmctl.sh" "$HERE/fakes/vm/vmssh" "$T/scripts/vm/"
+# The time box runs the command, or with $FAKE_STATE/time-box, stops it at once as the real one does at its limit.
+echo 'timebox() { if [ -e "$FAKE_STATE/time-box" ]; then cat > /dev/null; return 142; fi; shift; "$@"; }' > "$T/scripts/lib/timebox.sh"
 cat > "$T/scripts/vm/vm.py" <<'PY'
 import os, sys
 open(os.path.join(os.environ["FAKE_STATE"], "vmpy.log"), "a").write("vm.py " + " ".join(sys.argv[1:]) + "\n")
@@ -59,6 +61,13 @@ echo "a target with no launch script"
 sed -i '' "s|^GUEST_LAUNCH=.*|GUEST_LAUNCH=''|" "$T/vmrun/guest.conf"
 G app launch > "$T/out" 2>&1; [ $? -eq 3 ] && grep -q 'HARNESS ERROR' "$T/out" && ok "launch is a harness error" \
   || fail "launch without a script: $(cat "$T/out")"
+
+echo "a guest build stopped by its time box"
+touch "$FAKE_STATE/time-box"; : > "$FAKE_STATE/vmssh.log"
+G build > "$T/out" 2>&1; rc=$?
+rm "$FAKE_STATE/time-box"
+[ $rc -eq 3 ] && grep -q 'Stop-Process' "$FAKE_STATE/vmssh.log" && grep -q 'dotnet, MSBuild' "$FAKE_STATE/vmssh.log" \
+  && ok "a harness error, and the build left in the guest is stopped" || fail "time box: rc $rc, $(cat "$FAKE_STATE/vmssh.log")"
 
 echo "a target that builds on the Mac (HOST_BUILD)"
 cat > "$T/host-build.sh" <<'SH'

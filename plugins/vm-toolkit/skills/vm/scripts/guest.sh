@@ -62,8 +62,13 @@ ps_str() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
 
 # run <log> <script> <inputs>: the target script, its inputs first, time-boxed; the full output goes to <log>
 run() {
+  local rc
   { printf '%s\n' "$3"; cat "$2"; } | timebox $((GUEST_BUILD_MIN * 60)) "$X/vm/vmssh" - > "$1" 2>&1
-  echo "== vmssh exit $? (142 = time box)" >> "$1"
+  rc=$?
+  echo "== vmssh exit $rc (142 = time box)" >> "$1"
+  # The time box ends the SSH session, not what it started: a build left running in the guest holds its log and the
+  # worktree's output, and the next build fails on them.
+  [ $rc -eq 142 ] && "$X/vm/vmssh" 'Get-Process dotnet, MSBuild, testhost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1
 }
 
 # host_run <log> <project>: the target's HOST_BUILD on the Mac, in the worktree, time-boxed; the full output goes to <log>
