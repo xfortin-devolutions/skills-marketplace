@@ -289,7 +289,9 @@ TOOLS = {
                  "filter": {"type": "string", "description": "Test filter (dotnet test --filter syntax)."},
                  "no_build": {"type": "boolean", "description": "Run what the last build left."}},
                 ["name", "project"], t_test),
-    "vm_run": ("Run one PowerShell command in the guest (logs, settings, files), 5 minutes at most. The worktree is R:.",
+    "vm_run": ("Run one PowerShell command in the guest (logs, settings, files), 5 minutes at most. The worktree is R:; "
+               "a command that names R: takes ~15 s more (the share is mapped for it). Not while recording: do setup "
+               "before vm_record_start.",
                {"name": NAME, "powershell": {"type": "string"}}, ["name", "powershell"], t_run),
     "vm_app_launch": ("(Re)start the built app in the guest's desktop session with the product's launch script. The "
                       "window can take a while to show: take screenshots until it does.",
@@ -309,7 +311,11 @@ TOOLS = {
                   ["name", "x", "y", "amount"], t_scroll),
     "vm_record_start": ("Start recording the guest's screen as an MP4 (15 fps) for a demo: drive the app as usual meanwhile; "
                         "vm_click's clicks are circled in it. Stops by itself after max_minutes; vm_down ends it too. "
-                        "Explain on screen with vm_caption.",
+                        "Explain on screen with vm_caption. Set the scenario up first (vm_run, vm_apply, vm_app_launch): "
+                        "while it records use only vm_click, vm_type, vm_key, vm_scroll, vm_screenshot and vm_caption, one "
+                        "call at a time (a call made alongside another waits for it); wait for the app with vm_screenshot, "
+                        "not vm_run Start-Sleep. A still screen over 3 s is cut from the video. If it goes wrong, "
+                        "vm_record_stop, fix it, and record again from the start.",
                         {"name": NAME, "max_minutes": {"type": "integer", "description": "1-60, default 10."}},
                         ["name"], t_record_start),
     "vm_caption": ("Show a caption at the bottom of the recording from now on, until the next caption (or for seconds): "

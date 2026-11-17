@@ -14,7 +14,8 @@
 #                                                       start records <vm run dir>/app/video-N.mp4 until stop (at most
 #                                                       <min>, default VM_RECORD_MAX_MIN), clicks circled; caption shows
 #                                                       text on it until the next one (or for <s> seconds; "" clears)
-#   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min
+#   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min;
+#                                                       R: is mapped only when the command names it
 # Exit: 0 green, 1 the build or tests fail, 3 the harness failed (no exit code: time box, SSH, share; restore or SDK
 # errors), 2 usage. It prints the errors and the summary; the full log is <vm run dir>/build.log or test.log.
 # Nothing builds on the Mac: the guest is where the product ships, so it is where the loop compiles and tests.
@@ -23,7 +24,7 @@
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,17p' "$0" >&2; exit 2; }
+usage() { sed -n '3,18p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2
@@ -140,6 +141,8 @@ case "$CMD" in
     esac ;;
   run)
     [ $# -eq 1 ] || usage
+    # Mapping R: costs most of a call's time (vmssh): only a command that names the drive waits for it.
+    printf '%s' "$1" | grep -qE '(^|[^[:alnum:]_])[Rr]:' || export VM_NO_SHARE=1
     timebox 300 "$X/vm/vmssh" "$1" ;;
   info)
     "$X/vm/vmssh" '"guest: {0} {1} {2}; dotnet {3}" -f (Get-CimInstance Win32_OperatingSystem).Caption, [Environment]::OSVersion.Version, $env:PROCESSOR_ARCHITECTURE, (dotnet --version)' ;;
