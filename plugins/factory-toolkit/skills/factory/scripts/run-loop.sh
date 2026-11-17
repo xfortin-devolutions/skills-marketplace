@@ -4,8 +4,10 @@
 #   -> runtime QA (throwaway VM, blind QA agent) -> exploratory QA (charter from the diff, blind explorer, findings
 #   re-tried on the base) -> send back with the reason, up to ITER_CAP builder runs -> hand-back. Optional --open-pr
 #   opens a draft PR, an ordinary one without the hand-back (scripts/pr.sh).
-# Nothing builds on the Mac: one build VM per run (a clone of the target's image, sharing the run's worktree) serves the
+# Tests run in the guest: one build VM per run (a clone of the target's image, sharing the run's worktree) serves the
 # builder's guest tool and the runner's verify; each QA round gets a fresh clone that launches the verified binaries.
+# The build runs in that VM too, or on the Mac when the target cross-compiles (HOST_BUILD): the VM then boots for tests
+# and the app only.
 # Usage (from the repo):
 #   run-loop.sh <TICKET> [--open-pr] [--qa | --no-qa] [--no-explore] [--keep-vm]
 #                                    the loop; QA runs when the ticket has a Runtime check, exploration after a QA PASS;
@@ -100,7 +102,8 @@ if [ -n "$(git -C "$REPO" status --porcelain -- "$FACTORY_DIR_REL" $SKILL_IN_REP
   echo "commit the acceptance tests (and the project, when it is in the repo) first: the worktree is cut from HEAD" >&2; exit 2
 fi
 
-# Every build and test runs in the guest, so every mode but the assessor's needs the target's image and scripts.
+# Every test runs in the guest (the build too, unless the target builds on the Mac: HOST_BUILD), so every mode but the
+# assessor's needs the target's image and scripts.
 [ -n "$ASSESS_ONLY" ] || [ -f "$FACTORY_VM_HOME/$GOLDEN_IMAGE" ] && command -v qemu-system-aarch64 > /dev/null \
   || { echo "no $GOLDEN_IMAGE in $FACTORY_VM_HOME (or no QEMU): see $VMT/references/vm-setup.md" >&2; exit 2; }
 [ -n "${GUEST_BUILD:-}" ] && [ -n "${GUEST_TEST:-}" ] || { echo "profile $PROFILE, target '$PLATFORM': no GUEST_BUILD/GUEST_TEST" >&2; exit 2; }
@@ -658,10 +661,12 @@ vm_title() {
   echo "$(echo "$id" | sed -nE 's/-(qa|test|assess)-([0-9]{8}T[0-9]{6}Z)/-\2/; s/^(.+)-[0-9]{8}T[0-9]{6}Z.*/\1/p' | tr '[:lower:]' '[:upper:]') $what - $id" | sed 's/^ //'
 }
 
-# guest_conf <vm run dir> <worktree>: what the toolkit's guest.sh needs to build and test in that VM (its guest.conf)
+# guest_conf <vm run dir> <worktree>: what the toolkit's guest.sh needs to build and test in that VM (its guest.conf).
+# HOST_BUILD: the target builds on the Mac (cross-compiled) and the VM only tests and runs, when VM_HOST_BUILD=yes.
 guest_conf() {
-  printf "WORKTREE='%s'\nGUEST_BUILD='%s'\nGUEST_TEST='%s'\nGUEST_BUILD_MIN=%s\nGUEST_LAUNCH='%s'\nAPP_SHOT_CAP=%s\n" \
-    "$2" "$GUEST_BUILD" "$GUEST_TEST" "$GUEST_BUILD_MIN" "${GUEST_LAUNCH:-}" "$APP_SHOT_CAP" > "$1/guest.conf"
+  printf "WORKTREE='%s'\nGUEST_BUILD='%s'\nGUEST_TEST='%s'\nGUEST_BUILD_MIN=%s\nGUEST_LAUNCH='%s'\nAPP_SHOT_CAP=%s\nHOST_BUILD='%s'\n" \
+    "$2" "$GUEST_BUILD" "$GUEST_TEST" "$GUEST_BUILD_MIN" "${GUEST_LAUNCH:-}" "$APP_SHOT_CAP" \
+    "$([ "${VM_HOST_BUILD:-no}" = yes ] && echo "${HOST_BUILD:-}")" > "$1/guest.conf"
 }
 
 # build_vm_up <worktree>: sets up the run's build VM and writes the guest tool. The VM itself boots on demand: the first
@@ -681,6 +686,8 @@ build_vm_up() {
       printf 'export %s=%q\n' "$v" "${!v:-}"
     done
     printf 'export VM_TITLE=%q\n' "$(vm_title "$BUILD_VM")"
+    # A build on the Mac (the target's HOST_BUILD) boots no VM and holds no slot.
+    printf '%q %q on-host "$@" && exec %q %q "$@"\n' "$GUEST_SH" "$BUILD_VM" "$GUEST_SH" "$BUILD_VM"
     printf 'exec %q %q %q %q %q %q %q "$@"\n' "$VMT/scripts/lib/lease.sh" "$VM/vmctl.sh" "$BUILD_VM" "$1" "$EV" "$GUEST_SH" "$BUILD_VM"
   } > "$GUEST"
   chmod +x "$GUEST"

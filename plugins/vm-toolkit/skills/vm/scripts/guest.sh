@@ -1,10 +1,12 @@
 #!/bin/bash
-# guest.sh: builds and tests the shared worktree inside a factory VM, through the target's scripts.
+# guest.sh: builds and tests the shared worktree for a factory VM, through the target's scripts.
 #   guest.sh <vm run dir> build [<project>] [--clean]   the target's build (default: what the target builds); --clean first
 #                                                       deletes the worktree's ignored files (bin/, obj/) from the Mac
 #   guest.sh <vm run dir> test [--no-build] <project> [<filter>]   the target's test script on one test project;
 #                                                       --no-build runs what the last build left (no rebuild)
-#   guest.sh <vm run dir> info                          the guest's OS and SDK versions (for a verification record)
+#   guest.sh <vm run dir> on-host <command>...          exit 0 when that command runs on the Mac alone (no VM to boot)
+#   guest.sh <vm run dir> info                          the guest's OS and SDK versions, and the Mac's when it builds
+#                                                       there (for a verification record)
 #   guest.sh <vm run dir> app launch | wait <s> | shot | click <x> <y> [right|double] | type <text> | key <combo>... |
 #                         scroll <x> <y> <n> | stop     the builder's app, at any point while it works (not QA): launch
 #                                                       (re)starts the build in the desktop session, shot saves a
@@ -17,25 +19,41 @@
 #   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min
 # Exit: 0 green, 1 the build or tests fail, 3 the harness failed (no exit code: time box, SSH, share; restore or SDK
 # errors), 2 usage. It prints the errors and the summary; the full log is <vm run dir>/build.log or test.log.
-# Nothing builds on the Mac: the guest is where the product ships, so it is where the loop compiles and tests.
-# <vm run dir>/guest.conf, written by run-loop.sh, names the worktree and the target: WORKTREE, GUEST_BUILD, GUEST_TEST,
-# GUEST_BUILD_MIN. bash 3.2 compatible.
+# Where it builds: a target with a HOST_BUILD script builds on the Mac (cross-compiled for the guest), and the guest only
+# tests and runs what the Mac built: test builds the project on the Mac first, then runs the guest's test script with
+# $NoBuild (the guest never builds: its restore would rewrite obj/ with its own paths). Without one, it builds in the
+# guest. Tests and the app always run in the guest: the product ships there.
+# <vm run dir>/guest.conf, written by run-loop.sh or vmt init, names the worktree and the target: WORKTREE, GUEST_BUILD,
+# HOST_BUILD, GUEST_TEST, GUEST_BUILD_MIN. bash 3.2 compatible.
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,17p' "$0" >&2; exit 2; }
+usage() { sed -n '3,19p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2
 [ -f "$D/guest.conf" ] || { echo "HARNESS ERROR: no $D/guest.conf (no factory VM there)" >&2; exit 3; }
 . "$D/guest.conf"
-env=$("$X/vm/vmctl.sh" env "$D" 2> /dev/null) || { echo "HARNESS ERROR: the VM of $D is not running" >&2; exit 3; }
-eval "$env"
+HOST_BUILD=${HOST_BUILD:-}
+
+# on_host <command>...: 0 when the command needs no VM (a build on the Mac)
+on_host() { [ -n "$HOST_BUILD" ] && [ "${1:-}" = build ]; }
+
+# A build on the Mac needs no VM; everything else runs in it.
+if [ "$CMD" = on-host ]; then on_host "$@"; exit $?; fi
+VM_UP=yes
+if on_host "$CMD"; then
+  # Only to stop an app the VM runs from the share (it locks the build's output), when the VM is up.
+  "$X/vm/vmctl.sh" alive "$D" 2> /dev/null && env=$("$X/vm/vmctl.sh" env "$D" 2> /dev/null) && eval "$env" || VM_UP=no
+else
+  env=$("$X/vm/vmctl.sh" env "$D" 2> /dev/null) || { echo "HARNESS ERROR: the VM of $D is not running" >&2; exit 3; }
+  eval "$env"
+fi
 
 # app_stop: ends what runs from the share (the app the builder launched), which would lock the build's output
 app_stop() {
   [ -e "$D/app.running" ] || return 0
-  "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1
+  [ "$VM_UP" = yes ] && "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1
   rm -f "$D/app.running"
 }
 
@@ -46,6 +64,12 @@ ps_str() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
 run() {
   { printf '%s\n' "$3"; cat "$2"; } | timebox $((GUEST_BUILD_MIN * 60)) "$X/vm/vmssh" - > "$1" 2>&1
   echo "== vmssh exit $? (142 = time box)" >> "$1"
+}
+
+# host_run <log> <project>: the target's HOST_BUILD on the Mac, in the worktree, time-boxed; the full output goes to <log>
+host_run() {
+  WORKTREE=$WORKTREE PROJECT=$2 timebox $((GUEST_BUILD_MIN * 60)) bash "$HOST_BUILD" > "$1" 2>&1 < /dev/null
+  echo "== host build exit $? (142 = time box)" >> "$1"
 }
 
 # report <log> <BUILD|TEST>: prints the errors and the summary, then exits with the verdict
@@ -78,13 +102,24 @@ case "$CMD" in
     app_stop
     # Ignored files only: in a run's worktree those are build outputs; tracked files and the hand-back stay.
     [ "$clean" = yes ] && git -C "$WORKTREE" clean -fdXq -- . ':!handback'
-    run "$D/build.log" "$GUEST_BUILD" "\$Project = $(ps_str "$proj")"
+    if [ -n "$HOST_BUILD" ]; then host_run "$D/build.log" "$proj"
+    else run "$D/build.log" "$GUEST_BUILD" "\$Project = $(ps_str "$proj")"; fi
     report "$D/build.log" BUILD ;;
   test)
     nob='$false'
     [ "${1:-}" = --no-build ] && { nob='$true'; shift; }
     [ $# -ge 1 ] && [ $# -le 2 ] || usage
     app_stop
+    # Built on the Mac: the test project first (unless --no-build), and the guest runs what that left.
+    if [ -n "$HOST_BUILD" ]; then
+      if [ "$nob" = '$false' ]; then
+        host_run "$D/build.log" "$1"
+        ( report "$D/build.log" BUILD ) > "$D/test-build.out"
+        rc=$?
+        [ $rc -eq 0 ] || { cat "$D/test-build.out"; exit $rc; }
+      fi
+      nob='$true'
+    fi
     run "$D/test.log" "$GUEST_TEST" "\$Project = $(ps_str "$1"); \$Filter = $(ps_str "${2:-}"); \$NoBuild = $nob"
     report "$D/test.log" TEST ;;
   app)
@@ -142,6 +177,8 @@ case "$CMD" in
     [ $# -eq 1 ] || usage
     timebox 300 "$X/vm/vmssh" "$1" ;;
   info)
-    "$X/vm/vmssh" '"guest: {0} {1} {2}; dotnet {3}" -f (Get-CimInstance Win32_OperatingSystem).Caption, [Environment]::OSVersion.Version, $env:PROCESSOR_ARCHITECTURE, (dotnet --version)' ;;
+    g=$("$X/vm/vmssh" '"guest: {0} {1} {2}; dotnet {3}" -f (Get-CimInstance Win32_OperatingSystem).Caption, [Environment]::OSVersion.Version, $env:PROCESSOR_ARCHITECTURE, (dotnet --version)') || exit
+    [ -z "$HOST_BUILD" ] && { echo "$g"; exit 0; }
+    echo "$g; built on the Mac: macOS $(sw_vers -productVersion 2> /dev/null) $(uname -m), dotnet $(dotnet --version 2> /dev/null)" ;;
   *) usage ;;
 esac

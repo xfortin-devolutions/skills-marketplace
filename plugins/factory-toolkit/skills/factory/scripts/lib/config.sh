@@ -155,7 +155,8 @@ QA_TOOLS=("Bash(python3 $VM/vm.py *)" "Bash($VM/vmssh *)" "Bash(sips *)")
 PROTECTED_PATHS="${ORACLE_PATHS:-} $FACTORY_DIR_REL .claude/settings.json .claude/settings.local.json .claude/hooks $PROTECTED_EXTRA"
 DENY_BASH=("Bash(git push *)" "Bash(gh *)")
 
-# Nothing builds or tests on the Mac: run-loop.sh adds the run's guest tool (build and test in the build VM) to both lists.
+# No direct build or test: run-loop.sh adds the run's guest tool to both lists (it builds where the target says, on the Mac
+# or in the build VM, and tests in the build VM).
 BUILD_TOOLS=(
   "Read" "Edit" "Write" "Glob" "Grep" "Skill"
   "Bash(git --version)" "Bash(claude --version)" "Bash(date *)"

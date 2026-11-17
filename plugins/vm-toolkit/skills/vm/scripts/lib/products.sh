@@ -41,13 +41,13 @@ product_for_path() {
 
 # load_product <product folder> [<target>]: sources product.sh, then the target's target.sh (the given one, else
 # PLATFORM, else the product's first), with TARGET_DIR set as target.sh expects. Sets PRODUCT_DIR, PLATFORM, TARGET_DIR,
-# the target's GUEST_* and GOLDEN_IMAGE, and exports VM_IMAGE and VM_SHARE_CHECK for vmctl.sh.
+# the target's GUEST_*, HOST_BUILD and GOLDEN_IMAGE, and exports VM_IMAGE and VM_SHARE_CHECK for vmctl.sh.
 load_product() {
   PRODUCT_DIR=$1
   [ -f "$PRODUCT_DIR/product.sh" ] || { echo "no product definition in $PRODUCT_DIR (product.sh)" >&2; return 2; }
   . "$PRODUCT_DIR/product.sh"
   PLATFORM=${2:-${PLATFORM:-${TARGETS%% *}}}
-  TARGET_DIR=$PRODUCT_DIR/targets/$PLATFORM
+  TARGET_DIR=$PRODUCT_DIR/targets/$PLATFORM HOST_BUILD=""
   [ -n "$PLATFORM" ] && [ -f "$TARGET_DIR/target.sh" ] \
     || { echo "product $(basename "$PRODUCT_DIR") has no target '$PLATFORM' (targets/<os>/target.sh)" >&2; return 2; }
   . "$TARGET_DIR/target.sh"

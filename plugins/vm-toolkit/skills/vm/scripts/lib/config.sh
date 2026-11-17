@@ -4,6 +4,10 @@
 
 VM_ROOT=${VM_ROOT:-} VM_CPUS=8 VM_MEM=16G VM_MAX=2 VM_SLOT_WAIT_MIN=120 VM_IDLE_MIN=10 VM_BOOT_MIN=10
 VM_XRES=1600 VM_YRES=900 GUEST_BUILD_MIN=30 APP_SHOT_CAP=200 VM_RECORD_MAX_MIN=10
+# yes: a target that can build on the Mac (HOST_BUILD) builds there, and its VMs only test and run. Off by default until
+# the products' cross-compiled output matches a Windows build (RDM: NuGet packages copy their native files by the build
+# host's OS, so RDP, SSH and the like don't work from a Mac build yet; GAPS V91).
+VM_HOST_BUILD=no
 for _c in "${FACTORY_USER_CONFIG:-$HOME/.factory/config.sh}" "${VMT_USER_CONFIG:-$HOME/.vm-toolkit/config.sh}"; do
   # shellcheck disable=SC1090
   [ -f "$_c" ] && . "$_c"

@@ -1,6 +1,6 @@
 ---
 name: factory
-description: "[EXPERIMENTAL] Software factory for Jira tickets, run from a Mac, for a supported repo (projects bundled with the skill, or a repo's own .factory/; profiles per product: RDM, Devolutions Console, …): turn a ticket into an agent-ready spec with a red oracle, then run the unattended loop — headless builder in its own worktree that builds and tests in a per-run QEMU VM of the target OS (the vm-toolkit plugin's VMs and product definitions; nothing builds on the Mac), runner verify in that VM, read-only reviewer, a blind runtime QA stage that drives the verified build in a fresh throwaway VM, then a blind exploratory QA around the change (charter from the diff, findings re-tried on the base) that leaves the judge a guided tour — with send-backs, caps, a hand-back for the human judge, and Screen Sharing on the VM when a human is needed. Sub-commands: spec, run, qa, status, show, human, judge, stop, clean, vm, setup, profile, layer (and which: the profile for a code path). Use when the user says factory, factory loop, 'run the loop on <ticket>', 'make <ticket> agent-ready', 'test <ticket> in a VM', 'show me the VM', or asks to judge or check a factory run. Also: set up a repo or a new profile for the factory. Not for a one-off interactive fix (fix-jira) or a QA tester's .app/.deb build (rdm-mac-qa-fix, rdm-linux-qa-fix)."
+description: "[EXPERIMENTAL] Software factory for Jira tickets, run from a Mac, for a supported repo (projects bundled with the skill, or a repo's own .factory/; profiles per product: RDM, Devolutions Console, …): turn a ticket into an agent-ready spec with a red oracle, then run the unattended loop — headless builder in its own worktree that builds and tests in a per-run QEMU VM of the target OS (the vm-toolkit plugin's VMs and product definitions; the build can move to the Mac for a product that cross-compiles), runner verify in that VM, read-only reviewer, a blind runtime QA stage that drives the verified build in a fresh throwaway VM, then a blind exploratory QA around the change (charter from the diff, findings re-tried on the base) that leaves the judge a guided tour — with send-backs, caps, a hand-back for the human judge, and Screen Sharing on the VM when a human is needed. Sub-commands: spec, run, qa, status, show, human, judge, stop, clean, vm, setup, profile, layer (and which: the profile for a code path). Use when the user says factory, factory loop, 'run the loop on <ticket>', 'make <ticket> agent-ready', 'test <ticket> in a VM', 'show me the VM', or asks to judge or check a factory run. Also: set up a repo or a new profile for the factory. Not for a one-off interactive fix (fix-jira) or a QA tester's .app/.deb build (rdm-mac-qa-fix, rdm-linux-qa-fix)."
 ---
 
 # Software factory
@@ -27,8 +27,12 @@ charter and reports a **tour** (steps + screenshots, for the judge) and **findin
 re-tried on a **build of the base** in its own VM: only a blocker the base doesn't show sends the change back, at most
 `EXPLORE_SENDBACKS` times; every other finding is for the judge (hand-back section Exploratory QA).
 
-Nothing builds or tests on the Mac: the product ships on the guest OS, so it is compiled and tested there. The Mac only
-edits, runs git, and drives the VMs.
+Every test runs in the guest: the product ships on the guest OS, so it is tested there, and by default it is built
+there too. A target that cross-compiles (`HOST_BUILD` in its definition: RDM and the Console have one) builds on the Mac
+on a machine with `VM_HOST_BUILD=yes`, and its VMs then only test and run what the Mac built: the builder's builds boot
+no VM, and VMs stay light (the compile was their heaviest load). Not the default yet: a Mac build of RDM misses native
+files from NuGet packages (the toolkit's GAPS V91). Agents never run `dotnet` themselves: the guest tool builds where
+the target and the machine say.
 
 Everything a station decides is checked by the next one, and the runner (a script) owns every gate: agents never mark
 their own work done. The human writes and approves the spec, and judges the hand-back; anything in between that needs a
@@ -298,7 +302,9 @@ hardest case):
   for a web front end. That goes in a VM layer; reuse one when it fits (the `console` layer already has IIS, SQL Server
   Express and DVLS instances: a DVLS profile can start from it, or from its recipe).
 - **Build and test in the guest:** `build.ps1` builds what ships (all of it: back end and front end), `test.ps1` runs
-  one test project with a filter. Ask which test projects run headless.
+  one test project with a filter. Ask which test projects run headless. When it cross-compiles from the Mac (a .NET
+  product usually does, with `EnableWindowsTargeting`), add `host-build.sh` (`HOST_BUILD`), prove its output launches
+  and its tests run in the guest with `--no-build`, and builds leave the VMs.
 - **Launch:** for a desktop app, start it in the signed-in session. For a server or web app, deploy or start the build
   (an IIS site, a Kestrel process), wait until it answers, then open the browser at its URL in the desktop session:
   QA drives the browser like a user. `LAUNCH OK` only once the page answers.
