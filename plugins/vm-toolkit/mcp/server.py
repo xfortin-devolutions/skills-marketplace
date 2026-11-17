@@ -22,7 +22,7 @@ LOG_TAIL = 80
 
 INSTRUCTIONS = """Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), on the machine this server runs on.
 Start with vm_products on the repo or worktree, then vm_up the worktree (the VM shares it live as R:), and build and
-test in it with vm_build / vm_test: nothing needs building on the host. vm_app_launch starts the built app in the
+test in it with vm_build / vm_test (in the guest, or on the host for a target that cross-compiles when the host allows it; run no build yourself). vm_app_launch starts the built app in the
 guest's desktop; vm_screenshot, vm_click, vm_type, vm_key and vm_scroll drive it (vm_wait while it loads), and vm_record_start / vm_caption /
 vm_record_stop make a demo video of it. Exit meanings: green (0), red (1,
 the change), harness error (3, the VM or the share, not the change: retry or say so). vm_down when done. A VM not
@@ -285,7 +285,7 @@ TOOLS = {
                                    "of the product's image: its sign-ins and setup are there. A VM that took a checkpoint "
                                    "starts from it anyway."}},
               ["worktree"], t_up),
-    "vm_build": ("Build the shared worktree in the guest with the product's build script. Can take many minutes.",
+    "vm_build": ("Build the shared worktree with the product's build script: on this host when the target cross-compiles and the host allows it (VM_HOST_BUILD=yes; no VM needed), else in the guest. Can take many minutes.",
                  {"name": NAME, "project": {"type": "string", "description": "One project; default what the target builds."},
                   "clean": {"type": "boolean", "description": "Delete the worktree's ignored files (bin/, obj/) first."}},
                  ["name"], t_build),

@@ -35,13 +35,13 @@ for t in $TARGETS; do
   fi
   (
     errs=0 warns=0
-    TARGET_DIR=$TD GOLDEN_IMAGE="" GUEST_OS="" GUEST_DESC="" SHARE_CHECK="" GUEST_BUILD="" GUEST_TEST="" GUEST_LAUNCH=""
+    TARGET_DIR=$TD GOLDEN_IMAGE="" GUEST_OS="" GUEST_DESC="" SHARE_CHECK="" GUEST_BUILD="" GUEST_TEST="" GUEST_LAUNCH="" HOST_BUILD=""
     . "$TD/target.sh"
     for v in GUEST_OS GUEST_DESC SHARE_CHECK GUEST_BUILD GUEST_TEST GUEST_LAUNCH; do
       eval "[ -n \"\$$v\" ]" || err "target $t: $v is empty"
     done
     [ -z "$SHARE_CHECK" ] || [ -e "$REPO/$SHARE_CHECK" ] || err "target $t: SHARE_CHECK $SHARE_CHECK is not in the repo"
-    for pair in "GUEST_BUILD:BUILD EXIT CODE" "GUEST_TEST:TEST EXIT CODE" "GUEST_LAUNCH:LAUNCH OK"; do
+    for pair in "GUEST_BUILD:BUILD EXIT CODE" "HOST_BUILD:BUILD EXIT CODE" "GUEST_TEST:TEST EXIT CODE" "GUEST_LAUNCH:LAUNCH OK"; do
       v=${pair%%:*} marker=${pair#*:}
       eval "f=\$$v"
       [ -n "$f" ] || continue
@@ -49,6 +49,11 @@ for t in $TARGETS; do
       has "$f" "$marker" || err "target $t: ${f#$D/} never prints \"$marker\""
     done
     [ -f "$GUEST_BUILD" ] && ! has "$GUEST_BUILD" '\$Project' && err "target $t: ${GUEST_BUILD#$D/} ignores \$Project"
+    [ -n "$HOST_BUILD" ] && [ -f "$HOST_BUILD" ] && ! has "$HOST_BUILD" '\$PROJECT' && err "target $t: ${HOST_BUILD#$D/} ignores \$PROJECT"
+    [ -n "$HOST_BUILD" ] && [ -f "$GUEST_TEST" ] && ! has "$GUEST_TEST" '\$NoBuild' \
+      && err "target $t: ${GUEST_TEST#$D/} ignores \$NoBuild, and with HOST_BUILD the guest must test what the Mac built"
+    [ -n "$HOST_BUILD" ] && [ "${VM_HOST_BUILD:-yes}" = yes ] && ! command -v dotnet > /dev/null \
+      && warn "target $t: builds on the Mac (HOST_BUILD, VM_HOST_BUILD=yes), which has no dotnet: install the .NET SDK, or VM_HOST_BUILD=no"
     [ -f "$GUEST_TEST" ] && { has "$GUEST_TEST" '\$Project' && has "$GUEST_TEST" '\$Filter'; } \
       || { [ -f "$GUEST_TEST" ] && err "target $t: ${GUEST_TEST#$D/} must read \$Project and \$Filter"; }
     img=${GOLDEN_IMAGE:-base.qcow2}

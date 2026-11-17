@@ -22,11 +22,13 @@ then `vmt check <name>` until it says OK. Prove the scripts on a VM: `vmt init <
     product.sh                     the product
     targets/<os>/target.sh         one guest target: image and scripts
     targets/<os>/build.ps1         builds what ships, in the guest
+    targets/<os>/host-build.sh     optional: builds the same on the Mac (cross-compiled), when the machine allows it
     targets/<os>/test.ps1          runs one test project, in the guest
     targets/<os>/launch.ps1        starts the build in the guest's desktop session
     layer/layer.conf, setup.ps1    optional: the VM layer the targets start from
     layer.md                       optional: notes on how the layer was worked out
-~/.vm-toolkit/config.sh            per machine, never committed: VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, VM_SLOT_WAIT_MIN, VM_IDLE_MIN
+~/.vm-toolkit/config.sh            per machine, never committed: VM_ROOT, VM_CPUS, VM_MEM, VM_MAX, VM_SLOT_WAIT_MIN, VM_IDLE_MIN,
+                                   VM_HOST_BUILD
 ```
 
 All are bash 3.2 (the macOS default): no associative arrays. A caller with settings of its own (the factory's profiles)
@@ -53,6 +55,7 @@ No build or test command lives here: that is the targets' job, in the guest.
 | `GOLDEN_IMAGE` | no | the image clones start from: `base.qcow2` (default) or a layer this product builds (`<LAYER>.qcow2`) |
 | `SHARE_CHECK` | yes | a repo-relative file the shared worktree must contain (proves the right repo is shared) |
 | `GUEST_BUILD`, `GUEST_TEST`, `GUEST_LAUNCH` | yes | the three scripts, usually `$TARGET_DIR/build.ps1`, … |
+| `HOST_BUILD` | no | a bash script that builds what `build.ps1` builds, on the Mac (cross-compiled for the guest), usually `$TARGET_DIR/host-build.sh` |
 
 The scripts run in the guest with the worktree at `R:` (Windows), sent by `vmssh`, which runs in SSH's session 0 (no
 desktop). Callers run them through `scripts/guest.sh` (`vmt guest`, the MCP server's `vm_build`, `vm_test`,
@@ -63,6 +66,30 @@ desktop). Callers run them through `scripts/guest.sh` (`vmt guest`, the MCP serv
 | `build` | `$Project` (empty: build what ships) | stop the running app first (it locks its files on the share) | `BUILD EXIT CODE: <n>` |
 | `test` | `$Project`, `$Filter` (may be empty), `$NoBuild` | run that test project only; with `$NoBuild`, on what the last whole build left (`dotnet test --no-build`) | `TEST EXIT CODE: <n>` |
 | `launch` | none | stop any running instance; start the built app in the signed-in desktop session (run again to restart it). A server or web app: deploy or start it, wait until it answers, then open the browser at its URL in the desktop session | `LAUNCH OK` once it is starting (a server: once its page answers) |
+
+### Building on the Mac (`HOST_BUILD`)
+
+A target whose toolchain cross-compiles (.NET with `EnableWindowsTargeting`) can build on the Mac, into the shared
+worktree, so its VMs only test and run: a build boots no VM, VMs need less CPU and RAM, and a role that only builds needs
+none. It is used unless the machine's `~/.vm-toolkit/config.sh` says `VM_HOST_BUILD=no`; then the target builds in the
+guest as before. Then:
+- `guest build` runs `HOST_BUILD` on the Mac, with `$WORKTREE` and `$PROJECT` (empty: what ships) set; it must print
+  `BUILD EXIT CODE: <n>`, and stop without it when the harness is at fault (no SDK). Same time box, same verdicts.
+- `guest test <project>` builds that project on the Mac first, then runs the test script in the guest with `$NoBuild`
+  always set: the guest never builds a host-built worktree (its restore would rewrite `obj/` with its own paths).
+- A worktree built one way and then the other: `guest build --clean` once.
+- `HOST_BUILD --check` (with `$WORKTREE`): exit 0 when this Mac can build that worktree, else print why and exit non-zero;
+  guest.sh then builds in the guest and says why (`info` and `build` print it). RDM checks for its cross-compile fix
+  in the worktree's commit and a .NET 10 SDK.
+
+The output must be what the guest's build makes, not just compile. Before adding `HOST_BUILD`, prove on a VM that the
+Mac-built app launches and does its main jobs (in RDM: open an RDP and an SSH session, which need native files), and
+that each test project runs with `--no-build`. Traps found on RDM and the Console (2026-11-17): a plain `net10.0` test
+project gets a macOS app host, which xUnit v3 can't start in the guest (`-p:DefaultAppHostRuntimeIdentifier=win-<arch>`);
+projects without `EnableWindowsTargeting` fail with NETSDK1073 (`-p:EnableWindowsTargeting=true`); NuGet packages whose
+`.targets` pick native files by the build host's OS (`IsOSPlatform('Windows')`) copy the Mac's or none (GAPS V91, fixed in
+RDM's `.props`); RDM's Debug trim keeps only the build machine's `runtimes/` natives in a portable project
+(`-p:RdmTrimDebugOutput=false`).
 
 Exit code rules: a non-zero code with restore or SDK errors (`NU…`, `NETSDK…`, `MSB4236`) is a harness error; any other
 non-zero code is the change's fault. When the harness is at fault (no `R:`, no SDK), stop **without** printing the

@@ -4,6 +4,10 @@
 
 VM_ROOT=${VM_ROOT:-} VM_CPUS=8 VM_MEM=16G VM_MAX=2 VM_SLOT_WAIT_MIN=120 VM_IDLE_MIN=10 VM_BOOT_MIN=10
 VM_XRES=1600 VM_YRES=900 GUEST_BUILD_MIN=30 APP_SHOT_CAP=200 VM_RECORD_MAX_MIN=10
+# yes: a target that can build on the Mac (HOST_BUILD) builds there, and its VMs only test and run; a worktree the Mac
+# can't build (its HOST_BUILD --check says why: an RDM commit before the cross-compile fix, no .NET 10 SDK) still builds
+# in the guest. no: every build in the guest.
+VM_HOST_BUILD=yes
 for _c in "${FACTORY_USER_CONFIG:-$HOME/.factory/config.sh}" "${VMT_USER_CONFIG:-$HOME/.vm-toolkit/config.sh}"; do
   # shellcheck disable=SC1090
   [ -f "$_c" ] && . "$_c"

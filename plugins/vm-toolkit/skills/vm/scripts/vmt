@@ -13,7 +13,8 @@
 #                                        --checkpoint: the VM starts from that checkpoint instead of the product's image
 #   vmt up <vm dir> [--keep]             boots it, sharing the worktree as R:. Without --keep it powers off after
 #                                        VM_IDLE_MIN idle minutes (the next guest command boots it again)
-#   vmt guest <vm dir> <command>...      scripts/guest.sh on it, booting it first if needed: build [<project>] [--clean]
+#   vmt guest <vm dir> <command>...      scripts/guest.sh on it, booting it first if needed (not for a build on the
+#                                        Mac: the target's HOST_BUILD): build [<project>] [--clean]
 #                                        | test [--no-build] <project> [<filter>] | app launch|wait|shot|click|type|
 #                                        key|scroll|stop | app record start [<min>]|stop | app caption <text> [<s>]
 #                                        | run '<powershell>' | info
@@ -81,7 +82,8 @@ case "$cmd" in
         for t in $TARGETS; do
           ( load_product "$d/$p" "$t" > /dev/null 2>&1 || exit 0
             img=$(home_of "${GUEST_OS:-$t}")/$GOLDEN_IMAGE
-            echo "  target $t: $GUEST_DESC, image $GOLDEN_IMAGE ($([ -f "$img" ] || echo "not ")on this machine)" )
+            echo "  target $t: $GUEST_DESC, image $GOLDEN_IMAGE ($([ -f "$img" ] || echo "not ")on this machine)$([ -n "${HOST_BUILD:-}" ] \
+              && echo "; can build on the Mac ($([ "$VM_HOST_BUILD" = yes ] && echo "on: VM_HOST_BUILD=yes" || echo "off: VM_HOST_BUILD=no"))")" )
         done
       )
     done ;;
@@ -156,6 +158,8 @@ case "$cmd" in
       printf 'WORKTREE=%q\nPRODUCT=%q\nPLATFORM=%q\nAPP_NAME=%q\nGUEST_DESC=%q\n' "$W" "$P" "$PLATFORM" "$APP_NAME" "${GUEST_DESC:-}"
       printf 'GUEST_BUILD=%q\nGUEST_TEST=%q\nGUEST_LAUNCH=%q\nGUEST_BUILD_MIN=%s\nAPP_SHOT_CAP=%s\n' \
         "${GUEST_BUILD:-}" "${GUEST_TEST:-}" "${GUEST_LAUNCH:-}" "$GUEST_BUILD_MIN" "$APP_SHOT_CAP"
+      # The target builds on the Mac when it can, unless this machine says VM_HOST_BUILD=no; else in the guest.
+      printf 'HOST_BUILD=%q\n' "$([ "$VM_HOST_BUILD" = yes ] && echo "${HOST_BUILD:-}")"
       printf 'VM_HOME=%q\nVM_IMAGE=%q\nVM_SHARE_CHECK=%q\nVM_TITLE=%q\n' \
         "$(home_of "${GUEST_OS:-$PLATFORM}")" "$VM_IMAGE" "$VM_SHARE_CHECK" "${TITLE:-$P $(basename "$W") - $(basename "$D")}"
     } > "$D/guest.conf"
@@ -181,6 +185,8 @@ case "$cmd" in
     [ "${1:-} ${2:-}" = "app caption" ] && ! "$X/vm/vmctl.sh" alive "$D" && die "nothing is recording: the VM is down"
     # A wait is a sleep on the Mac: no lease, so it never boots a VM.
     [ "${1:-} ${2:-}" = "app wait" ] && exec "$X/guest.sh" "$D" "$@"
+    # A build on the Mac (the target's HOST_BUILD) needs no VM: none is booted for it.
+    "$X/guest.sh" "$D" on-host "$@" && exec "$X/guest.sh" "$D" "$@"
     # A kept VM (up --keep) is never powered off behind its user's back: no lease, no reaper.
     if [ -f "$D/keep" ]; then
       "$X/vm/vmctl.sh" alive "$D" || die "the VM of $D is down: vmt up $D --keep"

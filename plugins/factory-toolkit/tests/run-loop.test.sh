@@ -159,6 +159,20 @@ EOF
   one_vm
 }
 
+t_host_build() {
+  # A target that builds on the Mac: the builder's build boots no VM; its tests and verify's still run in one.
+  touch "$FAKE_STATE/host-build"
+  cat > "$T/scenario.sh" <<'EOF'
+builder_1() { "$(run_dir)guest" build > /dev/null && ! grep -q '^vm up vm-build' "$FAKE_STATE/calls.log" || echo booted > "$FAKE_STATE/vm-for-build"
+  commit_code done; write_handback; }
+EOF
+  loop
+  expect_end '^ready for the judge'
+  [ ! -e "$FAKE_STATE/vm-for-build" ] || fail "the builder's build on the Mac booted the build VM"
+  expect_event 'build VM up \(on demand\)'
+  one_vm
+}
+
 t_vm_idle() {
   # A builder that thinks longer than VM_IDLE_MIN after a build lets its VM go; verify boots a fresh one.
   export FACTORY_VM_IDLE_S=2 FACTORY_REAP_POLL_S=1
@@ -598,7 +612,7 @@ t_pr_leak() {
   [ ! -s "$FAKE_STATE/gh.log" ] || fail "gh was called: $(cat "$FAKE_STATE/gh.log")"
 }
 
-ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand vm_idle stall same_binaries iteration_cap flaky
+ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand host_build vm_idle stall same_binaries iteration_cap flaky
   failing_listed_test listed_red_on_base_too accept_passes_on_base build_fails restore_flake_on_clean accept_dispute handback_rewritten_nested_docs accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
   assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture fixture_missing provided_missing provided_check_then_resume
   qa_needs_input test_expect open_pr pr_instructions pr_leak"

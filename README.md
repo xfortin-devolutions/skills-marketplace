@@ -31,7 +31,7 @@ it too (the MCP server for other harnesses, e.g. a FleetView agent).
   [`skills/vm/projects/`](plugins/vm-toolkit/skills/vm/projects/), picked by the repo's `origin`. Today: Devolutions/RDM
   (RDM and Devolutions Console, on Windows). Contract:
   [references/products.md](plugins/vm-toolkit/skills/vm/references/products.md).
-- **Per machine:** `~/.vm-toolkit/config.sh` (VM root, CPUs, RAM, slots) and the golden VM image
+- **Per machine:** `~/.vm-toolkit/config.sh` (VM root, CPUs, RAM, slots, building on the Mac) and the golden VM image
   ([references/vm-setup.md](plugins/vm-toolkit/skills/vm/references/vm-setup.md)).
 - [GAPS.md](plugins/vm-toolkit/GAPS.md): what the VMs still lack.
 
@@ -39,8 +39,8 @@ it too (the MCP server for other harnesses, e.g. a FleetView agent).
 
 The `factory` skill: turns a Jira ticket into an agent-ready spec with a red oracle, then runs an unattended loop
 (builder in its own worktree, the runner's own verify, a read-only reviewer, blind runtime QA in a throwaway VM, then a
-blind exploratory QA that tours the change and re-tries its findings on the base build) and hands back to a human judge. Every build and test runs in a QEMU VM of the target OS (vm-toolkit's); the Mac only edits, runs git
-and drives the VMs.
+blind exploratory QA that tours the change and re-tries its findings on the base build) and hands back to a human judge. Every test runs in a QEMU VM of the target OS (vm-toolkit's), and so does the build, unless the product cross-compiles
+(unless the machine opts out, `VM_HOST_BUILD=no`): then it builds on the Mac and the VMs only test and run.
 
 - **Engine (this plugin):** the runner, prompts, templates, the reviewer's and QA agent's system prompts, and
   [GAPS.md](plugins/factory-toolkit/GAPS.md), what the loop still lacks.

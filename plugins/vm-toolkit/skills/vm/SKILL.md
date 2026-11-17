@@ -1,13 +1,18 @@
 ---
 name: vm
-description: "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), run from a Mac: build and test a repo's worktree inside a VM that shares it live, launch the built app in the guest's desktop, take screenshots and drive it with mouse and keyboard, record a demo video with captions, apply test data, and open the VM's screen for a person (TigerVNC with a shared clipboard, else Screen Sharing). Products (RDM, Devolutions Console, …) are defined per repo: the repo's .vm/ folder, else a definition bundled with this skill. Also the one-time golden image, product VM layers (IIS, SQL Server, DVLS…), and setting up a new product. Use when the user says 'test this branch on Windows', 'build it in a VM', 'show me the app in the VM', 'set up the VM image', 'build the console layer', 'add a product to the VMs', or when an agent needs a real target OS to check a change. The same tools are an MCP server (vm_up, vm_build, vm_screenshot, …) for agents in other harnesses. The factory skill runs its loop on these VMs."
+description: "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), run from a Mac: build and test a repo's worktree inside a VM that shares it live (or build it on the Mac when the product cross-compiles, and only test and run it in the VM), launch the built app in the guest's desktop, take screenshots and drive it with mouse and keyboard, record a demo video with captions, apply test data, and open the VM's screen for a person (TigerVNC with a shared clipboard, else Screen Sharing). Products (RDM, Devolutions Console, …) are defined per repo: the repo's .vm/ folder, else a definition bundled with this skill. Also the one-time golden image, product VM layers (IIS, SQL Server, DVLS…), and setting up a new product. Use when the user says 'test this branch on Windows', 'build it in a VM', 'show me the app in the VM', 'set up the VM image', 'build the console layer', 'add a product to the VMs', or when an agent needs a real target OS to check a change. The same tools are an MCP server (vm_up, vm_build, vm_screenshot, …) for agents in other harnesses. The factory skill runs its loop on these VMs."
 ---
 
 # VM toolkit
 
 Throwaway VMs of the OS a product ships on, cloned per use from a read-only golden image (copy-on-write: seconds to
 boot, nothing kept). The VM shares a worktree from this Mac live as `R:`, so a build in the guest sees every edit and its
-output stays in the worktree (incremental across reboots). Nothing about the product is built on the Mac.
+output stays in the worktree (incremental across reboots). A target that cross-compiles (`HOST_BUILD`: RDM and the
+Console have one) builds on the Mac instead, into the same worktree: `guest build` boots no VM, and the VM only tests
+and runs what the Mac built (`guest test` builds the test project on the Mac first). A worktree the Mac can't build (an
+RDM commit before its cross-compile fix, no .NET 10 SDK) builds in the guest, and says why; `VM_HOST_BUILD=no` in
+`~/.vm-toolkit/config.sh` builds everything in the guest.
+Never run `dotnet` yourself for a target: `guest build` builds it where the target and the machine say.
 
 `V=<skill dir>/scripts`, where `<skill dir>` is this skill's base directory (an absolute path: installed as a plugin,
 apart from any repo). Run `vmt` from inside the repo, or pass `--repo <path>` first.
@@ -41,7 +46,8 @@ Windows). Contract: [references/products.md](references/products.md).
 3. `bash $V/vmt guest <vm dir> build [<project>] [--clean]`, `… test [--no-build] <project> [<filter>]`: the first
    guest command boots the VM (waiting for a free slot), and it powers off after `VM_IDLE_MIN` (10) idle minutes; the
    next command boots it again. `vmt up <vm dir> --keep` instead keeps it up until `vmt down`, for a person looking at
-   it. Exit 0 green, 1 red (the change), 3 harness error (the VM, the share, a restore: not the change; retry or say so).
+   it. A target that can build on the Mac (`vmt products` says "can build on the Mac") boots
+   nothing for `build`, and this Mac needs the .NET SDK. Exit 0 green, 1 red (the change), 3 harness error (the VM, the share, a restore: not the change; retry or say so).
    The summary prints the errors and the log's path (`<vm dir>/build.log`, `test.log`).
 4. The app: `vmt guest <vm dir> app launch`, then `app wait <s>`, `app shot` (prints the PNG's path: read it),
    `app click <x> <y> [right|double]`, `app type <text>`, `app key ctrl-n tab ret`, `app scroll <x> <y> <n>`,
@@ -124,7 +130,7 @@ scripts on a VM (**use a VM**). The `rdm` and `console` definitions in `projects
 |---|---|
 | Golden image, layers, guest SSH key, installers | `<VM root>/<os>/` (`vmt root`; default `~/VMs/factory`) |
 | A VM's clone disk, logs, screenshots, videos, settings (`guest.conf`) | its VM folder (`<VM root>/mcp/<name>/` for the MCP server's) |
-| Machine settings: VM root, CPUs, RAM, slots, idle minutes | `~/.vm-toolkit/config.sh` (`~/.factory/config.sh` is read first, for older setups) |
+| Machine settings: VM root, CPUs, RAM, slots, idle minutes, `VM_HOST_BUILD` | `~/.vm-toolkit/config.sh` (`~/.factory/config.sh` is read first, for older setups) |
 | Product definitions | the repo's `.vm/`, else `projects/<project>/` in this skill |
 | What is still missing | `GAPS.md` at the plugin's root |
 

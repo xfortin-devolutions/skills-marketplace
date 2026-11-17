@@ -6,8 +6,11 @@
 #   test --no-build fails with no tests run when $FAKE_STATE/no-build-misses exists.
 #   With $FAKE_STATE/restore-flake, the build is red, then its clean rebuild a harness error, then green.
 #   With $FAKE_STATE/lock-on-test, the first test run holds the worktree's index.lock for 4 s.
+#   With $FAKE_STATE/host-build, a build runs on the Mac: on-host build answers yes.
 D=$1 CMD=$2; shift 2
 . "$D/guest.conf"
+# on-host: with $FAKE_STATE/host-build, builds run on the Mac (the target's HOST_BUILD), so the guest tool boots no VM.
+[ "$CMD" = on-host ] && { [ -e "$FAKE_STATE/host-build" ] && [ "${1:-}" = build ]; exit; }
 echo "$CMD $*" >> "$FAKE_STATE/guest.log"
 pass() { echo "Passed!  - Failed:     0, Passed:     3, Skipped:     0, Total:     3, Duration: 1 ms - $1.dll"; echo "TEST EXIT CODE: 0"; exit 0; }
 fail() { echo "  Failed $1.It [1 ms]"; echo "Failed!  - Failed:     1, Passed:     2, Skipped:     0, Total:     3, Duration: 1 ms - $1.dll"; echo "TEST EXIT CODE: 1"; exit 1; }
