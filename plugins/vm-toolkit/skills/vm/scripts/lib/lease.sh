@@ -20,12 +20,19 @@ POLL_S=${FACTORY_REAP_POLL_S:-15}
 mkdir -p "$D"
 
 # A time box kills the builder's whole process group, a lease mid-command included: the lock and the users are pid
-# files, and a dead pid's is ignored, so a killed holder never leaves the VM locked or kept up.
+# files, and a dead pid's is ignored, so a killed holder never leaves the VM locked or kept up. A holder killed between
+# its mkdir and writing its pid leaves a lock with no pid: one still without a pid after 10 s is stale too.
 lock() {
-  local p
+  local p n=0
   until mkdir "$L.lock" 2> /dev/null; do
     p=$(cat "$L.lock/pid" 2> /dev/null)
-    [ -n "$p" ] && ! kill -0 "$p" 2> /dev/null && rm -rf "$L.lock"
+    if [ -n "$p" ]; then
+      n=0
+      ! kill -0 "$p" 2> /dev/null && rm -rf "$L.lock"
+    else
+      n=$((n + 1))
+      [ "$n" -ge 10 ] && { rm -rf "$L.lock"; n=0; }
+    fi
     sleep 1
   done
   echo $$ > "$L.lock/pid"

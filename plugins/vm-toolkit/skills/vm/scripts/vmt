@@ -183,6 +183,8 @@ case "$cmd" in
     # A recording ends with its VM: never boot one to stop or caption it.
     [ "$*" = "app record stop" ] && exec "$X/vm/vmctl.sh" record-stop "$D"
     [ "${1:-} ${2:-}" = "app caption" ] && ! "$X/vm/vmctl.sh" alive "$D" && die "nothing is recording: the VM is down"
+    # A wait is a sleep on the Mac: no lease, so it never boots a VM.
+    [ "${1:-} ${2:-}" = "app wait" ] && exec "$X/guest.sh" "$D" "$@"
     # A build on the Mac (the target's HOST_BUILD) needs no VM: none is booted for it.
     "$X/guest.sh" "$D" on-host "$@" && exec "$X/guest.sh" "$D" "$@"
     # A kept VM (up --keep) is never powered off behind its user's back: no lease, no reaper.

@@ -55,6 +55,11 @@ echo "run"
 : > "$FAKE_STATE/vmssh.log"
 G run 'Get-Content C:\app.log' > /dev/null 2>&1 && grep -q 'Get-Content C:\\app.log' "$FAKE_STATE/vmssh.log" \
   && ok "run sends its command" || fail "run: $(cat "$FAKE_STATE/vmssh.log")"
+: > "$FAKE_STATE/vmssh-noshare.log"
+G run 'Start-Sleep 4' > /dev/null 2>&1; G run 'Get-ChildItem r:\out' > /dev/null 2>&1; G run 'Write-Error "ERROR: x"' > /dev/null 2>&1
+grep -q 'Start-Sleep 4' "$FAKE_STATE/vmssh-noshare.log" && grep -q 'ERROR: x' "$FAKE_STATE/vmssh-noshare.log" \
+  && ! grep -q 'r:\\out' "$FAKE_STATE/vmssh-noshare.log" && ok "run maps R: only for a command that names it" \
+  || fail "share skipped for: $(cat "$FAKE_STATE/vmssh-noshare.log")"
 G run > /dev/null 2>&1; [ $? -eq 2 ] && ok "run without a command is usage" || fail "run without a command"
 
 echo "a target with no launch script"

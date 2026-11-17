@@ -96,7 +96,8 @@ def main():
         check("vm_up answers with the VM's name", "VM 'my-worktree'" in up[1]["result"]["content"][0]["text"], True)
         r = session(("vm_up", {"worktree": wt}), ("vm_build", {"name": "my-worktree"}),
                     ("vm_screenshot", {"name": "my-worktree"}), ("vm_click", {"name": "my-worktree", "x": 10, "y": 20, "button": "double"}),
-                    ("vm_build", {"name": "../escape"}), ("vm_test", {"name": "my-worktree"}))
+                    ("vm_build", {"name": "../escape"}), ("vm_test", {"name": "my-worktree"}),
+                    ("vm_wait", {"name": "my-worktree", "seconds": 5}))
         calls = open(log).read().splitlines()
         d = os.path.join(root, "mcp", "my-worktree")
         check("vm_up names the VM after the worktree and inits it with the product",
@@ -108,6 +109,7 @@ def main():
               ("image", "image/png", True))
         check("vm_screenshot gives the PNG's path", shot[1]["text"].startswith(os.path.join(d, "app", "shot-1.png")), True)
         check("vm_click maps to guest app click", f"guest {d} app click 10 20 double" in calls, True)
+        check("vm_wait maps to guest app wait", (f"guest {d} app wait 5" in calls, r[7]["result"]["isError"]), (True, False))
         check("a bad name is refused", (r[5]["result"]["isError"], "bad VM name" in r[5]["result"]["content"][0]["text"]), (True, True))
         check("a missing argument is refused", "missing: project" in r[6]["result"]["content"][0]["text"], True)
 

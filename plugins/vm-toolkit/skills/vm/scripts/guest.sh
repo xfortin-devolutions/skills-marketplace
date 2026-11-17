@@ -16,7 +16,8 @@
 #                                                       start records <vm run dir>/app/video-N.mp4 until stop (at most
 #                                                       <min>, default VM_RECORD_MAX_MIN), clicks circled; caption shows
 #                                                       text on it until the next one (or for <s> seconds; "" clears)
-#   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min
+#   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min;
+#                                                       R: is mapped only when the command names it
 # Exit: 0 green, 1 the build or tests fail, 3 the harness failed (no exit code: time box, SSH, share; restore or SDK
 # errors), 2 usage. It prints the errors and the summary; the full log is <vm run dir>/build.log or test.log.
 # Where it builds: a target with a HOST_BUILD script builds on the Mac (cross-compiled for the guest), and the guest only
@@ -28,7 +29,7 @@
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,19p' "$0" >&2; exit 2; }
+usage() { sed -n '3,20p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2
@@ -61,7 +62,7 @@ fi
 # app_stop: ends what runs from the share (the app the builder launched), which would lock the build's output
 app_stop() {
   [ -e "$D/app.running" ] || return 0
-  [ "$VM_UP" = yes ] && "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1 < /dev/null
+  [ "$VM_UP" = yes ] && VM_NO_SHARE=1 "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1 < /dev/null
   rm -f "$D/app.running"
 }
 
@@ -77,7 +78,7 @@ run() {
   # The time box ends the SSH session, not what it started: a build or test left running in the guest holds its log and
   # the worktree's output, and the next command fails on them. The SDK's processes, and anything run from the share (an
   # xUnit v3 test project is its own exe on R:).
-  [ $rc -eq 142 ] && "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Name -in "dotnet", "MSBuild", "testhost", "VBCSCompiler" -or $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1 < /dev/null
+  [ $rc -eq 142 ] && VM_NO_SHARE=1 "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Name -in "dotnet", "MSBuild", "testhost", "VBCSCompiler" -or $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1 < /dev/null
 }
 
 # host_run <log> <project>: the target's HOST_BUILD on the Mac, in the worktree, time-boxed; the full output goes to <log>
@@ -190,6 +191,8 @@ case "$CMD" in
     esac ;;
   run)
     [ $# -eq 1 ] || usage
+    # Mapping R: costs most of a call's time (vmssh): only a command that names the drive waits for it.
+    printf '%s' "$1" | grep -qE '(^|[^[:alnum:]_])[Rr]:' || export VM_NO_SHARE=1
     timebox 300 "$X/vm/vmssh" "$1" ;;
   info)
     g=$("$X/vm/vmssh" '"guest: {0} {1} {2}; dotnet {3}" -f (Get-CimInstance Win32_OperatingSystem).Caption, [Environment]::OSVersion.Version, $env:PROCESSOR_ARCHITECTURE, (dotnet --version)') || exit
