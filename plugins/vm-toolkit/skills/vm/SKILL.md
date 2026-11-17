@@ -49,7 +49,10 @@ Windows). Contract: [references/products.md](references/products.md).
 5. A demo video: `app record start [<max min>]` (default 10), drive the app as in step 4, then `app record stop`
    (prints the MP4's path: `<vm dir>/app/video-N.mp4`, 15 fps, 1 to 2 MB a minute). Clicks are circled in it; `app caption
    '<text>' [<s>]` shows a caption from then on, until the next one (or for `<s>` seconds; `''` clears it): say what
-   is being done or what to look at, one short sentence. A recording ends at its limit or with the VM; `stop` then
+   is being done or what to look at, one short sentence. Set the scenario up before `start` (`run`, `apply`, `app
+   launch`); while it records, only the app's input, `shot` and `caption`, one at a time, and wait with `shot`, never
+   `run 'Start-Sleep'`: a `run` is several seconds of still screen (~15 more when it names `R:`). A still screen over 3 s
+   is cut (`VM_RECORD_STILL_S`, 0 keeps it). A recording ends at its limit or with the VM; `stop` then
    still reports it. Needs ffmpeg (`brew install ffmpeg`) and a VM started by 0.3.0 or later (else down and up).
 6. Test data or a resource the app reads at startup: `vmt apply <vm dir> <folder> [<guest folder>]` before launching
    (copies it, runs its `check.ps1`, then `apply.ps1`, with `$Dir` set).
