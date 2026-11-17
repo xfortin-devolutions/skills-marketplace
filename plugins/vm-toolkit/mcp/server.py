@@ -23,7 +23,7 @@ LOG_TAIL = 80
 INSTRUCTIONS = """Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), on the machine this server runs on.
 Start with vm_products on the repo or worktree, then vm_up the worktree (the VM shares it live as R:), and build and
 test in it with vm_build / vm_test: nothing needs building on the host. vm_app_launch starts the built app in the
-guest's desktop; vm_screenshot, vm_click, vm_type, vm_key and vm_scroll drive it, and vm_record_start / vm_caption /
+guest's desktop; vm_screenshot, vm_click, vm_type, vm_key and vm_scroll drive it (vm_wait while it loads), and vm_record_start / vm_caption /
 vm_record_stop make a demo video of it. Exit meanings: green (0), red (1,
 the change), harness error (3, the VM or the share, not the change: retry or say so). vm_down when done. A VM not
 started with keep powers off after some idle minutes; the next build, test or app command boots it again."""
@@ -155,6 +155,11 @@ def t_app_launch(a):
 def t_app_stop(a):
     rc, out = vmt("guest", existing(a["name"]), "app", "stop")
     return text(out, rc != 0)
+
+
+def t_wait(a):
+    rc, out = vmt("guest", existing(a["name"]), "app", "wait", str(int(a["seconds"])))
+    return text(out or f"waited {int(a['seconds'])} s", rc != 0)
 
 
 def t_screenshot(a):
@@ -297,6 +302,9 @@ TOOLS = {
                       "window can take a while to show: take screenshots until it does.",
                       {"name": NAME}, ["name"], t_app_launch),
     "vm_app_stop": ("Stop the app running from the share (a build stops it too).", {"name": NAME}, ["name"], t_app_stop),
+    "vm_wait": ("Wait a few seconds (on this machine: no guest command, no screenshot), e.g. while the app loads or a "
+                "dialog opens; then one vm_screenshot to check, and wait again if it is not ready.",
+                {"name": NAME, "seconds": {"type": "integer", "description": "1-120."}}, ["name", "seconds"], t_wait),
     "vm_screenshot": ("A screenshot of the guest's screen, and the PNG's path on this machine.",
                       {"name": NAME}, ["name"], t_screenshot),
     "vm_click": ("Click at a screenshot pixel.",
@@ -312,9 +320,9 @@ TOOLS = {
     "vm_record_start": ("Start recording the guest's screen as an MP4 (15 fps) for a demo: drive the app as usual meanwhile; "
                         "vm_click's clicks are circled in it. Stops by itself after max_minutes; vm_down ends it too. "
                         "Explain on screen with vm_caption. Set the scenario up first (vm_run, vm_apply, vm_app_launch): "
-                        "while it records use only vm_click, vm_type, vm_key, vm_scroll, vm_screenshot and vm_caption, one "
-                        "call at a time (a call made alongside another waits for it); wait for the app with vm_screenshot, "
-                        "not vm_run Start-Sleep. A still screen over 3 s is cut from the video. If it goes wrong, "
+                        "while it records use only vm_click, vm_type, vm_key, vm_scroll, vm_wait, vm_screenshot and vm_caption, "
+                        "one call at a time (a call made alongside another waits for it); wait for the app with vm_wait "
+                        "then one vm_screenshot, not vm_run Start-Sleep or repeated screenshots. A still screen over 3 s is cut from the video. If it goes wrong, "
                         "vm_record_stop, fix it, and record again from the start.",
                         {"name": NAME, "max_minutes": {"type": "integer", "description": "1-60, default 10."}},
                         ["name"], t_record_start),
