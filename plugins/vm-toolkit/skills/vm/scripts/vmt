@@ -34,6 +34,7 @@
 #   vmt root                             the VM root (images per guest OS, and the MCP server's VM folders in mcp/)
 #   vmt dashboard [--port N] [--no-open] the VMs, VM folders, checkpoints and images in the browser, to clean up: down,
 #                                        delete, open a screen (local, http://vms.localhost:8766/; Ctrl-C stops)
+#   vmt dashboard stop [--port N]        stops the dashboard on that port (any copy's: the repo's or the installed one)
 # Machine settings: lib/config.sh (~/.vm-toolkit/config.sh). bash 3.2 compatible.
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
@@ -220,21 +221,33 @@ case "$cmd" in
     done
     exit $rc ;;
   dashboard)
-    port=${VMT_DASHBOARD_PORT:-8766} open_it=yes
+    port=${VMT_DASHBOARD_PORT:-8766} open_it=yes stop=no
+    [ "${1:-}" = stop ] && { stop=yes; shift; }
     while [ $# -gt 0 ]; do
       case "$1" in --port) port=${2:-}; shift ;; --no-open) open_it=no ;; *) usage ;; esac
       shift
     done
     command -v python3 > /dev/null || die "the dashboard needs python3"
     url="http://vms.localhost:$port/"
+    # who_field <field>: a field of the dashboard's whoami on the port; nothing when no vm-toolkit dashboard answers there
+    who=$(curl -s -m 2 "http://127.0.0.1:$port/api/whoami" 2> /dev/null)
+    who_field() { printf %s "$who" | python3 -I -c 'import json,sys
+try:
+  w = json.load(sys.stdin)
+  print(w.get(sys.argv[1]) or "" if w.get("app") == "vm-toolkit" else "")
+except ValueError: print("")' "$1"; }
+    if [ "$stop" = yes ]; then
+      [ -n "$who" ] || { echo "no dashboard on port $port"; exit 0; }
+      pid=$(who_field pid)
+      [ -n "$pid" ] || die "port $port is not a vm-toolkit dashboard (or one from before vmt dashboard stop: kill $(lsof -tiTCP:"$port" -sTCP:LISTEN | head -1))"
+      kill "$pid" && echo "vm dashboard stopped (port $port, $(who_field scripts))"
+      exit $?
+    fi
     # One per port: when this copy's dashboard is up, open it; another copy's (the installed plugin's, an older one)
     # would show its own code, not this one's.
-    who=$(curl -s -m 2 "http://127.0.0.1:$port/api/whoami" 2> /dev/null)
     if [ -n "$who" ]; then
-      held=$(printf %s "$who" | python3 -I -c 'import json,sys
-try: print(json.load(sys.stdin).get("scripts") or "")
-except ValueError: print("")')
-      [ "$held" = "$X" ] || die "port $port is taken (${held:-another program}): stop it, or vmt dashboard --port <N>"
+      held=$(who_field scripts)
+      [ "$held" = "$X" ] || die "port $port is taken (${held:-another program}): vmt dashboard stop, or vmt dashboard --port <N>"
       echo "vm dashboard: $url (already running)"
       [ "$open_it" = yes ] && open "$url"
       exit 0

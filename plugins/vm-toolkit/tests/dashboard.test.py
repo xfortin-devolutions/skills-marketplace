@@ -131,6 +131,11 @@ def main():
                     check("a video answers a byte range", (r.status, r.read(), r.headers["Content-Range"]),
                           (206, b"2345", "bytes 2-5/10"))
                 check("only media and logs are served", status(base + "/file/mcp/qa/guest.conf"), 404)
+                env = dict(os.environ, VMT_DASHBOARD_PORT=str(port), VMT_USER_CONFIG="/dev/null", FACTORY_USER_CONFIG="/dev/null")
+                p = subprocess.run(["bash", VMT, "dashboard", "stop"], capture_output=True, text=True, env=env)
+                check("vmt dashboard stop stops it", (p.returncode, srv.wait(timeout=10) is not None), (0, True))
+                p = subprocess.run(["bash", VMT, "dashboard", "stop"], capture_output=True, text=True, env=env)
+                check("vmt dashboard stop with none running", (p.returncode, p.stdout.strip()), (0, f"no dashboard on port {port}"))
             finally:
                 srv.terminate()
 

@@ -359,8 +359,9 @@ class Handler(BaseHTTPRequestHandler):
                 with open(os.path.join(HERE, "index.html"), "rb") as f:
                     return self.send(200, f.read(), "text/html; charset=utf-8")
             if parts == ["api", "whoami"]:
-                # vmt dashboard asks before starting one: this copy's dashboard is already up, or the port is another's.
-                return self.send(200, {"app": "vm-toolkit", "scripts": SCRIPTS, "root": ARGS.root, "version": VERSION})
+                # vmt dashboard asks before starting one (and vmt dashboard stop, for the pid to stop): this copy's dashboard is already up, or the port is another's.
+                return self.send(200, {"app": "vm-toolkit", "scripts": SCRIPTS, "root": ARGS.root, "version": VERSION,
+                                      "pid": os.getpid()})
             if parts == ["api", "state"]:
                 return self.send(200, state())
             if len(parts) >= 2 and parts[0] == "file":

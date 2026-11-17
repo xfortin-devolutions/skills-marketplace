@@ -29,7 +29,7 @@ Windows). Contract: [references/products.md](references/products.md).
 | "keep this sign-in / setup for the next VMs", "start QA from the dev's VM" | **checkpoints** |
 | "which checkpoints are there", "clean up the checkpoints" | `bash $V/vmt checkpoint list`, `… rm <name>...` |
 | "record a demo", "make a video of it" | **use a VM**, step 5 |
-| "clean up the VMs", "what's taking the disk", "a dashboard" | `bash $V/vmt dashboard` (start it in the background: it serves until stopped), then give the person http://vms.localhost:8766/ |
+| "clean up the VMs", "what's taking the disk", "a dashboard" | `bash $V/vmt dashboard` (start it in the background: it serves until stopped), then give the person http://vms.localhost:8766/; `vmt dashboard stop` when they're done |
 
 ## Use a VM
 
