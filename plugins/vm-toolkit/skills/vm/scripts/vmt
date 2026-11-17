@@ -21,6 +21,8 @@
 #                                        defaults to C:\factory\setup\<folder name>
 #   vmt env|alive|show <vm dir>          vmctl.sh's: export lines, running?, open the screen on this Mac
 #   vmt down <vm dir> [--keep-disk]      power off and free the slot
+#   vmt rm <vm dir>...                   deletes VM folders whose VM is down (screenshots, videos, logs, a kept disk);
+#                                        refused while one runs or a command holds it. Not the worktree, not a checkpoint
 #   vmt checkpoint <vm dir> <name> [--note <text>] [--resume]
 #                                        shuts the VM down cleanly and freezes its disk (sign-ins, setup, data; not the
 #                                        worktree) as checkpoint <name>; the VM starts from it from then on, and other
@@ -30,6 +32,9 @@
 #                                        Nothing deletes a checkpoint but rm (lib/checkpoints.sh)
 #   vmt list | vmt gc                    the running VMs of every guest OS; free dead slots
 #   vmt root                             the VM root (images per guest OS, and the MCP server's VM folders in mcp/)
+#   vmt dashboard [--port N] [--no-open] the VMs, VM folders, checkpoints and images in the browser, to clean up: down,
+#                                        delete, open a screen (local, http://vms.localhost:8766/; Ctrl-C stops)
+#   vmt dashboard stop [--port N]        stops the dashboard on that port (any copy's: the repo's or the installed one)
 # Machine settings: lib/config.sh (~/.vm-toolkit/config.sh). bash 3.2 compatible.
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
@@ -200,6 +205,55 @@ case "$cmd" in
     vm_conf "$D"
     rm -f "$D/keep"
     exec "$X/vm/vmctl.sh" down "$D" ${2:+"$2"} ;;
+  rm)
+    [ $# -gt 0 ] || usage
+    rc=0
+    for D in "$@"; do
+      D=${D%/}
+      [ -f "$D/guest.conf" ] || { echo "kept $D: not a VM folder (no guest.conf)" >&2; rc=1; continue; }
+      if "$X/vm/vmctl.sh" alive "$D"; then echo "kept $D: its VM is running (vmt down $D first)" >&2; rc=1; continue; fi
+      # A command in flight on it (a lease user) would boot it again under our feet.
+      busy=""
+      for u in "$D"/lease.users/*; do [ -f "$u" ] && kill -0 "$(basename "$u")" 2> /dev/null && busy=yes; done
+      [ -z "$busy" ] || { echo "kept $D: a command is using it" >&2; rc=1; continue; }
+      kb=$(du -sk "$D" | cut -f1)
+      rm -rf "$D" && echo "deleted $D ($(ck_human "$kb"))"
+    done
+    exit $rc ;;
+  dashboard)
+    port=${VMT_DASHBOARD_PORT:-8766} open_it=yes stop=no
+    [ "${1:-}" = stop ] && { stop=yes; shift; }
+    while [ $# -gt 0 ]; do
+      case "$1" in --port) port=${2:-}; shift ;; --no-open) open_it=no ;; *) usage ;; esac
+      shift
+    done
+    command -v python3 > /dev/null || die "the dashboard needs python3"
+    url="http://vms.localhost:$port/"
+    # who_field <field>: a field of the dashboard's whoami on the port; nothing when no vm-toolkit dashboard answers there
+    who=$(curl -s -m 2 "http://127.0.0.1:$port/api/whoami" 2> /dev/null)
+    who_field() { printf %s "$who" | python3 -I -c 'import json,sys
+try:
+  w = json.load(sys.stdin)
+  print(w.get(sys.argv[1]) or "" if w.get("app") == "vm-toolkit" else "")
+except ValueError: print("")' "$1"; }
+    if [ "$stop" = yes ]; then
+      [ -n "$who" ] || { echo "no dashboard on port $port"; exit 0; }
+      pid=$(who_field pid)
+      [ -n "$pid" ] || die "port $port is not a vm-toolkit dashboard (or one from before vmt dashboard stop: kill $(lsof -tiTCP:"$port" -sTCP:LISTEN | head -1))"
+      kill "$pid" && echo "vm dashboard stopped (port $port, $(who_field scripts))"
+      exit $?
+    fi
+    # One per port: when this copy's dashboard is up, open it; another copy's (the installed plugin's, an older one)
+    # would show its own code, not this one's.
+    if [ -n "$who" ]; then
+      held=$(who_field scripts)
+      [ "$held" = "$X" ] || die "port $port is taken (${held:-another program}): vmt dashboard stop, or vmt dashboard --port <N>"
+      echo "vm dashboard: $url (already running)"
+      [ "$open_it" = yes ] && open "$url"
+      exit 0
+    fi
+    [ "$open_it" = yes ] && (sleep 1; open "$url") &
+    exec python3 -I "$X/dashboard/server.py" --vmt "$X/vmt" --root "$VM_ROOT" --port "$port" ;;
   checkpoint)
     case "${1:-}" in
       list) ck_list ;;

@@ -22,7 +22,8 @@ Restart Claude Code. The repository is private: you need read access to it.
 
 The `vm` skill and an MCP server (`vm`): throwaway QEMU VMs of the OS a product ships on, cloned per use from a read-only
 golden image, sharing a worktree live as `R:`. Build and test in the guest, launch the app in its desktop, take
-screenshots and drive it, apply test data, open it in Screen Sharing. The factory runs its loop on it; any agent can use
+screenshots and drive it, apply test data, open it in Screen Sharing. `vmt dashboard` shows what the VMs keep on the
+Mac (running VMs, checkpoints, VM folders, images) and cleans it up from a browser. The factory runs its loop on it; any agent can use
 it too (the MCP server for other harnesses, e.g. a FleetView agent).
 
 - **Product definitions:** what each product is and how its VM builds, tests and launches it (`product.sh`,

@@ -29,6 +29,7 @@ Windows). Contract: [references/products.md](references/products.md).
 | "keep this sign-in / setup for the next VMs", "start QA from the dev's VM" | **checkpoints** |
 | "which checkpoints are there", "clean up the checkpoints" | `bash $V/vmt checkpoint list`, `… rm <name>...` |
 | "record a demo", "make a video of it" | **use a VM**, step 5 |
+| "clean up the VMs", "what's taking the disk", "a dashboard" | `bash $V/vmt dashboard` (start it in the background: it serves until stopped), then give the person http://vms.localhost:8766/; `vmt dashboard stop` when they're done |
 
 ## Use a VM
 
@@ -74,8 +75,10 @@ What the checkpoint holds is the guest's disk, not the worktree: an app that kee
 Debug build, in `bin/` on `R:`) keeps them on the Mac, and a VM sharing another worktree doesn't see them.
 Nothing deletes a checkpoint but a person: `vmt checkpoint list` (size, age, branch, users; `vmt list` counts them),
 `vmt checkpoint show <name>` (and its note), `vmt checkpoint rm <name>...`, refused while a running VM or another
-checkpoint is built on it. Agents never delete one: say which can go and let the person run `rm`. The golden image
-can't be compacted while checkpoints exist.
+checkpoint is built on it. Agents never delete one: say which can go and let the person run `rm`, or point them at
+`vmt dashboard`, which shows what each checkpoint and VM folder is used by and deletes them through `vmt` (a person
+clicks). VM folders go with `vmt rm <vm dir>...` (refused while the VM runs). The golden image can't be compacted while
+checkpoints exist.
 
 ## Other agents: the MCP server
 
