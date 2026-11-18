@@ -28,6 +28,9 @@ SSH_PORT = int(os.environ.get("VM_SSH_PORT") or 2222)
 SIZE_CACHE = os.path.join(os.environ.get("VM_RUN_DIR") or VM_HOME, ".screen-size")
 # While record.py records: its start time and the events file captions and clicks go to.
 RECORDING = os.path.join(os.environ.get("VM_RUN_DIR") or VM_HOME, "recording")
+# Where the pointer was last put, so a recorded click glides there from it.
+CURSOR = os.path.join(os.environ.get("VM_RUN_DIR") or VM_HOME, ".cursor")
+GLIDE_S = 0.5
 
 
 class Qmp:
@@ -90,6 +93,28 @@ def abs_events(q, x, y):
     ay = round(y * 32767 / max(h - 1, 1))
     return [{"type": "abs", "data": {"axis": "x", "value": ax}},
             {"type": "abs", "data": {"axis": "y", "value": ay}}]
+
+
+def glide(q, x, y):
+    """Move the pointer to (x, y): while recording, along an eased path from where it was, as a hand would (a pointer
+    that jumps reads as a robot in a demo); else at once."""
+    try:
+        x0, y0 = map(int, open(CURSOR).read().split())
+    except (OSError, ValueError):
+        x0, y0 = x, y
+    if os.path.exists(RECORDING) and (x0, y0) != (x, y):
+        steps = 24
+        for i in range(1, steps):
+            f = i / steps
+            f = f * f * (3 - 2 * f)  # smoothstep: starts and lands slowly
+            q.events(abs_events(q, round(x0 + (x - x0) * f), round(y0 + (y - y0) * f)))
+            pause(GLIDE_S / steps)
+        q.events(abs_events(q, x, y))
+        pause(0.15)  # the beat before the click
+    else:
+        q.events(abs_events(q, x, y))
+    with open(CURSOR, "w") as fh:
+        fh.write(f"{x} {y}")
 
 
 def btn(button, down):
@@ -174,7 +199,9 @@ def main():
     elif op in ("click", "move"):
         x, y = int(a[0]), int(a[1])
         mode = a[2] if len(a) > 2 else "left"
-        q.events(abs_events(q, x, y))
+        if op == "click":
+            add_event({"input": "click"})  # before the glide: it is part of the step, not of the wait for it
+        glide(q, x, y)
         pause(0.08)
         if op == "click":
             add_event({"click": [x, y]})
@@ -186,17 +213,20 @@ def main():
                 pause(0.08)
     elif op == "scroll":
         x, y, n = int(a[0]), int(a[1]), int(a[2])
-        q.events(abs_events(q, x, y))
+        add_event({"input": "scroll"})
+        glide(q, x, y)
         b = "wheel-down" if n > 0 else "wheel-up"
         for _ in range(abs(n)):
             q.events([btn(b, True)])
             q.events([btn(b, False)])
             pause(0.03)
     elif op == "type":
+        add_event({"input": "type"})  # input is a step: a narrated recording keeps it (record.py)
         for c in " ".join(a):
             mods, k = char_keys(c)
             press(q, mods, k)
     elif op == "key":
+        add_event({"input": "key"})
         for combo in a:
             parts = combo.split("-")
             mods = [MODS.get(p, p) for p in parts[:-1]]

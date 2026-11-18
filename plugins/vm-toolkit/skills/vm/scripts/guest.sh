@@ -17,7 +17,8 @@
 #                                                       (vm/record.py): start records <vm run dir>/app/video-N.mp4 until
 #                                                       stop (at most <min>, default VM_RECORD_MAX_MIN), clicks circled;
 #                                                       caption shows text on it, and its highlight, until the next one
-#                                                       (or for <s> seconds; "" clears)
+#                                                       (or for <s> seconds; "" clears); --say <speech> narrates it
+#                                                       (vmt voice), returning just before the line ends
 #     <highlight>: --highlight x,y,width,height[,label] once per region, then --no-dim to keep the rest of the screen as
 #                  it is (vm/highlight.py)
 #   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min;
@@ -33,7 +34,7 @@
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,24p' "$0" >&2; exit 2; }
+usage() { sed -n '3,25p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2

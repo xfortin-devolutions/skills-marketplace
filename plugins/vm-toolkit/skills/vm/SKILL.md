@@ -60,7 +60,15 @@ Windows). Contract: [references/products.md](references/products.md).
    '<text>' [<s>]` shows a caption from then on, until the next one (or for `<s>` seconds; `''` clears it): say what
    is being done or what to look at, one short sentence. `--highlight` (and `--no-dim`), as for `shot`, points at
    regions for as long as the caption shows, or until the next click (the screen changes); `''` with a highlight points
-   without words. Set the scenario up before `start` (`run`, `apply`, `app
+   without words. `--say '<speech>'` narrates: a voice speaks it from then on, and `caption` returns just before it
+   ends, so make the next command the step it announces (the click lands on its last words). Write it for the ear,
+   as a person demoing would say it, not the caption read out: first person, contractions, one or two short
+   sentences per step ("Let's go with the fastest one, and just hit Connect."); commas and an ellipsis are pauses;
+   spell out what isn't said as written ("R-D-M"). Narrate every step or none, usually with `''` as the caption. While
+   it speaks nothing is cut; the wait after a line, until the next step, is cut to a beat; the pointer glides to each
+   click. The voice is Kokoro's once `vmt voice setup` installed it (once, ~350 MB, needs `brew install uv`; `vmt voice
+   try '<text>'` plays one; `VM_VOICE` in `~/.vm-toolkit/config.sh` picks it), else macOS's `say`, much more robotic.
+   Set the scenario up before `start` (`run`, `apply`, `app
    launch`); while it records, only the app's input, `wait`, `shot` and `caption`, one at a time, and wait with `app
    wait <s>` then one `shot` (not repeated shots: each is an image to read), never `run 'Start-Sleep'`: a `run` is several seconds of still screen (~15 more when it names `R:`). A still screen over 3 s
    is cut (`VM_RECORD_STILL_S`, 0 keeps it). A recording ends at its limit or with the VM; `stop` then
@@ -99,7 +107,7 @@ checkpoints exist.
 The plugin declares an MCP server, `vm` (`mcp/server.py`, Python standard library only), with the same jobs as tools:
 `vm_products`, `vm_up` (`from_checkpoint`), `vm_build`, `vm_test`, `vm_run`, `vm_app_launch`, `vm_app_stop`,
 `vm_wait`, `vm_screenshot` (returns the image and its path; `highlight` regions to point at), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_record_start`,
-`vm_caption` (and its `highlight`), `vm_record_stop` (a demo video's path), `vm_apply`, `vm_show`,
+`vm_caption` (and its `highlight` and `say`), `vm_record_stop` (a demo video's path), `vm_apply`, `vm_show`,
 `vm_checkpoint`, `vm_checkpoints` (list, or one's note), `vm_list`, `vm_down`; none deletes a checkpoint. A named VM's
 folder is `<VM root>/mcp/<name>`. Claude Code gets it with the plugin; another harness (Codex, Cursor, a FleetView agent
 on another provider) adds `python3 -I <plugin dir>/mcp/server.py` as a stdio MCP server. It runs on the machine with
