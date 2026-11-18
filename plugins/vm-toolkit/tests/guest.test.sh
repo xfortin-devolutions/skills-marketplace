@@ -25,6 +25,12 @@ if sys.argv[1] == "shot":
     open(sys.argv[2], "w").close()
     print(sys.argv[2] + " 1600x900")
 PY
+cat > "$T/scripts/vm/highlight.py" <<'PY'
+import os, sys
+open(os.path.join(os.environ["FAKE_STATE"], "vmpy.log"), "a").write("highlight.py " + " ".join(sys.argv[1:]) + "\n")
+open(sys.argv[2], "w").close()
+print(sys.argv[2])
+PY
 chmod +x "$T/scripts/vm/"*
 export FAKE_STATE=$T/state
 echo 'Write-Output "LAUNCH OK"' > "$T/launch.ps1"
@@ -48,6 +54,11 @@ G app click 10 20 double > /dev/null && grep -q '^vm.py click 10 20 double$' "$F
   || fail "click: $(cat "$FAKE_STATE/vmpy.log")"
 G app shot | grep -q "app/shot-1.png" && G app shot | grep -q "app/shot-2.png" && ok "screenshots numbered under app/" \
   || fail "shot paths"
+rm "$T/vmrun/app/shot-2.png"
+G app shot --highlight 1,2,3,4,Save --no-dim > "$T/out" 2>&1 && grep -q "^highlighted $T/vmrun/app/highlight-2.png$" "$T/out" \
+  && grep -q "^highlight.py $T/vmrun/app/shot-2.png $T/vmrun/app/highlight-2.png 1,2,3,4,Save --no-dim$" "$FAKE_STATE/vmpy.log" \
+  && ok "a highlighted shot keeps the plain one and adds its highlighted copy" || fail "highlighted shot: $(cat "$T/out")"
+G app shot --frame 1 > /dev/null 2>&1; [ $? -eq 2 ] && ok "an unknown shot option is a usage error" || fail "shot --frame"
 G app shot > "$T/out" 2>&1; [ $? -eq 1 ] && grep -q 'a loop' "$T/out" && ok "screenshot cap stops a runaway loop" \
   || fail "the screenshot cap did not hold: $(cat "$T/out")"
 

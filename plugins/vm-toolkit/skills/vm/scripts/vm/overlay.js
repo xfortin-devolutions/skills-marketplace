@@ -1,7 +1,52 @@
 // overlay.js: the images record.py lays over a recording, drawn with AppKit (Homebrew's ffmpeg has no text filter).
 //   osascript -l JavaScript overlay.js caption <out.png> <video width> <text>   white text on a dark rounded box
 //   osascript -l JavaScript overlay.js ring <out.png> <diameter>                the circle around a click
+//   osascript -l JavaScript overlay.js highlight <out.png> <w> <h> <dim 0|1> <regions JSON>   a screen-sized layer:
+//     each {x, y, width, height, label} outlined GAP pixels outside (top-left origin), the rest dimmed when dim is 1
 ObjC.import('Cocoa');
+var GAP = 6, LINE = 3;
+function highlight(out, W, H, dim, regions) {
+  var rep = canvas(W, H);
+  // AppKit's origin is bottom-left; a region's is the screenshot's top-left. Each box is the region plus the gap, kept
+  // on the screen so a region at its edge still shows its whole outline. Its edges run through pixel centres (+0.5):
+  // the odd-width strokes then cover whole pixels, crisp instead of antialiased over two.
+  var boxes = regions.map(function (r) {
+    var m = 3;
+    var x0 = Math.max(m, r.x - GAP), x1 = Math.min(W - m, r.x + r.width + GAP);
+    var y0 = Math.max(m, H - r.y - r.height - GAP), y1 = Math.min(H - m, H - r.y + GAP);
+    return { r: r, rect: $.NSMakeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5,
+                                      Math.max(Math.round(x1 - x0) - 1, 1), Math.max(Math.round(y1 - y0) - 1, 1)) };
+  });
+  if (dim) {
+    var shade = $.NSBezierPath.bezierPathWithRect($.NSMakeRect(0, 0, W, H));
+    boxes.forEach(function (b) { shade.appendBezierPath($.NSBezierPath.bezierPathWithRoundedRectXRadiusYRadius(b.rect, 4, 4)); });
+    shade.windingRule = $.NSWindingRuleEvenOdd;
+    $.NSColor.colorWithSRGBRedGreenBlueAlpha(0, 0, 0, 0.5).setFill; shade.fill;
+  }
+  var accent = $.NSColor.colorWithSRGBRedGreenBlueAlpha(1, 0.16, 0.6, 1);
+  var attrs = $.NSDictionary.dictionaryWithObjectsForKeys(
+    $([$.NSFont.systemFontOfSizeWeight(15, 0.4), $.NSColor.whiteColor]),
+    $([$.NSFontAttributeName, $.NSForegroundColorAttributeName]));
+  boxes.forEach(function (b) {
+    // A dark halo under the accent keeps the outline readable on a light window and a dark one alike.
+    var p = $.NSBezierPath.bezierPathWithRoundedRectXRadiusYRadius(b.rect, 4, 4);
+    p.lineWidth = LINE + 2; $.NSColor.colorWithSRGBRedGreenBlueAlpha(0, 0, 0, 0.45).setStroke; p.stroke;
+    p.lineWidth = LINE; accent.setStroke; p.stroke;
+    if (!b.r.label) return;
+    // The label: a tag on the box's top-left corner, outside it (below the box when there is no room above), sitting on
+    // the outline's outer edge, at whole pixels so its text is as sharp as the screen's.
+    var s = $(b.r.label), size = s.sizeWithAttributes(attrs);
+    var tw = Math.ceil(size.width) + 14, th = Math.ceil(size.height) + 6;
+    var x = Math.max(0, Math.min(Math.floor(b.rect.origin.x - 1), W - tw));
+    var top = Math.floor(b.rect.origin.y + b.rect.size.height - 1);
+    var y = top + th <= H ? top : Math.ceil(b.rect.origin.y + 1) - th;
+    if (y < 0) y = top - th;  // as tall as the screen: inside its top edge
+    accent.setFill;
+    $.NSBezierPath.bezierPathWithRoundedRectXRadiusYRadius($.NSMakeRect(x, y, tw, th), 4, 4).fill;
+    s.drawAtPointWithAttributes($.NSMakePoint(x + 7, y + 3), attrs);
+  });
+  save(rep, out);
+}
 function save(rep, out) {
   $.NSGraphicsContext.restoreGraphicsState;
   rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).writeToFileAtomically(out, true);
@@ -22,6 +67,7 @@ function run(argv) {
     p.lineWidth = 5; $.NSColor.colorWithSRGBRedGreenBlueAlpha(1, 0.6, 0, 0.95).setStroke; p.stroke;
     save(rep, out); return;
   }
+  if (op === 'highlight') { highlight(out, parseInt(argv[2]), parseInt(argv[3]), argv[4] === '1', JSON.parse(argv[5])); return; }
   var w = parseInt(argv[2]), text = argv[3], pad = 18, size = 26;
   var attrs = $.NSDictionary.dictionaryWithObjectsForKeys(
     $([$.NSFont.systemFontOfSizeWeight(size, 0.3), $.NSColor.whiteColor]),

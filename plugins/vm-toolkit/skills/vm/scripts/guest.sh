@@ -7,15 +7,19 @@
 #   guest.sh <vm run dir> on-host <command>...          exit 0 when that command runs on the Mac alone (no VM to boot)
 #   guest.sh <vm run dir> info                          the guest's OS and SDK versions, and the Mac's when it builds
 #                                                       there (for a verification record)
-#   guest.sh <vm run dir> app launch | wait <s> | shot | click <x> <y> [right|double] | type <text> | key <combo>... |
-#                         scroll <x> <y> <n> | stop     the builder's app, at any point while it works (not QA): launch
-#                                                       (re)starts the build in the desktop session, shot saves a
-#                                                       screenshot under <vm run dir>/app/ and prints its path; build and
-#                                                       test stop a launched app first (it locks bin/)
-#   guest.sh <vm run dir> app record start [<min>] | stop | caption <text> [<s>]   a video of the screen (vm/record.py):
-#                                                       start records <vm run dir>/app/video-N.mp4 until stop (at most
-#                                                       <min>, default VM_RECORD_MAX_MIN), clicks circled; caption shows
-#                                                       text on it until the next one (or for <s> seconds; "" clears)
+#   guest.sh <vm run dir> app launch | wait <s> | shot [<highlight>] | click <x> <y> [right|double] | type <text> |
+#                         key <combo>... | scroll <x> <y> <n> | stop   the builder's app, at any point while it works (not
+#                                                       QA): launch (re)starts the build in the desktop session, shot saves
+#                                                       a screenshot under <vm run dir>/app/ and prints its path (and the
+#                                                       highlighted copy's, after "highlighted"); build and test stop a
+#                                                       launched app first (it locks bin/)
+#   guest.sh <vm run dir> app record start [<min>] | stop | caption <text> [<s>] [<highlight>]   a video of the screen
+#                                                       (vm/record.py): start records <vm run dir>/app/video-N.mp4 until
+#                                                       stop (at most <min>, default VM_RECORD_MAX_MIN), clicks circled;
+#                                                       caption shows text on it, and its highlight, until the next one
+#                                                       (or for <s> seconds; "" clears)
+#     <highlight>: --highlight x,y,width,height[,label] once per region, then --no-dim to keep the rest of the screen as
+#                  it is (vm/highlight.py)
 #   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min;
 #                                                       R: is mapped only when the command names it
 # Exit: 0 green, 1 the build or tests fail, 3 the harness failed (no exit code: time box, SSH, share; restore or SDK
@@ -29,7 +33,7 @@
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,20p' "$0" >&2; exit 2; }
+usage() { sed -n '3,24p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2
@@ -155,10 +159,21 @@ case "$CMD" in
         [ "${1:-}" -ge 1 ] 2> /dev/null && [ "$1" -le 120 ] || usage
         sleep "$1" ;;
       shot)
+        regions=()
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --highlight) [ $# -ge 2 ] || usage; regions+=("$2"); shift 2 ;;
+            --no-dim) regions+=("$1"); shift ;;
+            *) usage ;;
+          esac
+        done
         n=$(($(ls "$D/app"/shot-*.png 2> /dev/null | wc -l) + 1))
         # Against a runaway loop only, not a budget for looking.
         [ "$n" -le "${APP_SHOT_CAP:-200}" ] || { echo "app shot: ${APP_SHOT_CAP:-200} screenshots this run: a loop? Stop and rethink"; exit 1; }
-        python3 "$X/vm/vm.py" shot "$D/app/shot-$n.png" ;;
+        python3 "$X/vm/vm.py" shot "$D/app/shot-$n.png" || exit
+        [ ${#regions[@]} -eq 0 ] && exit 0
+        p=$(python3 "$X/vm/highlight.py" "$D/app/shot-$n.png" "$D/app/highlight-$n.png" "${regions[@]}") || exit
+        echo "highlighted $p" ;;
       click|type|key|scroll)
         [ $# -ge 1 ] || usage
         python3 "$X/vm/vm.py" "$sub" "$@" ;;
@@ -185,7 +200,7 @@ case "$CMD" in
           *) usage ;;
         esac ;;
       caption)
-        [ $# -ge 1 ] && [ $# -le 2 ] || usage
+        [ $# -ge 1 ] || usage
         python3 "$X/vm/record.py" caption "$@" && echo "captioned" ;;
       *) usage ;;
     esac ;;

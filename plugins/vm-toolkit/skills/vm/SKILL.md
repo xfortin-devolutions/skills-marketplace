@@ -52,10 +52,15 @@ Windows). Contract: [references/products.md](references/products.md).
 4. The app: `vmt guest <vm dir> app launch`, then `app wait <s>`, `app shot` (prints the PNG's path: read it),
    `app click <x> <y> [right|double]`, `app type <text>`, `app key ctrl-n tab ret`, `app scroll <x> <y> <n>`,
    `app stop`. Coordinates are screenshot pixels. One PowerShell command in the guest: `vmt guest <vm dir> run '<ps>'`.
+   To show a person something (a bug, a change, a step): `app shot --highlight <x>,<y>,<w>,<h>[,<label>]` (once per
+   region; `--no-dim` keeps the rest of the screen bright) also prints `highlighted <path>`, a copy with each region
+   outlined a few pixels outside it (never over what it shows) and the rest dimmed; the plain shot is kept.
 5. A demo video: `app record start [<max min>]` (default 10), drive the app as in step 4, then `app record stop`
-   (prints the MP4's path: `<vm dir>/app/video-N.mp4`, 15 fps, 1 to 2 MB a minute). Clicks are circled in it; `app caption
+   (prints the MP4's path: `<vm dir>/app/video-N.mp4`, 15 fps, twice the screen's size so text stays sharp, 3 to 4 MB a minute). Clicks are circled in it; `app caption
    '<text>' [<s>]` shows a caption from then on, until the next one (or for `<s>` seconds; `''` clears it): say what
-   is being done or what to look at, one short sentence. Set the scenario up before `start` (`run`, `apply`, `app
+   is being done or what to look at, one short sentence. `--highlight` (and `--no-dim`), as for `shot`, points at
+   regions for as long as the caption shows, or until the next click (the screen changes); `''` with a highlight points
+   without words. Set the scenario up before `start` (`run`, `apply`, `app
    launch`); while it records, only the app's input, `wait`, `shot` and `caption`, one at a time, and wait with `app
    wait <s>` then one `shot` (not repeated shots: each is an image to read), never `run 'Start-Sleep'`: a `run` is several seconds of still screen (~15 more when it names `R:`). A still screen over 3 s
    is cut (`VM_RECORD_STILL_S`, 0 keeps it). A recording ends at its limit or with the VM; `stop` then
@@ -93,8 +98,8 @@ checkpoints exist.
 
 The plugin declares an MCP server, `vm` (`mcp/server.py`, Python standard library only), with the same jobs as tools:
 `vm_products`, `vm_up` (`from_checkpoint`), `vm_build`, `vm_test`, `vm_run`, `vm_app_launch`, `vm_app_stop`,
-`vm_wait`, `vm_screenshot` (returns the image and its path), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_record_start`,
-`vm_caption`, `vm_record_stop` (a demo video's path), `vm_apply`, `vm_show`,
+`vm_wait`, `vm_screenshot` (returns the image and its path; `highlight` regions to point at), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_record_start`,
+`vm_caption` (and its `highlight`), `vm_record_stop` (a demo video's path), `vm_apply`, `vm_show`,
 `vm_checkpoint`, `vm_checkpoints` (list, or one's note), `vm_list`, `vm_down`; none deletes a checkpoint. A named VM's
 folder is `<VM root>/mcp/<name>`. Claude Code gets it with the plugin; another harness (Codex, Cursor, a FleetView agent
 on another provider) adds `python3 -I <plugin dir>/mcp/server.py` as a stdio MCP server. It runs on the machine with

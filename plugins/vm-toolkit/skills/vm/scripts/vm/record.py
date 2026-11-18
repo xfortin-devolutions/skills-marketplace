@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Record the VM's screen as an MP4, with the clicks circled and an agent's captions on it.
+"""Record the VM's screen as an MP4, with the clicks circled and an agent's captions and highlights on it.
 
   record.py run OUT.mp4 MAX_SECONDS   record until SIGTERM or MAX_SECONDS (guest.sh starts it in the background)
-  record.py caption TEXT [SECONDS]    show TEXT from now on: until the next caption, or for SECONDS ("" clears it)
+  record.py caption TEXT [SECONDS] [--highlight REGION]... [--no-dim]
+                                      show TEXT from now on: until the next caption, or for SECONDS ("" clears it),
+                                      and those regions highlighted (highlight.py's) as long, or until the next click
+                                      (the screen changes); an empty TEXT with regions highlights without words
 
 The frames come from QEMU's second QMP socket (REC_SOCK, <run dir>/rec.sock): the first serves one client at a time,
 so a recorder holding it would hold back every click and keystroke until it stopped. Each frame is a PPM screendump
@@ -20,10 +23,12 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import highlight  # noqa: E402
 import vm  # noqa: E402
 
 FPS = 15
 RING = 56
+HIGHLIGHT_AFTER_CLICK = 0.5  # seconds a highlight stays after a click in it
 STILL_S = float(os.environ.get("VM_RECORD_STILL_S") or 3)
 STRIDE = 97  # bytes between the samples two frames are compared on (prime: they fall on every column over the rows)
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -79,7 +84,7 @@ def record(out, max_s):
                 with open(frame, "rb") as f:
                     data = f.read()
                 if n == 0:
-                    width = int(data.split(b"\n", 2)[1].split()[0])  # PPM: P6, then "width height"
+                    width, height = map(int, data.split(b"\n", 2)[1].split()[:2])  # PPM: P6, then "width height"
                 now, size = time.time(), os.path.getsize(events)
                 if size == seen and still(prev, data):
                     since = since or now
@@ -115,7 +120,7 @@ def record(out, max_s):
     if ff.returncode != 0 or n == 0:
         say(f"ffmpeg failed (exit {ff.returncode}) after {n} frames")
         return 1
-    rc = compose(raw, events, out, secs, width, shift(cuts))
+    rc = compose(raw, events, out, secs, (width, height), shift(cuts))
     if rc == 0:
         os.remove(raw)
         print(f"{out} {secs:.0f}s, {os.path.getsize(out) // 1024} KB" + (f" ({cut:.0f}s of still screen cut)" if cut >= 1 else ""))
@@ -131,8 +136,9 @@ def overlay(*args):
     return p.returncode == 0
 
 
-def compose(raw, events_path, out, secs, w, at=lambda t: t):
-    """The raw video with its captions and click rings over it, re-encoded small; at(t) is an event's time in it."""
+def compose(raw, events_path, out, secs, size, at=lambda t: t):
+    """The raw video with its highlights, captions and click rings over it (in that order: a caption or a click is never
+    dimmed), re-encoded small; size is the screen's (width, height), at(t) an event's time in the video."""
     evs = [json.loads(line) for line in open(events_path) if line.strip()]
     for e in evs:
         if e.get("seconds"):
@@ -140,13 +146,29 @@ def compose(raw, events_path, out, secs, w, at=lambda t: t):
         e["t"] = round(at(e["t"]), 2)
     caps = [e for e in evs if "caption" in e]
     clicks = [e for e in evs if "click" in e]
+    for i, c in enumerate(caps):  # a caption, and its highlight, last until the next one (or its seconds)
+        c["end"] = caps[i + 1]["t"] if i + 1 < len(caps) else secs
+        if c.get("seconds"):
+            c["end"] = min(c["end"], c["until"])
+    w = size[0]
     inputs, chain, last = [], [], "0:v"
     work = out + ".overlays"
     os.makedirs(work, exist_ok=True)
     for i, c in enumerate(caps):
-        end = caps[i + 1]["t"] if i + 1 < len(caps) else secs
-        if c.get("seconds"):
-            end = min(end, c["until"])
+        if not c.get("highlight") or c["end"] <= c["t"]:
+            continue
+        # A click changes the screen the highlight points at (a dialog opens): it ends just after the first one, so
+        # its ring shows in it and the box never outlines what is no longer there.
+        end = min([c["end"]] + [e["t"] + HIGHLIGHT_AFTER_CLICK for e in clicks if c["t"] <= e["t"] < c["end"]])
+        png = os.path.join(work, f"highlight-{i}.png")
+        if not highlight.draw(png, *size, c["highlight"], c.get("dim", True)):
+            continue
+        inputs += ["-i", png]
+        k = len(inputs) // 2
+        chain.append(f"[{last}][{k}:v]overlay=format=yuv444:enable='between(t,{c['t']},{end})'[h{k}]")
+        last = f"h{k}"
+    for i, c in enumerate(caps):
+        end = c["end"]
         if not c["caption"].strip() or end <= c["t"]:
             continue
         png = os.path.join(work, f"caption-{i}.png")
@@ -154,7 +176,7 @@ def compose(raw, events_path, out, secs, w, at=lambda t: t):
             continue
         inputs += ["-i", png]
         k = len(inputs) // 2
-        chain.append(f"[{last}][{k}:v]overlay=x=(W-w)/2:y=H-h-64:enable='between(t,{c['t']},{end})'[v{k}]")
+        chain.append(f"[{last}][{k}:v]overlay=format=yuv444:x=(W-w)/2:y=H-h-64:enable='between(t,{c['t']},{end})'[v{k}]")
         last = f"v{k}"
     png = os.path.join(work, "ring.png")
     if clicks and overlay("ring", png, str(RING)):
@@ -162,15 +184,18 @@ def compose(raw, events_path, out, secs, w, at=lambda t: t):
         ring = len(inputs) // 2
         for j, c in enumerate(clicks):
             x, y = c["click"]
-            chain.append(f"[{last}][{ring}:v]overlay=x={x - RING // 2}:y={y - RING // 2}:"
+            chain.append(f"[{last}][{ring}:v]overlay=format=yuv444:x={x - RING // 2}:y={y - RING // 2}:"
                          f"enable='between(t,{c['t']},{c['t'] + 0.7})'[c{j}]")
             last = f"c{j}"
-    args = ["-i", raw, *inputs]
-    if chain:
-        script = os.path.join(work, "filter.txt")
-        with open(script, "w") as f:
-            f.write(";\n".join(chain))
-        args += ["-filter_complex_script", script, "-map", f"[{last}]"]
+    # The video every player plays (yuv420p) keeps one colour per 2x2 pixels: the screen's own colour detail (ClearType
+    # text, a thin outline) would smear. Twice the size, each pixel a 2x2 block, it loses none, and a Retina screen shows
+    # it pixel for pixel instead of stretching it; about 3 times the bytes. The overlays go on in full colour (yuv444)
+    # before that: ffmpeg's default, 4:2:0, would halve each one's.
+    chain.append(f"[{last}]scale=iw*2:ih*2:flags=neighbor[out]")
+    script = os.path.join(work, "filter.txt")
+    with open(script, "w") as f:
+        f.write(";\n".join(chain))
+    args = ["-i", raw, *inputs, "-filter_complex_script", script, "-map", "[out]"]
     # x264 for the kept video: a desktop that barely moves takes a fifth of what the hardware encoder makes of it.
     args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     rc = ffmpeg(*args).returncode
@@ -179,7 +204,7 @@ def compose(raw, events_path, out, secs, w, at=lambda t: t):
     os.rmdir(work)
     os.remove(events_path)
     if rc != 0:
-        say(f"could not put the captions and clicks on the video (ffmpeg exit {rc}); the raw one is {raw}")
+        say(f"could not put the highlights, captions and clicks on the video (ffmpeg exit {rc}); the raw one is {raw}")
     return rc
 
 
@@ -187,10 +212,27 @@ def main():
     op, a = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
     if op == "run" and len(a) == 2:
         return record(os.path.abspath(a[0]), float(a[1]))
-    if op == "caption" and len(a) in (1, 2):
-        ev = {"caption": a[0]}
-        if len(a) == 2:
-            ev["seconds"] = float(a[1])
+    if op == "caption":
+        regions, dim, rest = [], True, []
+        try:
+            while a:
+                x = a.pop(0)
+                if x == "--no-dim":
+                    dim = False
+                elif x == "--highlight" and a:
+                    regions += highlight.parse([a.pop(0)])[0]
+                else:
+                    rest.append(x)
+            if len(rest) not in (1, 2):
+                raise ValueError("record.py caption TEXT [SECONDS] [--highlight REGION]... [--no-dim]")
+            ev = {"caption": rest[0]}
+            if len(rest) == 2:
+                ev["seconds"] = float(rest[1])
+        except ValueError as e:
+            say(str(e))
+            return 2
+        if regions:
+            ev["highlight"], ev["dim"] = regions, dim
         if not vm.add_event(ev):
             say("nothing is recording: app record start first")
             return 1

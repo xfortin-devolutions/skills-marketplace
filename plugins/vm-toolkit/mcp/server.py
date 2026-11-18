@@ -162,15 +162,29 @@ def t_wait(a):
     return text(out or f"waited {int(a['seconds'])} s", rc != 0)
 
 
+def highlight_args(a):
+    """The --highlight flags of a call's highlight regions (and --no-dim)."""
+    args = []
+    for r in a.get("highlight") or []:
+        region = ",".join(str(int(r[k])) for k in ("x", "y", "width", "height"))
+        args += ["--highlight", region + (f",{r['label']}" if r.get("label") else "")]
+    if args and a.get("dim") is False:
+        args.append("--no-dim")
+    return args
+
+
 def t_screenshot(a):
-    rc, out = vmt("guest", existing(a["name"]), "app", "shot")
+    rc, out = vmt("guest", existing(a["name"]), "app", "shot", *highlight_args(a))
     m = re.search(r"(\S+\.png) (\d+)x(\d+)", out)
     if rc != 0 or not m:
         return text(out, True)
-    with open(m.group(1), "rb") as f:
+    marked = re.search(r"^highlighted (\S+\.png)$", out, re.M)
+    with open((marked or m).group(1), "rb") as f:
         data = base64.b64encode(f.read()).decode()
-    return {"content": [{"type": "image", "data": data, "mimeType": "image/png"},
-                        {"type": "text", "text": f"{m.group(1)} ({m.group(2)}x{m.group(3)}; click coordinates are in these pixels)"}],
+    about = f"{m.group(1)} ({m.group(2)}x{m.group(3)}; click coordinates are in these pixels)"
+    if marked:
+        about += f"; highlighted: {marked.group(1)} (the image above)"
+    return {"content": [{"type": "image", "data": data, "mimeType": "image/png"}, {"type": "text", "text": about}],
             "isError": False}
 
 
@@ -214,7 +228,7 @@ def t_caption(a):
     args = ["guest", existing(a["name"]), "app", "caption", a["text"]]
     if a.get("seconds"):
         args.append(str(a["seconds"]))
-    rc, out = vmt(*args)
+    rc, out = vmt(*args, *highlight_args(a))
     return text(out, rc != 0)
 
 
@@ -267,6 +281,14 @@ def t_down(a):
 
 
 NAME = {"type": "string", "description": "The VM's name (vm_up returns it; vm_list lists them)."}
+HIGHLIGHT = {"type": "array", "description": "Regions to point at, in screenshot pixels: each outlined a few pixels outside "
+             "(never over what it shows) with its optional label (\"1\", \"Clipped\"), the rest of the screen dimmed.",
+             "items": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"},
+                                                        "width": {"type": "integer"}, "height": {"type": "integer"},
+                                                        "label": {"type": "string"}},
+                       "required": ["x", "y", "width", "height"]}}
+DIM = {"type": "boolean", "description": "Dim the rest of the screen around the highlight (default true); false when the "
+       "surroundings matter too."}
 TOOLS = {
     "vm_products": ("The product VM definitions of a repo: its products, their guest targets and images, and whether "
                     "the images are on this machine. With files, which product each repo path belongs to.",
@@ -305,8 +327,9 @@ TOOLS = {
     "vm_wait": ("Wait a few seconds (on this machine: no guest command, no screenshot), e.g. while the app loads or a "
                 "dialog opens; then one vm_screenshot to check, and wait again if it is not ready.",
                 {"name": NAME, "seconds": {"type": "integer", "description": "1-120."}}, ["name", "seconds"], t_wait),
-    "vm_screenshot": ("A screenshot of the guest's screen, and the PNG's path on this machine.",
-                      {"name": NAME}, ["name"], t_screenshot),
+    "vm_screenshot": ("A screenshot of the guest's screen, and the PNG's path on this machine. With highlight, the image "
+                      "points at those regions (for a person: a bug, a change, a step), and the plain one is kept too.",
+                      {"name": NAME, "highlight": HIGHLIGHT, "dim": DIM}, ["name"], t_screenshot),
     "vm_click": ("Click at a screenshot pixel.",
                  {"name": NAME, "x": {"type": "integer"}, "y": {"type": "integer"},
                   "button": {"type": "string", "enum": ["left", "right", "double"]}},
@@ -327,9 +350,12 @@ TOOLS = {
                         {"name": NAME, "max_minutes": {"type": "integer", "description": "1-60, default 10."}},
                         ["name"], t_record_start),
     "vm_caption": ("Show a caption at the bottom of the recording from now on, until the next caption (or for seconds): "
-                   "what is being done, or what to look at. One short sentence reads best. An empty text clears it.",
+                   "what is being done, or what to look at. One short sentence reads best. An empty text clears it. "
+                   "With highlight, those regions are pointed at for as long as the caption shows, or until the next "
+                   "vm_click (the screen changes); an empty text with a highlight points without words.",
                    {"name": NAME, "text": {"type": "string"},
-                    "seconds": {"type": "number", "description": "Hide it after this long."}},
+                    "seconds": {"type": "number", "description": "Hide it after this long."},
+                    "highlight": HIGHLIGHT, "dim": DIM},
                    ["name", "text"], t_caption),
     "vm_record_stop": ("Stop the recording and return the MP4's path on this machine (takes a few seconds: the captions and "
                        "clicks are laid over it then). Also reports a recording that ended by itself.",
