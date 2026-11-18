@@ -37,7 +37,8 @@ case "$1" in
       "build "*|"build") [ -f "$FAKE_ROOT/red" ] && { echo "error CS1002"; echo "BUILD EXIT CODE: 1" > "$2/build.log"; exit 1; }
                          [ -f "$FAKE_ROOT/harness" ] && { echo "HARNESS ERROR: no BUILD EXIT CODE"; echo "ssh died" > "$2/build.log"; exit 3; }
                          echo "Build succeeded."; exit 0 ;;
-      "app shot") mkdir -p "$2/app"; cp "$FAKE_PNG" "$2/app/shot-1.png"; echo "$2/app/shot-1.png 1600x900" ;;
+      "app shot") mkdir -p "$2/app"; cp "$FAKE_PNG" "$2/app/shot-1.png"; echo "$2/app/shot-1.png 1600x900"
+                  if [ -n "${5:-}" ]; then cp "$FAKE_PNG" "$2/app/highlight-1.png"; echo "highlighted $2/app/highlight-1.png"; fi ;;
       *) echo ok ;;
     esac ;;
   *) echo "fake: $*" ;;
@@ -141,6 +142,18 @@ def main():
         check("vm_caption maps to app caption with its text and seconds",
               f"guest {d} app caption Opening the entry's dialog 3" in calls, True)
         check("vm_record_stop maps to app record stop", f"guest {d} app record stop" in calls, True)
+
+        regions = [{"x": 10, "y": 20, "width": 300, "height": 40, "label": "Save, clipped"}, {"x": 5, "y": 6, "width": 7, "height": 8}]
+        r = session(("vm_screenshot", {"name": "my-worktree", "highlight": regions, "dim": False}),
+                    ("vm_caption", {"name": "my-worktree", "text": "Its edge is cut", "highlight": regions[:1]}))
+        calls = open(log).read().splitlines()
+        check("vm_screenshot maps its highlight to app shot --highlight, and dim false to --no-dim",
+              f"guest {d} app shot --highlight 10,20,300,40,Save, clipped --highlight 5,6,7,8 --no-dim" in calls, True)
+        shot = r[1]["result"]["content"][1]["text"]
+        check("vm_screenshot gives both paths", (shot.startswith(os.path.join(d, "app", "shot-1.png")),
+                                                 os.path.join(d, "app", "highlight-1.png") in shot), (True, True))
+        check("vm_caption passes its highlight (dimmed by default)",
+              f"guest {d} app caption Its edge is cut --highlight 10,20,300,40,Save, clipped" in calls, True)
 
         open(os.path.join(root, "red"), "w").close()
         r = session(("vm_build", {"name": "my-worktree"}))
