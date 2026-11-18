@@ -145,7 +145,8 @@ def main():
 
         regions = [{"x": 10, "y": 20, "width": 300, "height": 40, "label": "Save, clipped"}, {"x": 5, "y": 6, "width": 7, "height": 8}]
         r = session(("vm_screenshot", {"name": "my-worktree", "highlight": regions, "dim": False}),
-                    ("vm_caption", {"name": "my-worktree", "text": "Its edge is cut", "highlight": regions[:1]}))
+                    ("vm_caption", {"name": "my-worktree", "text": "Its edge is cut", "highlight": regions[:1]}),
+                    ("vm_caption", {"name": "my-worktree", "text": "", "say": "So, let's hit Connect."}))
         calls = open(log).read().splitlines()
         check("vm_screenshot maps its highlight to app shot --highlight, and dim false to --no-dim",
               f"guest {d} app shot --highlight 10,20,300,40,Save, clipped --highlight 5,6,7,8 --no-dim" in calls, True)
@@ -154,6 +155,7 @@ def main():
                                                  os.path.join(d, "app", "highlight-1.png") in shot), (True, True))
         check("vm_caption passes its highlight (dimmed by default)",
               f"guest {d} app caption Its edge is cut --highlight 10,20,300,40,Save, clipped" in calls, True)
+        check("vm_caption passes say as --say", f"guest {d} app caption  --say So, let's hit Connect." in calls, True)
 
         open(os.path.join(root, "red"), "w").close()
         r = session(("vm_build", {"name": "my-worktree"}))

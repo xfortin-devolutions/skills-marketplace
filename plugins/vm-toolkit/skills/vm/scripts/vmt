@@ -17,7 +17,8 @@
 #                                        Mac: the target's HOST_BUILD): build [<project>] [--clean]
 #                                        | test [--no-build] <project> [<filter>] | app launch|wait|shot|click|type|
 #                                        key|scroll|stop | app record start [<min>]|stop | app caption <text> [<s>]
-#                                        (shot and caption take --highlight x,y,w,h[,label]... [--no-dim])
+#                                        (shot and caption take --highlight x,y,w,h[,label]... [--no-dim];
+#                                        caption --say <speech> narrates)
 #                                        | run '<powershell>' | info
 #   vmt apply <vm dir> <folder> [<guest folder>]   puts a setup folder in the VM (scripts/apply.sh); the guest folder
 #                                        defaults to C:\factory\setup\<folder name>
@@ -33,6 +34,8 @@
 #                                        the checkpoints, their size and users; delete them (refused while in use).
 #                                        Nothing deletes a checkpoint but rm (lib/checkpoints.sh)
 #   vmt list | vmt gc                    the running VMs of every guest OS; free dead slots
+#   vmt voice setup | try <text>         the narration voice for recordings (caption --say): Kokoro, installed once
+#                                        (~350 MB, needs uv) in <VM root>/voice/; try speaks a line with VM_VOICE here
 #   vmt root                             the VM root (images per guest OS, and the MCP server's VM folders in mcp/)
 #   vmt dashboard [--port N] [--no-open] the VMs, VM folders, checkpoints and images in the browser, to clean up: down,
 #                                        delete, open a screen (local, http://vms.localhost:8766/; Ctrl-C stops)
@@ -285,6 +288,7 @@ except ValueError: print("")' "$1"; }
         ck_take "$(cd "$D" && pwd)" "$N" "$note" "$resume" ;;
     esac ;;
   root) echo "$VM_ROOT" ;;
+  voice) exec "$X/vm/voice.sh" "$@" ;;
   list|gc)
     for h in "$VM_ROOT"/*/; do
       [ -d "$h/slots" ] || continue

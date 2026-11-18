@@ -228,6 +228,8 @@ def t_caption(a):
     args = ["guest", existing(a["name"]), "app", "caption", a["text"]]
     if a.get("seconds"):
         args.append(str(a["seconds"]))
+    if a.get("say", "").strip():
+        args += ["--say", a["say"]]
     rc, out = vmt(*args, *highlight_args(a))
     return text(out, rc != 0)
 
@@ -352,10 +354,18 @@ TOOLS = {
     "vm_caption": ("Show a caption at the bottom of the recording from now on, until the next caption (or for seconds): "
                    "what is being done, or what to look at. One short sentence reads best. An empty text clears it. "
                    "With highlight, those regions are pointed at for as long as the caption shows, or until the next "
-                   "vm_click (the screen changes); an empty text with a highlight points without words.",
+                   "vm_click (the screen changes); an empty text with a highlight points without words. "
+                   "With say, a voice narrates too, and the call returns just before the line ends: make the next call "
+                   "the step it announces, so the click lands on its last words.",
                    {"name": NAME, "text": {"type": "string"},
                     "seconds": {"type": "number", "description": "Hide it after this long."},
-                    "highlight": HIGHLIGHT, "dim": DIM},
+                    "highlight": HIGHLIGHT, "dim": DIM,
+                    "say": {"type": "string", "description":
+                            "Narration spoken from now: written for the ear, as a person demoing it would say it, "
+                            "not the caption read out (\"Let's go with the fastest one, and just hit Connect.\"): first "
+                            "person, contractions, one or two short sentences per step; commas and an ellipsis are "
+                            "pauses; spell out what is not said as written (\"R-D-M\"). Narrate every step or none: "
+                            "a narrated video usually takes an empty text (no caption)."}},
                    ["name", "text"], t_caption),
     "vm_record_stop": ("Stop the recording and return the MP4's path on this machine (takes a few seconds: the captions and "
                        "clicks are laid over it then). Also reports a recording that ended by itself.",
