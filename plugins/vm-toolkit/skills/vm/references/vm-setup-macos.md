@@ -56,5 +56,14 @@ bash $V/vmt show $D        # TigerVNC, else Screen Sharing
 bash $V/vmt down $D
 ```
 
+## Checkpoints
+`vmt checkpoint` works as on Windows (SKILL.md, checkpoints): the VM's clone is kept as the tart VM `ck-<name>`, with
+`checkpoints/<name>.tart` naming it and `<name>.conf` describing it, and later VMs clone it instead of `base`. Taking
+one is instant once the guest is off, and costs only what the VM changed (APFS). The guest shuts down the way the
+Apple menu does (loginwindow's shut down event, which needs no permission from SSH), so apps quit and save; one that
+asks before quitting holds the shutdown up, and the checkpoint is refused with a screenshot of the question, the VM
+still up. `shutdown -h now` would kill the apps instead: `--force` does that, when a crash report on the next start is
+acceptable.
+
 ## Not yet
-Checkpoints (`vmt checkpoint`) and the shared clipboard are Windows-only for now (GAPS.md).
+The shared clipboard is Windows-only for now (GAPS.md).

@@ -128,11 +128,12 @@ def chain(image, running=False):
 
 
 def homes():
-    """Guest OS image folders under the root: <root>/<os>/ with a golden image or slots."""
+    """Guest OS image folders under the root: <root>/<os>/ with a golden image, slots, or a tart home (macOS)."""
     out = []
     for h in sorted(glob.glob(os.path.join(ARGS.root, "*", ""))):
         h = h.rstrip("/")
-        if os.path.exists(os.path.join(h, "base.qcow2")) or os.path.isdir(os.path.join(h, "slots")):
+        if (os.path.exists(os.path.join(h, "base.qcow2")) or os.path.isdir(os.path.join(h, "slots"))
+                or os.path.isdir(os.path.join(h, "tart"))):
             out.append(h)
     return out
 
@@ -155,12 +156,26 @@ def last_used(d):
     return t
 
 
+def tart_vm_dir(home, image):
+    """A tart guest's image (macOS): the tart VM folder clones start from (base, or a checkpoint's ck-<name>), else None."""
+    if not os.path.isdir(os.path.join(home, "tart")):
+        return None
+    if image.startswith("checkpoints/") and image.endswith(".tart"):
+        try:
+            name = open(os.path.join(home, image)).read().strip()
+        except OSError:
+            return os.path.join(home, "tart", "vms", "-gone-")
+    else:
+        name = image
+    return os.path.join(home, "tart", "vms", name)
+
+
 def folder(d):
     c = conf(os.path.join(d, "guest.conf"))
     vm = os.path.join(d, "vm")
     running = pid_alive(os.path.join(vm, "qemu.pid"))
     image = c.get("VM_IMAGE") or "base.qcow2"
-    image_path = os.path.join(c.get("VM_HOME") or "", image)
+    image_path = tart_vm_dir(c.get("VM_HOME") or "", image) or os.path.join(c.get("VM_HOME") or "", image)
     wt = c.get("WORKTREE") or ""
     app = os.path.join(d, "app")
     videos = sorted(glob.glob(os.path.join(app, "video-*.mp4")), key=mtime)
@@ -181,7 +196,7 @@ def folder(d):
         "title": c.get("VM_TITLE") or "", "product": c.get("PRODUCT") or "", "app": c.get("APP_NAME") or "",
         "worktree": wt, "worktree_ok": bool(wt) and os.path.isdir(wt),
         "image": image, "image_ok": os.path.exists(image_path),
-        "checkpoint": image[len("checkpoints/"):-len(".qcow2")] if image.startswith("checkpoints/") else None,
+        "checkpoint": os.path.splitext(image[len("checkpoints/"):])[0] if image.startswith("checkpoints/") else None,
         "running": running, "keep": os.path.exists(os.path.join(d, "keep")), "busy": busy,
         "recording": pid_alive(os.path.join(vm, "record.pid")),
         "last_used": used, "kb": du_kb(d), "kept_disk_kb": blocks_kb(os.path.join(vm, "disk.qcow2")) if kept_disk else 0,
@@ -235,13 +250,19 @@ def state():
 
     checkpoints, images = [], []
     for h in hs:
-        cks = sorted(glob.glob(os.path.join(h, "checkpoints", "*.qcow2")))
-        ck_chains = {c: chain(c) for c in cks}
+        cks = sorted(glob.glob(os.path.join(h, "checkpoints", "*.qcow2")) + glob.glob(os.path.join(h, "checkpoints", "*.tart")))
+        # A tart checkpoint (macOS) is a clone: no chain, nothing built on it, and its size is shared with base.
+        ck_chains = {c: (chain(c) if c.endswith(".qcow2") else ([c] if os.path.isdir(tart_vm_dir(h, "checkpoints/" + os.path.basename(c))) else None)) for c in cks}
         for c in cks:
-            n = os.path.basename(c)[:-len(".qcow2")]
-            meta = conf(c[:-len(".qcow2")] + ".conf")
-            users = [rel(r) for r, ch in running_chains.items() if c in ch]
-            built_on = [os.path.basename(o)[:-6] for o, ch in ck_chains.items() if o != c and ch and c in ch]
+            tart = c.endswith(".tart")
+            n = os.path.splitext(os.path.basename(c))[0]
+            meta = conf(os.path.splitext(c)[0] + ".conf")
+            if tart:
+                users = [f["id"] for f in folders if f["checkpoint"] == n and f["running"]]
+                built_on = []
+            else:
+                users = [rel(r) for r, ch in running_chains.items() if c in ch]
+                built_on = [os.path.basename(o)[:-6] for o, ch in ck_chains.items() if o != c and ch and c in ch and o.endswith(".qcow2")]
             booting = [f["id"] for f in folders if f["checkpoint"] == n and not f["running"]]
             wt = meta.get("WORKTREE") or ""
             try:
@@ -249,7 +270,7 @@ def state():
             except ValueError:
                 created = 0
             checkpoints.append({
-                "name": n, "os": os.path.basename(h), "kb": blocks_kb(c), "created": created or mtime(c),
+                "name": n, "os": os.path.basename(h), "kb": 0 if tart else blocks_kb(c), "clone": tart, "created": created or mtime(c),
                 "product": meta.get("PRODUCT") or "", "branch": meta.get("BRANCH") or "", "note": meta.get("NOTE") or "",
                 "worktree": wt, "worktree_ok": bool(wt) and os.path.isdir(wt), "from_image": meta.get("FROM_IMAGE") or "",
                 "broken": ck_chains[c] is None, "running_users": users, "built_on": built_on, "booting": booting,
@@ -259,10 +280,11 @@ def state():
                            "readonly": not os.access(img, os.W_OK), "t": mtime(img),
                            "kind": "golden image" if img.endswith("/base.qcow2") else "product layer"})
         # A tart guest (macOS): its images are tart VMs, which clones never write (APFS clones), so none is "writable".
-        # A running VM's own clone (vmt-slot-N) goes with it; a kept one (down --keep-disk) stays until deleted by hand.
+        # A running VM's own clone (vmt-slot-N) goes with it; a kept one (down --keep-disk) stays until deleted by hand; a
+        # checkpoint's (ck-<name>) is in the checkpoints.
         for vm in sorted(glob.glob(os.path.join(h, "tart", "vms", "*", ""))):
             n = os.path.basename(vm.rstrip("/"))
-            if n.startswith("vmt-slot-"):
+            if n.startswith(("vmt-slot-", "ck-")):
                 continue
             disk = os.path.join(vm, "disk.img")
             images.append({"name": n, "os": os.path.basename(h), "kb": du_kb(vm.rstrip("/"), ttl=300), "readonly": True,

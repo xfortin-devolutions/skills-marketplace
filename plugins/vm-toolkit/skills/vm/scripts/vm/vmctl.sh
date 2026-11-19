@@ -7,7 +7,9 @@
 #                                      macOS Screen Sharing (VM_VIEWER=screensharing forces it); VNC on localhost, password
 #   vmctl.sh down <run dir> [--keep-disk]   power off, free the slot, delete the overlay unless kept
 #   vmctl.sh freeze <run dir> <image>  shut the guest down cleanly and make its disk the read-only image <image> (a path
-#                                      under VM_HOME, e.g. checkpoints/devex-610.qcow2) that later clones start from
+#                                      under VM_HOME, e.g. checkpoints/devex-610.qcow2) that later clones start from;
+#                                      a macOS guest whose apps hold the shutdown up stays running (VM_FREEZE_FORCE=1
+#                                      powers it off anyway)
 #   vmctl.sh record-stop <run dir>     end the VM's recording (guest.sh app record start) and print the video's path
 #   vmctl.sh list                      running VMs and their slots
 #   vmctl.sh gc                        free the slots of dead VMs and delete their overlays
@@ -22,7 +24,8 @@
 # then a tart VM there (base, the golden one), each VM an APFS clone of it (instant, copy-on-write) run by tart with
 # Virtualization.framework, its screen and input on that framework's VNC server (vnc.py drives it), the worktree
 # mounted at /Volumes/My Shared Files/wt, SSH on the VM's own address. Apple allows two macOS VMs at once on a Mac, and
-# the kernel enforces it: VM_MAX is at most 2 there. No freeze (checkpoints) for them yet.
+# the kernel enforces it: VM_MAX is at most 2 there. A checkpoint of one (freeze) is its clone renamed ck-<name>, with
+# a marker checkpoints/<name>.tart; VM_IMAGE=checkpoints/<name>.tart clones it instead of base.
 # bash 3.2 compatible.
 set -u
 
@@ -55,6 +58,8 @@ die() { echo "vmctl: $*" >&2; exit 1; }
 alive() { [ -f "$1/qemu.pid" ] && kill -0 "$(cat "$1/qemu.pid")" 2> /dev/null; }
 # tart_name <slot>: the tart VM a slot runs (one at a time: the slot is the lock)
 tart_name() { echo "vmt-slot-$1"; }
+# tart_image <VM_IMAGE>: the tart VM clones start from: base, or a checkpoint's (checkpoints/<name>.tart: ck-<name>)
+tart_image() { case "$1" in checkpoints/*.tart) n=${1#checkpoints/}; echo "ck-${n%.tart}" ;; *) echo "$1" ;; esac; }
 # A layer boots with its own firmware variables: its maintenance boots must not change the base's.
 image_vars() { [ "$VM_IMAGE" = base.qcow2 ] && echo vars.base.fd || echo "${VM_IMAGE%.qcow2}.vars.fd"; }
 # vm_title <run dir>: the VM's name, which Screen Sharing shows as its window title. The caller says what the VM is for
@@ -208,9 +213,15 @@ take_slot() {
 
 # tart_up <run dir> <worktree>: up, for a macOS guest (see the header)
 tart_up() {
-  local run=$1 wt=$2 d n name share i url pw vport ip mem
+  local run=$1 wt=$2 d n name share i url pw vport ip mem src
   command -v tart > /dev/null || die "tart missing: brew install openai/tools/tart"
-  [ -d "$TART_HOME/vms/$VM_IMAGE" ] || die "no tart VM $VM_IMAGE in $TART_HOME: build the golden image first (references/vm-setup-macos.md)"
+  src=$(tart_image "$VM_IMAGE")
+  if [ ! -d "$TART_HOME/vms/$src" ]; then
+    case "$VM_IMAGE" in
+      checkpoints/*) die "no tart VM $src: its checkpoint was deleted (vmt checkpoint list)" ;;
+      *) die "no tart VM $src in $TART_HOME: build the golden image first (references/vm-setup-macos.md)" ;;
+    esac
+  fi
   [ -f "$VM_HOME/id_ed25519" ] || die "no $VM_HOME/id_ed25519: build the golden image first (references/vm-setup-macos.md)"
   [ -z "${VM_SHARE_CHECK:-}" ] || [ -e "$wt/$VM_SHARE_CHECK" ] || die "$wt has no $VM_SHARE_CHECK"
   mkdir -p "$run" "$SLOTS"
@@ -225,7 +236,7 @@ tart_up() {
   tart delete "$name" > /dev/null 2>&1
   case "$VM_MEM" in *G) mem=$((${VM_MEM%G} * 1024)) ;; *M) mem=${VM_MEM%M} ;; *) mem=$VM_MEM ;; esac
   # px: at 72 ppi, one guest point is one screenshot pixel, as in the Windows VMs.
-  { tart clone "$VM_IMAGE" "$name" && tart set "$name" --cpu "$VM_CPUS" --memory "$mem" --display "${VM_XRES}x${VM_YRES}px"; } \
+  { tart clone "$src" "$name" && tart set "$name" --cpu "$VM_CPUS" --memory "$mem" --display "${VM_XRES}x${VM_YRES}px"; } \
     > "$d/tart.log" 2>&1 || { release_slot "$n" "$d"; die "tart clone failed: $(tail -2 "$d/tart.log")"; }
   # tart is the VM's process: its pid is the VM's (alive, down), as QEMU's is.
   nohup tart run --no-graphics --vnc-experimental --dir="wt:$share" "$name" >> "$d/tart.log" 2>&1 < /dev/null &
@@ -339,7 +350,7 @@ freeze() {
   d=$(vmdir "${1:-}"); img=${2:-}
   [ -n "$img" ] || die "usage: vmctl.sh freeze <run dir> <image>"
   alive "$d" || die "no VM running for ${1:-}"
-  [ "$BACKEND" = tart ] && die "checkpoints of a macOS VM are not supported yet (GAPS.md)"
+  [ "$BACKEND" = tart ] && { tart_freeze "$d" "$img"; return; }
   [ -e "$VM_HOME/$img" ] && die "$VM_HOME/$img already exists"
   n=$(slot_of "$d"); pid=$(cat "$d/qemu.pid")
   # Once QEMU exits the slot looks dead, and any up's gc would delete the disk before it moves: mark it starting.
@@ -363,6 +374,49 @@ freeze() {
   [ -n "$n" ] && rmdir_slot "$n"
   rm -f "$d/qemu.pid" "$d/qmp.sock" "$d/rec.sock" "$d/clipboard.ok"
   echo "frozen after ${i}s: $VM_HOME/$img ($(qemu-img info "$VM_HOME/$img" | sed -n 's/^disk size: //p'))"
+}
+
+# tart_freeze <vm dir> <image>: freeze, for a macOS guest. The clone is already an independent copy (APFS): once the
+# guest has shut down cleanly, it is renamed after the checkpoint and kept, with a marker file at <image>.
+# Cleanly: loginwindow's shut down event (aevtshut: no confirmation dialog, unlike aevtrsdn; it needs no permission from
+# SSH), so apps quit and save; `shutdown -h now` would kill them, and the app reports a crash on its next start. An app
+# can hold it up (RDM asks "Do you want to quit?"): then the VM stays up, with a screenshot of what asks, for an agent
+# or a person to answer before trying again. VM_FREEZE_FORCE=1 shuts down at once, apps or not.
+tart_freeze() {
+  local d=$1 img=$2 n pid i ck
+  case "$img" in checkpoints/*.tart) ;; *) die "a macOS checkpoint is checkpoints/<name>.tart, not $img" ;; esac
+  ck=$(tart_image "$img")
+  [ -e "$VM_HOME/$img" ] || [ -d "$TART_HOME/vms/$ck" ] && die "$VM_HOME/$img already exists"
+  n=$(slot_of "$d"); pid=$(cat "$d/qemu.pid")
+  [ -n "$n" ] || die "no slot holds $d"
+  # Once tart exits the slot looks dead, and any up's gc would delete the clone before it is renamed: mark it starting.
+  touch "$SLOTS/$n/starting"
+  record_end "$d"
+  local wait=${VM_FREEZE_WAIT_S:-120} shot
+  if [ -n "${VM_FREEZE_FORCE:-}" ]; then
+    ( . "$d/vm.env"; "$X/vmssh" 'sudo shutdown -h now' ) > /dev/null 2>&1
+    wait=300
+  else
+    # shellcheck disable=SC2016
+    ( . "$d/vm.env"; "$X/vmssh" 'osascript -e "tell application \"loginwindow\" to «event aevtshut»"' ) > /dev/null 2>&1
+  fi
+  i=0
+  while kill -0 "$pid" 2> /dev/null && [ "$i" -lt "$wait" ]; do sleep 1; i=$((i + 1)); done
+  if kill -0 "$pid" 2> /dev/null; then
+    rm -f "$SLOTS/$n/starting"
+    [ -n "${VM_FREEZE_FORCE:-}" ] && die "the guest did not power off in 5 min; the VM still runs (vmctl.sh show $(dirname "$d"))"
+    shot=$(dirname "$d")/app/freeze-blocked.png
+    mkdir -p "$(dirname "$shot")"
+    ( . "$d/vm.env"; python3 "$X/vm.py" shot "$shot" ) > /dev/null 2>&1 || shot="(no screenshot)"
+    die "the guest did not shut down in ${wait}s: an app is holding it up, usually asking something before it quits (see $shot). Answer it (app shot, app click, or vmt show) and take the checkpoint again; or --force, which powers off without letting apps quit (they may report a crash on their next start). The VM still runs"
+  fi
+  tart rename "$(tart_name "$n")" "$ck" || die "could not rename $(tart_name "$n") to $ck; it is still there"
+  mkdir -p "$(dirname "$VM_HOME/$img")"
+  echo "$ck" > "$VM_HOME/$img"
+  chmod a-w "$VM_HOME/$img"
+  rmdir_slot "$n"
+  rm -f "$d/qemu.pid"
+  echo "frozen after ${i}s: $VM_HOME/$img (tart VM $ck)"
 }
 
 show() {

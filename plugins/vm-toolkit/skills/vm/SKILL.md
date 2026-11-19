@@ -17,8 +17,8 @@ Never run `dotnet` yourself for a target: `guest build` builds it where the targ
 **macOS guests** (a product's `macos` target, e.g. `vmt init … --product rdm --target macos`) are tart VMs, not QEMU: each
 an instant APFS clone of a lean macOS image with no SDK. The Mac always builds; the guest only runs the app, from the
 worktree at `/Volumes/My Shared Files/wt` (`$R` in a guest command). `guest run` takes bash there, `app key` names
-Command `cmd` (`cmd-q`), at most two macOS VMs run at once (Apple's licence), and there are no checkpoints or shared
-clipboard yet. Setup: [references/vm-setup-macos.md](references/vm-setup-macos.md).
+Command `cmd` (`cmd-q`), at most two macOS VMs run at once (Apple's licence), and there is no shared clipboard yet.
+Setup: [references/vm-setup-macos.md](references/vm-setup-macos.md).
 
 `V=<skill dir>/scripts`, where `<skill dir>` is this skill's base directory (an absolute path: installed as a plugin,
 apart from any repo). Run `vmt` from inside the repo, or pass `--repo <path>` first.
@@ -95,7 +95,11 @@ installed tools, test data. A **checkpoint** keeps that state for the VMs that c
 1. In the VM, set up what the work needs; for a sign-in, `vmt show` it and ask the person.
 2. `bash $V/vmt checkpoint <vm dir> <name> [--note '<what was set up>'] [--resume]`: the guest shuts down cleanly
    (apps write their settings), then its disk becomes the read-only image `<VM root>/<os>/checkpoints/<name>.qcow2`
-   (~1 min, ~1 GB). The VM starts from it from then on; `--resume` boots it again right away. Name it after the
+   (~1 min, ~1 GB; macOS: the VM's clone kept as `<name>.tart`, instant, sharing what didn't change with the image).
+   On macOS the shutdown is the Apple menu's, so apps quit as they would for a person, and one that asks first (RDM:
+   "Do you want to quit?") holds it up: the checkpoint is refused, the VM stays up, and the refusal names a screenshot
+   of what asks. Answer it (`app click`) and run the checkpoint again; `--force` powers off without letting apps quit
+   (the app then reports a crash on its next start). The VM starts from it from then on; `--resume` boots it again right away. Name it after the
    branch or ticket (`devex-610`; `devex-610-2` for a later one, which is built on the first). The note is for the
    VMs that start from it: never secrets.
 3. Other VMs: `vmt init <vm dir> <worktree> --product <p> --checkpoint <name>`, then use them as usual. Each is its

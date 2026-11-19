@@ -19,17 +19,19 @@
 #                                        key|scroll|stop | app record start [<min>]|stop | app caption <text> [<s>]
 #                                        (shot and caption take --highlight x,y,w,h[,label]... [--no-dim];
 #                                        caption --say <speech> narrates)
-#                                        | run '<powershell>' | info
+#                                        | run '<command>' (PowerShell; bash on macOS) | info
 #   vmt apply <vm dir> <folder> [<guest folder>]   puts a setup folder in the VM (scripts/apply.sh); the guest folder
 #                                        defaults to C:\factory\setup\<folder name>
 #   vmt env|alive|show <vm dir>          vmctl.sh's: export lines, running?, open the screen on this Mac
 #   vmt down <vm dir> [--keep-disk]      power off and free the slot
 #   vmt rm <vm dir>...                   deletes VM folders whose VM is down (screenshots, videos, logs, a kept disk);
 #                                        refused while one runs or a command holds it. Not the worktree, not a checkpoint
-#   vmt checkpoint <vm dir> <name> [--note <text>] [--resume]
+#   vmt checkpoint <vm dir> <name> [--note <text>] [--resume] [--force]
 #                                        shuts the VM down cleanly and freezes its disk (sign-ins, setup, data; not the
 #                                        worktree) as checkpoint <name>; the VM starts from it from then on, and other
-#                                        VMs can (init --checkpoint). --resume boots it again right away
+#                                        VMs can (init --checkpoint). --resume boots it again right away. A macOS app
+#                                        that holds the shutdown up (a question before it quits) leaves the VM running,
+#                                        with a screenshot: answer it and retry, or --force (apps don't get to quit)
 #   vmt checkpoint list | show <name> | rm <name>...
 #                                        the checkpoints, their size and users; delete them (refused while in use).
 #                                        Nothing deletes a checkpoint but rm (lib/checkpoints.sh)
@@ -149,10 +151,12 @@ case "$cmd" in
     load_product "$(product "$d" "$P")" "$TGT" || exit 2
     if [ -n "$CK" ]; then
       ck_name_ok "$CK" || die "bad checkpoint name '$CK'"
-      c=$(home_of "${GUEST_OS:-$PLATFORM}")/checkpoints/$CK.qcow2
-      [ -f "$c" ] || die "no checkpoint '$CK' for $PLATFORM (vmt checkpoint list)"
+      # A qcow2 checkpoint, or a tart one (macOS): checkpoints/<name>.tart
+      h=$(home_of "${GUEST_OS:-$PLATFORM}") c=""
+      for e in qcow2 tart; do [ -f "$h/checkpoints/$CK.$e" ] && c=$h/checkpoints/$CK.$e; done
+      [ -n "$c" ] || die "no checkpoint '$CK' for $PLATFORM (vmt checkpoint list)"
       [ "$(ck_field "$c" PRODUCT)" = "$P" ] || die "checkpoint '$CK' is of product $(ck_field "$c" PRODUCT), not $P"
-      VM_IMAGE=checkpoints/$CK.qcow2
+      VM_IMAGE=checkpoints/$(basename "$c")
     fi
     # A new session on the folder: the last one's screenshots go (guest.sh caps a folder's screenshots, APP_SHOT_CAP).
     mkdir -p "$D/app" && rm -f "$D"/app/shot-*.png "$D/app.running"
@@ -274,17 +278,18 @@ except ValueError: print("")' "$1"; }
         D=${1:-} N=${2:-}
         [ -n "$D" ] && [ -n "$N" ] || usage
         shift 2
-        note="" resume=no
+        note="" resume=no force=no
         while [ $# -gt 0 ]; do
           case "$1" in
             --note) note=${2:-}; shift ;;
             --resume) resume=yes ;;
+            --force) force=yes ;;
             *) usage ;;
           esac
           shift
         done
         vm_conf "$D"
-        ck_take "$(cd "$D" && pwd)" "$N" "$note" "$resume" ;;
+        ck_take "$(cd "$D" && pwd)" "$N" "$note" "$resume" "$force" ;;
     esac ;;
   root) echo "$VM_ROOT" ;;
   voice) exec "$X/vm/voice.sh" "$@" ;;
