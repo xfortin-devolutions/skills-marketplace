@@ -3,7 +3,9 @@
 # folder that has a tart/ home with tart). It starts from Cirrus Labs' vanilla image (macOS, SSH on, user admin with
 # passwordless sudo and auto-login, no Xcode or Homebrew) and is made leaner for VMs that only run an app the Mac built:
 # no Spotlight indexing, no software update checks or downloads, no sleep or screen saver, a bare desktop (no windows
-# restored at login, no widgets), SSH by key only (the VMs' key in <VM root>/macos/id_ed25519).
+# restored at login, no widgets), SSH by key only (the VMs' key in <VM root>/macos/id_ed25519). It also carries
+# Cirrus's guest agent (its clipboard part only, --run-vdagent), installed but never started: vmctl.sh show starts it,
+# so only a VM a person opens shares this Mac's clipboard.
 #   macos-setup.sh [--image <OCI ref>] [--clean | --update]
 # --image: another macOS (default ghcr.io/cirruslabs/macos-tahoe-vanilla:latest; never newer than this Mac's macOS).
 # --clean: delete the existing base first. VMs already cloned from it keep running (APFS clones are independent).
@@ -15,6 +17,9 @@ VMT_DIR=$(cd "$X/../../.." && pwd)
 . "$VMT_DIR/scripts/lib/config.sh"
 VM_HOME=${VM_HOME:-$VM_ROOT/macos}
 IMAGE=ghcr.io/cirruslabs/macos-tahoe-vanilla:latest CLEAN=no UPDATE=no
+# The guest agent (FSL-1.1, as tart): a pinned release and its checksum, from openai/tart-guest-agent's checksums file
+AGENT_VERSION=0.15.0
+AGENT_SHA256=eb47f402f18e742a8ea96344115ca776179f9c4c67494bc0c46a10a68db280b7
 while [ $# -gt 0 ]; do
   case "$1" in
     --image) IMAGE=${2:-}; shift ;;
@@ -30,6 +35,17 @@ command -v tart > /dev/null || die "tart missing: brew install openai/tools/tart
 mkdir -p "$TART_HOME"
 KEY=$VM_HOME/id_ed25519
 [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -C vmt-macos -f "$KEY" || die "ssh-keygen failed"
+# The guest agent, downloaded once into installers/ and checked
+AGENT_TGZ=$VM_HOME/installers/tart-guest-agent-$AGENT_VERSION-darwin-all.tar.gz
+if [ ! -f "$AGENT_TGZ" ] || [ "$(shasum -a 256 "$AGENT_TGZ" | cut -d' ' -f1)" != "$AGENT_SHA256" ]; then
+  mkdir -p "$VM_HOME/installers"
+  curl -fsSL -o "$AGENT_TGZ.part" \
+    "https://github.com/openai/tart-guest-agent/releases/download/v$AGENT_VERSION/tart-guest-agent-darwin-all.tar.gz" \
+    || die "could not download the guest agent"
+  [ "$(shasum -a 256 "$AGENT_TGZ.part" | cut -d' ' -f1)" = "$AGENT_SHA256" ] \
+    || { rm -f "$AGENT_TGZ.part"; die "the guest agent download does not match its checksum"; }
+  mv "$AGENT_TGZ.part" "$AGENT_TGZ"
+fi
 
 if [ "$UPDATE" = yes ]; then
   [ -d "$TART_HOME/vms/base" ] || die "no base in $TART_HOME to update: build it first (no --update)"
@@ -104,6 +120,27 @@ sudo rm -rf /Library/Updates/* /Library/Caches/* ~/Library/Caches/* 2> /dev/null
 sw_vers
 df -h / | tail -1
 GUEST
+
+echo "== the guest agent (clipboard; started by vmctl.sh show only)"
+tar -xzOf "$AGENT_TGZ" tart-guest-agent \
+  | ssh -i "$KEY" -o UserKnownHostsFile="$known" -o BatchMode=yes "admin@$ip" \
+    'sudo mkdir -p /usr/local/bin /Library/vmt && sudo tee /usr/local/bin/tart-guest-agent > /dev/null && sudo chmod 755 /usr/local/bin/tart-guest-agent' \
+  || die "could not put the guest agent in the guest"
+# Outside /Library/LaunchAgents: nothing loads it at login
+ssh -i "$KEY" -o UserKnownHostsFile="$known" -o BatchMode=yes "admin@$ip" 'sudo tee /Library/vmt/tart-guest-agent.plist > /dev/null' <<'PLIST' \
+  || die "could not put the guest agent's launchd file in the guest"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.cirruslabs.tart-guest-agent</string>
+  <key>ProgramArguments</key><array><string>/usr/local/bin/tart-guest-agent</string><string>--run-vdagent</string></array>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/tart-guest-agent.log</string>
+  <key>StandardErrorPath</key><string>/tmp/tart-guest-agent.log</string>
+</dict>
+</plist>
+PLIST
 
 echo "== shutting it down"
 ssh -i "$KEY" -o UserKnownHostsFile="$known" -o BatchMode=yes "admin@$ip" 'sudo shutdown -h now' > /dev/null 2>&1
