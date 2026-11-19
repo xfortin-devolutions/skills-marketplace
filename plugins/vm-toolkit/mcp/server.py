@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
 VMT = os.environ.get("VMT_BIN") or os.path.join(HERE, "..", "skills", "vm", "scripts", "vmt")
 LOG_TAIL = 80
@@ -25,7 +25,7 @@ Start with vm_products on the repo or worktree, then vm_up the worktree (the VM 
 test in it with vm_build / vm_test (in the guest, or on the host for a target that cross-compiles when the host allows it; run no build yourself). vm_app_launch starts the built app in the
 guest's desktop; vm_screenshot, vm_click, vm_type, vm_key and vm_scroll drive it (vm_wait while it loads), and vm_record_start / vm_caption /
 vm_record_stop make a demo video of it. A macOS VM only runs what this host built: the worktree is at
-/Volumes/My Shared Files/wt ($R), vm_run takes bash, Command is cmd in vm_key, and it has no tests or checkpoints. Exit meanings: green (0), red (1,
+/Volumes/My Shared Files/wt ($R), vm_run takes bash, Command is cmd in vm_key, and it has no tests. Exit meanings: green (0), red (1,
 the change), harness error (3, the VM or the share, not the change: retry or say so). vm_down when done. A VM not
 started with keep powers off after some idle minutes; the next build, test or app command boots it again."""
 
@@ -269,6 +269,8 @@ def t_checkpoint(a):
         args += ["--note", a["note"]]
     if a.get("resume"):
         args.append("--resume")
+    if a.get("force"):
+        args.append("--force")
     rc, out = vmt(*args)
     return text(out, rc != 0)
 
@@ -389,7 +391,11 @@ TOOLS = {
                                       "branch's: devex-610 (devex-610-2 for a later one)."},
                        "note": {"type": "string", "description": "What was set up in it, for the VMs that start from it. "
                                 "Never secrets."},
-                       "resume": {"type": "boolean", "description": "Boot it again right away."}},
+                       "resume": {"type": "boolean", "description": "Boot it again right away."},
+                       "force": {"type": "boolean", "description": "macOS: power off even when an app holds the shutdown "
+                                 "up (it asks something before it quits; the refusal names a screenshot of it). The app "
+                                 "doesn't get to quit and may report a crash on its next start: answer it instead when "
+                                 "you can."}},
                       ["name", "checkpoint"], t_checkpoint),
     "vm_checkpoints": ("The checkpoints on this machine: size, age, product, branch and the VMs using them; with "
                        "checkpoint, one's details and its setup note.",

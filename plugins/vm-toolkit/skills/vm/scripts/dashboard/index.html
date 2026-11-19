@@ -298,7 +298,7 @@ function renderCheckpoints(byId) {
         <div class="sub">${esc(c.product)} · ${esc(c.os)}</div>${c.note ? `<div class="sub note" title="${esc(c.note)}">${esc(c.note)}</div>` : ""}
         <div>${c.broken ? `<span class="badge bad">broken: an image under it is gone</span>` : ""}${!c.worktree_ok ? `<span class="badge warn">worktree gone</span>` : ""}${ckOrphan(c) ? `<span class="badge warn">can go</span>` : ""}</div></td>
       <td class="hide-sm branch"><span class="mono">${esc(c.branch || "–")}</span></td>
-      <td class="num">${size(c.kb)}</td>
+      <td class="num">${c.clone ? "clone" : size(c.kb)}</td>
       <td class="num">${ago(c.created)}</td>
       <td>${blocked.map((b) => `<span class="badge run">${esc(b)}</span>`).join("")}${c.booting.length ? `<span class="badge">${c.booting.length} folder(s) start from it</span>` : ""}${!blocked.length && !c.booting.length ? `<span class="muted">nothing</span>` : ""}</td>
       <td><div class="actions"><button class="danger" data-ck="${esc(c.name)}" ${blocked.length ? `disabled title="in use by ${esc(blocked.join(", "))}"` : ""}>Delete</button></div></td>
@@ -308,7 +308,7 @@ function renderCheckpoints(byId) {
     const c = S.checkpoints.find((x) => x.name === b.dataset.ck);
     const extras = c.booting.length ? [{ label: `Also delete the ${c.booting.length} VM folder(s) that start from it (they can't boot without it):<br><span class="mono">${c.booting.map(esc).join("<br>")}</span>`, checked: true }] : [];
     const r = await confirmDelete(`<h3>Delete checkpoint ${esc(c.name)}?</h3>
-      <p>${size(c.kb)}: the sign-ins, setup and data frozen ${ago(c.created)} ago on ${esc(c.branch || "?")}. It can't be brought back; a VM that needs that state again has to redo it.</p>`, extras);
+      <p>${c.clone ? "A clone of the macOS image (only what changed takes room)" : size(c.kb)}: the sign-ins, setup and data frozen ${ago(c.created)} ago on ${esc(c.branch || "?")}. It can't be brought back; a VM that needs that state again has to redo it.</p>`, extras);
     if (!r) return;
     if (await act("ck-rm", [c.name], "Delete checkpoint " + c.name) && r.length)
       await act("rm", c.booting.filter((id) => byId[id] && !byId[id].running), `Delete ${c.booting.length} folder(s)`);

@@ -51,10 +51,10 @@ def qcow(path, backing=None):
     subprocess.run(cmd + ([] if backing else ["1M"]), check=True)
 
 
-def folder(root, rel, worktree, image="base.qcow2", pid=None):
+def folder(root, rel, worktree, image="base.qcow2", pid=None, os_name="windows"):
     d = os.path.join(root, rel)
     write(os.path.join(d, "guest.conf"),
-          f"WORKTREE={worktree}\nPRODUCT=rdm\nAPP_NAME=Acme\\ App\nVM_HOME={root}/windows\nVM_IMAGE={image}\n"
+          f"WORKTREE={worktree}\nPRODUCT=rdm\nAPP_NAME=Acme\\ App\nVM_HOME={root}/{os_name}\nVM_IMAGE={image}\n"
           f"VM_TITLE=t\\ {os.path.basename(d)}\n")
     os.makedirs(os.path.join(d, "vm"), exist_ok=True)
     if pid:
@@ -80,14 +80,24 @@ def main():
         write(os.path.join(home, "checkpoints", "ck-a.conf"), f"CREATED=1\nPRODUCT=rdm\nWORKTREE={wt}\nBRANCH=feat/a\n")
         qcow(os.path.join(home, "checkpoints", "ck-b.qcow2"), os.path.join(home, "base.qcow2"))
         write(os.path.join(home, "checkpoints", "ck-b.conf"), "CREATED=1\nPRODUCT=rdm\nWORKTREE=/nowhere\n")
-        # A sleeping child stands in for QEMU: its pid is alive.
+        # A macOS home (tart): its images are tart VM folders, a checkpoint a marker naming its VM, and no slots yet
+        mac = os.path.join(root, "macos")
+        write(os.path.join(mac, "tart", "vms", "base", "disk.img"), "x" * 4096)
+        write(os.path.join(mac, "tart", "vms", "ck-mac-a", "disk.img"), "x")
+        write(os.path.join(mac, "tart", "vms", "vmt-slot-1", "disk.img"), "x")
+        write(os.path.join(mac, "checkpoints", "mac-a.tart"), "ck-mac-a\n")
+        write(os.path.join(mac, "checkpoints", "mac-a.conf"), f"CREATED=1\nPRODUCT=rdm\nWORKTREE={wt}\n")
+        # A sleeping child stands in for QEMU (and tart): its pid is alive.
         qemu = subprocess.Popen(["sleep", "300"])
+        tart = subprocess.Popen(["sleep", "300"])
         try:
             run = folder(root, "mcp/dev", wt, "checkpoints/ck-a.qcow2", qemu.pid)
             qcow(os.path.join(run, "vm", "disk.qcow2"), os.path.join(home, "checkpoints", "ck-a.qcow2"))
             write(os.path.join(home, "slots", "1", "vm"), os.path.join(run, "vm"))
             folder(root, "mcp/qa", wt, "checkpoints/ck-b.qcow2")
             gone = folder(root, "office/old", "/nowhere", "checkpoints/ck-gone.qcow2")
+            folder(root, "mcp/mac-dev", wt, "checkpoints/mac-a.tart", tart.pid, os_name="macos")
+            folder(root, "mcp/mac-qa", wt, "base", os_name="macos")
             write(os.path.join(root, "mcp", "qa", "app", "video-1.mp4"), "0123456789")
             port = free_port()
             srv = subprocess.Popen([sys.executable, "-I", SERVER, "--vmt", fake, "--root", root, "--port", str(port)],
@@ -98,7 +108,8 @@ def main():
                 s = get(base + "/api/state")
                 f = {x["id"]: x for x in s["folders"]}
                 c = {x["name"]: x for x in s["checkpoints"]}
-                check("folders from every group, not the guest OS home", sorted(f), ["mcp/dev", "mcp/qa", "office/old"])
+                check("folders from every group, not the guest OS home", sorted(f),
+                      ["mcp/dev", "mcp/mac-dev", "mcp/mac-qa", "mcp/qa", "office/old"])
                 check("a running VM's slot", [(x["id"], x["alive"], x["managed"]) for x in s["slots"]], [("mcp/dev", True, True)])
                 check("a running folder is never stale", (f["mcp/dev"]["running"], f["mcp/dev"]["stale"]), (True, []))
                 check("a folder whose worktree and checkpoint are gone is stale",
@@ -108,7 +119,14 @@ def main():
                 check("a checkpoint a running VM starts from is in use", c["ck-a"]["running_users"], ["mcp/dev"])
                 check("a down folder that starts from a checkpoint", c["ck-b"]["booting"], ["mcp/qa"])
                 check("a checkpoint's worktree gone", (c["ck-a"]["worktree_ok"], c["ck-b"]["worktree_ok"]), (True, False))
-                check("the images", [i["name"] for i in s["images"]], ["base.qcow2"])
+                check("the images: a macOS home's tart VMs too, not a running VM's own clone",
+                      [(i["os"], i["name"], i["kind"]) for i in s["images"]],
+                      [("macos", "base", "golden image (tart)"), ("windows", "base.qcow2", "golden image")])
+                check("a macOS folder's image is there (a tart VM, not a file)",
+                      (f["mcp/mac-qa"]["image_ok"], f["mcp/mac-dev"]["image_ok"]), (True, True))
+                check("a macOS checkpoint: a clone, in use by the running VM started from it",
+                      (c["mac-a"]["clone"], c["mac-a"]["kb"], c["mac-a"]["running_users"], c["mac-a"]["broken"]),
+                      (True, 0, ["mcp/mac-dev"], False))
 
                 check("a post without the page's header is refused", post(base, {"op": "gc"}, header=False), 403)
                 post(base, {"op": "rm", "ids": ["office/old", "mcp/qa"]})
@@ -148,6 +166,7 @@ def main():
             check("vmt rm fails when it kept one", p.returncode, 1)
         finally:
             qemu.kill()
+            tart.kill()
 
     print("dashboard: all passed" if fails == 0 else f"dashboard: {fails} failed")
     sys.exit(1 if fails else 0)
