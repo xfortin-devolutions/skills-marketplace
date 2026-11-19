@@ -256,7 +256,17 @@ def state():
             })
         for img in sorted(glob.glob(os.path.join(h, "*.qcow2"))):
             images.append({"name": os.path.basename(img), "os": os.path.basename(h), "kb": blocks_kb(img),
-                           "readonly": not os.access(img, os.W_OK), "t": mtime(img)})
+                           "readonly": not os.access(img, os.W_OK), "t": mtime(img),
+                           "kind": "golden image" if img.endswith("/base.qcow2") else "product layer"})
+        # A tart guest (macOS): its images are tart VMs, which clones never write (APFS clones), so none is "writable".
+        # A running VM's own clone (vmt-slot-N) goes with it; a kept one (down --keep-disk) stays until deleted by hand.
+        for vm in sorted(glob.glob(os.path.join(h, "tart", "vms", "*", ""))):
+            n = os.path.basename(vm.rstrip("/"))
+            if n.startswith("vmt-slot-"):
+                continue
+            disk = os.path.join(vm, "disk.img")
+            images.append({"name": n, "os": os.path.basename(h), "kb": du_kb(vm.rstrip("/"), ttl=300), "readonly": True,
+                           "t": mtime(disk), "kind": "kept VM disk (tart)" if n.startswith("vmt-kept-") else "golden image (tart)"})
 
     runs = [{"os": os.path.basename(h), "count": len(glob.glob(os.path.join(h, "runs", "*"))),
              "kb": du_kb(os.path.join(h, "runs"), ttl=300)} for h in hs if os.path.isdir(os.path.join(h, "runs"))]
