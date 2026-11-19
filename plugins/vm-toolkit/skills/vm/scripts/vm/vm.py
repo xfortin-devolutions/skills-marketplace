@@ -12,7 +12,8 @@
   vm.py sleep SECONDS             pause (the shell's own sleep may be blocked)
 
 Which VM: QMP_SOCK, VM_SSH_PORT and VM_RUN_DIR (set by vmctl.sh env <run dir>); without them, a golden/start.sh
-VM (QMP socket in VM_HOME, port 2222).
+VM (QMP socket in VM_HOME, port 2222). A VM with no QMP (tart's macOS VMs: VM_VNC_PASS_FILE, VM_VNC_PORT and
+VM_SSH_HOST set by tartctl.sh env) is driven over its VNC server instead (vnc.py).
 """
 import json
 import os
@@ -24,6 +25,8 @@ import time
 VM_HOME = os.environ.get("VM_HOME") or os.environ.get("FACTORY_VM_HOME") or os.path.expanduser("~/VMs/factory/windows")
 SOCK = os.environ.get("QMP_SOCK") or os.path.join(VM_HOME, "qmp.sock")
 SSH_PORT = int(os.environ.get("VM_SSH_PORT") or 2222)
+SSH_HOST = os.environ.get("VM_SSH_HOST") or "127.0.0.1"
+VNC_PASS_FILE = os.environ.get("VM_VNC_PASS_FILE")
 # Per VM, never next to this script: the skill folder is versioned (and read-only once installed as a plugin).
 SIZE_CACHE = os.path.join(os.environ.get("VM_RUN_DIR") or VM_HOME, ".screen-size")
 # While record.py records: its start time and the events file captions and clicks go to.
@@ -56,6 +59,14 @@ class Qmp:
 
     def events(self, evs):
         self.cmd("input-send-event", {"events": evs})
+
+
+def connect():
+    """The VM's control channel: QMP, or the VNC server of a VM that has no QMP (vnc.py answers the same commands)."""
+    if VNC_PASS_FILE:
+        import vnc
+        return vnc.Vnc(int(os.environ["VM_VNC_PORT"]), open(VNC_PASS_FILE).read().strip())
+    return Qmp()
 
 
 def png_size(path):
@@ -163,7 +174,7 @@ def wait_ssh(timeout):
     start = time.time()
     while time.time() - start < timeout:
         try:
-            with socket.create_connection(("127.0.0.1", SSH_PORT), timeout=3) as s:
+            with socket.create_connection((SSH_HOST, SSH_PORT), timeout=3) as s:
                 s.settimeout(5)
                 if s.recv(64).startswith(b"SSH-"):
                     print(f"sshd up after {time.time() - start:.0f}s")
@@ -185,7 +196,7 @@ def main():
         return 0
     if op == "wait-ssh":
         return wait_ssh(float(a[0]) if a else 300)
-    q = Qmp()
+    q = connect()
     if op == "qmp":
         print(json.dumps(q.cmd(a[0], json.loads(a[1]) if len(a) > 1 else None)))
         return 0

@@ -39,6 +39,9 @@ product_for_path() {
   [ -n "$best" ] && echo "$best"
 }
 
+# image_present <guest OS folder> <image>: whether this machine has the image (a qcow2, or a tart VM: vmctl.sh)
+image_present() { [ -f "$1/$2" ] || [ -d "$1/tart/vms/$2" ]; }
+
 # load_product <product folder> [<target>]: sources product.sh, then the target's target.sh (the given one, else
 # PLATFORM, else the product's first), with TARGET_DIR set as target.sh expects. Sets PRODUCT_DIR, PLATFORM, TARGET_DIR,
 # the target's GUEST_*, HOST_BUILD and GOLDEN_IMAGE, and exports VM_IMAGE and VM_SHARE_CHECK for vmctl.sh.

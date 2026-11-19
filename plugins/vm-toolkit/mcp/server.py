@@ -15,16 +15,17 @@ import subprocess
 import sys
 import threading
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 VMT = os.environ.get("VMT_BIN") or os.path.join(HERE, "..", "skills", "vm", "scripts", "vmt")
 LOG_TAIL = 80
 
-INSTRUCTIONS = """Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), on the machine this server runs on.
+INSTRUCTIONS = """Throwaway VMs of a product's target OS (Windows 11 ARM64 on QEMU; macOS on tart, the `macos` target), on the machine this server runs on.
 Start with vm_products on the repo or worktree, then vm_up the worktree (the VM shares it live as R:), and build and
 test in it with vm_build / vm_test (in the guest, or on the host for a target that cross-compiles when the host allows it; run no build yourself). vm_app_launch starts the built app in the
 guest's desktop; vm_screenshot, vm_click, vm_type, vm_key and vm_scroll drive it (vm_wait while it loads), and vm_record_start / vm_caption /
-vm_record_stop make a demo video of it. Exit meanings: green (0), red (1,
+vm_record_stop make a demo video of it. A macOS VM only runs what this host built: the worktree is at
+/Volumes/My Shared Files/wt ($R), vm_run takes bash, Command is cmd in vm_key, and it has no tests or checkpoints. Exit meanings: green (0), red (1,
 the change), harness error (3, the VM or the share, not the change: retry or say so). vm_down when done. A VM not
 started with keep powers off after some idle minutes; the next build, test or app command boots it again."""
 
@@ -302,7 +303,7 @@ TOOLS = {
               "Waits for a free VM slot. Returns the VM's name for the other tools.",
               {"worktree": {"type": "string", "description": "Absolute path of the worktree to share."},
                "product": {"type": "string", "description": "Needed when the repo has several (vm_products)."},
-               "target": {"type": "string", "description": "Guest target, default the product's first (windows)."},
+               "target": {"type": "string", "description": "Guest target, default the product's first (windows); macos for a macOS VM."},
                "name": {"type": "string", "description": "Default: from the worktree's folder name."},
                "keep": {"type": "boolean", "description": "Never power it off when idle (until vm_down)."},
                "from_checkpoint": {"type": "string", "description": "Start from this checkpoint (vm_checkpoints) instead "
@@ -318,9 +319,9 @@ TOOLS = {
                  "filter": {"type": "string", "description": "Test filter (dotnet test --filter syntax)."},
                  "no_build": {"type": "boolean", "description": "Run what the last build left."}},
                 ["name", "project"], t_test),
-    "vm_run": ("Run one PowerShell command in the guest (logs, settings, files), 5 minutes at most. The worktree is R:; "
-               "a command that names R: takes ~15 s more (the share is mapped for it). Not while recording: do setup "
-               "before vm_record_start.",
+    "vm_run": ("Run one command in the guest (logs, settings, files), 5 minutes at most. Windows: PowerShell, the "
+               "worktree is R:, and a command that names R: takes ~15 s more (the share is mapped for it). macOS: bash, "
+               "the worktree is \"$R\". Not while recording: do setup before vm_record_start.",
                {"name": NAME, "powershell": {"type": "string"}}, ["name", "powershell"], t_run),
     "vm_app_launch": ("(Re)start the built app in the guest's desktop session with the product's launch script. The "
                       "window can take a while to show: take screenshots until it does.",

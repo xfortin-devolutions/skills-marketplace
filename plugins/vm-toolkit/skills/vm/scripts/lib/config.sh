@@ -6,6 +6,8 @@ VM_ROOT=${VM_ROOT:-} VM_CPUS=8 VM_MEM=16G VM_MAX=2 VM_SLOT_WAIT_MIN=120 VM_IDLE_
 VM_XRES=1600 VM_YRES=900 GUEST_BUILD_MIN=30 APP_SHOT_CAP=200 VM_RECORD_MAX_MIN=10
 # The narration voice (vmt voice setup): Kokoro's voice and its speed; af_heart, am_michael, bf_emma, bm_george...
 VM_VOICE=af_heart VM_VOICE_SPEED=1.0
+# macOS VMs (tart) only run what the Mac built: smaller than the Windows ones
+VM_MACOS_CPUS=4 VM_MACOS_MEM=8G
 # yes: a target that can build on the Mac (HOST_BUILD) builds there, and its VMs only test and run; a worktree the Mac
 # can't build (its HOST_BUILD --check says why: an RDM commit before the cross-compile fix, no .NET 10 SDK) still builds
 # in the guest. no: every build in the guest.
@@ -17,3 +19,4 @@ done
 # One golden image folder per guest OS under the root: <VM root>/<guest os>/base.qcow2 (and its layers).
 VM_ROOT=${VM_ROOT:-${FACTORY_VM_ROOT:-$HOME/VMs/factory}}
 export VM_ROOT VM_CPUS VM_MEM VM_MAX VM_SLOT_WAIT_MIN VM_IDLE_MIN VM_BOOT_MIN VM_XRES VM_YRES VM_RECORD_MAX_MIN VM_VOICE VM_VOICE_SPEED
+export VM_MACOS_CPUS VM_MACOS_MEM

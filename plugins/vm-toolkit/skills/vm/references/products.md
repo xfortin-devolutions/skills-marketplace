@@ -52,13 +52,16 @@ No build or test command lives here: that is the targets' job, in the guest.
 |---|---|---|
 | `GUEST_OS` | yes | the guest OS folder under the VM root (`windows`) |
 | `GUEST_DESC` | yes | the guest as agents are told about it (`Windows 11 ARM64 with IIS, …`) |
-| `GOLDEN_IMAGE` | no | the image clones start from: `base.qcow2` (default) or a layer this product builds (`<LAYER>.qcow2`) |
+| `GOLDEN_IMAGE` | no | the image clones start from: `base.qcow2` (default) or a layer this product builds (`<LAYER>.qcow2`); on a tart guest (macOS), a tart VM: `base` |
 | `SHARE_CHECK` | yes | a repo-relative file the shared worktree must contain (proves the right repo is shared) |
-| `GUEST_BUILD`, `GUEST_TEST`, `GUEST_LAUNCH` | yes | the three scripts, usually `$TARGET_DIR/build.ps1`, … |
+| `GUEST_LAUNCH` | yes | starts the app, usually `$TARGET_DIR/launch.ps1` (`launch.sh` on macOS) |
+| `GUEST_BUILD` | unless `HOST_BUILD` | builds in the guest, usually `$TARGET_DIR/build.ps1`. A target with only `HOST_BUILD` builds on the Mac or not at all (macOS: the guest has no SDK), and says why when the Mac can't |
+| `GUEST_TEST` | no | runs one test project in the guest, usually `$TARGET_DIR/test.ps1`; without it, `guest test` is a harness error (macOS: Mac code is tested on the Mac itself) |
 | `HOST_BUILD` | no | a bash script that builds what `build.ps1` builds, on the Mac (cross-compiled for the guest), usually `$TARGET_DIR/host-build.sh` |
 
 The scripts run in the guest with the worktree at `R:` (Windows), sent by `vmssh`, which runs in SSH's session 0 (no
-desktop). Callers run them through `scripts/guest.sh` (`vmt guest`, the MCP server's `vm_build`, `vm_test`,
+desktop). A macOS guest's scripts are bash, run as `admin` over SSH, with the worktree at `"$R"` (`/Volumes/My Shared
+Files/wt`); `open` from there starts an app in the signed-in desktop session. Callers run them through `scripts/guest.sh` (`vmt guest`, the MCP server's `vm_build`, `vm_test`,
 `vm_app_launch`), which sets their inputs and reads their verdict:
 
 | Script | Inputs | Must | Ends with |

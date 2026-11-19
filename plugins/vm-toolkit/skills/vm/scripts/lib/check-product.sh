@@ -37,9 +37,11 @@ for t in $TARGETS; do
     errs=0 warns=0
     TARGET_DIR=$TD GOLDEN_IMAGE="" GUEST_OS="" GUEST_DESC="" SHARE_CHECK="" GUEST_BUILD="" GUEST_TEST="" GUEST_LAUNCH="" HOST_BUILD=""
     . "$TD/target.sh"
-    for v in GUEST_OS GUEST_DESC SHARE_CHECK GUEST_BUILD GUEST_TEST GUEST_LAUNCH; do
+    for v in GUEST_OS GUEST_DESC SHARE_CHECK GUEST_LAUNCH; do
       eval "[ -n \"\$$v\" ]" || err "target $t: $v is empty"
     done
+    # A target that only builds on the Mac (a guest with no SDK: macOS) has no guest build; one may have no guest tests.
+    [ -n "$GUEST_BUILD" ] || [ -n "$HOST_BUILD" ] || err "target $t: GUEST_BUILD is empty, and there is no HOST_BUILD"
     [ -z "$SHARE_CHECK" ] || [ -e "$REPO/$SHARE_CHECK" ] || err "target $t: SHARE_CHECK $SHARE_CHECK is not in the repo"
     for pair in "GUEST_BUILD:BUILD EXIT CODE" "HOST_BUILD:BUILD EXIT CODE" "GUEST_TEST:TEST EXIT CODE" "GUEST_LAUNCH:LAUNCH OK"; do
       v=${pair%%:*} marker=${pair#*:}
@@ -57,6 +59,12 @@ for t in $TARGETS; do
     [ -f "$GUEST_TEST" ] && { has "$GUEST_TEST" '\$Project' && has "$GUEST_TEST" '\$Filter'; } \
       || { [ -f "$GUEST_TEST" ] && err "target $t: ${GUEST_TEST#$D/} must read \$Project and \$Filter"; }
     img=${GOLDEN_IMAGE:-base.qcow2}
+    if [ -d "$VM_ROOT/$GUEST_OS/tart" ] || [ "$GUEST_OS" = macos ]; then
+      # A tart guest (vmctl.sh): its image is a tart VM, and clones are independent copies (no freezing)
+      [ -d "$VM_ROOT/$GUEST_OS/tart/vms/$img" ] \
+        || warn "target $t: no tart VM $img in $VM_ROOT/$GUEST_OS/tart on this machine (vm-setup-macos.md)"
+      exit $(( errs > 0 ? 2 : (warns > 0 ? 1 : 0) ))
+    fi
     if [ ! -f "$VM_ROOT/$GUEST_OS/$img" ]; then
       warn "target $t: no $img in $VM_ROOT/$GUEST_OS on this machine (vm-setup.md for base.qcow2, vmt layer for a layer)"
     elif [ -w "$VM_ROOT/$GUEST_OS/$img" ]; then

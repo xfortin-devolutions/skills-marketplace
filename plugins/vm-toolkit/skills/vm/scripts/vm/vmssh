@@ -1,16 +1,28 @@
 #!/bin/bash
-# Runs PowerShell in the guest over SSH, with R: (the shared worktree) mapped first.
+# Runs PowerShell in the guest over SSH, with R: (the shared worktree) mapped first; in a macOS guest (VM_GUEST_SHELL=sh,
+# tartctl.sh env), bash, with the worktree at $R (macOS mounts the share itself).
 #   vmssh 'Get-Process'                         inline command
-#   vmssh - < script.ps1                        script from stdin, sent as -EncodedCommand (no quoting issues)
+#   vmssh - < script.ps1                        script from stdin, sent as -EncodedCommand (no quoting issues; bash: stdin)
 # Which VM: VM_SSH_PORT and VM_KNOWN_HOSTS (set by vmctl.sh env <run dir>) and VM_HOME (the golden image folder, which
 # holds the guest key; FACTORY_VM_HOME is read too); without them, a golden/start.sh VM on port 2222. VM_USER is the
 # guest account (default rdmtest, the one golden/install.sh creates). VM_NO_SHARE=1 skips mapping R: (~15 s a call) for
-# commands that don't use it.
+# commands that don't use it. VM_SSH_HOST: the guest's address when it isn't forwarded to 127.0.0.1 (tart's VMs).
 set -uo pipefail
 
 VM_HOME="${VM_HOME:-${FACTORY_VM_HOME:-$HOME/VMs/factory/windows}}"
 SSH=(ssh -i "$VM_HOME/id_ed25519" -p "${VM_SSH_PORT:-2222}" -o UserKnownHostsFile="${VM_KNOWN_HOSTS:-$VM_HOME/known_hosts}"
-     -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o LogLevel=ERROR -o ServerAliveInterval=30 "${VM_USER:-rdmtest}@127.0.0.1")
+     -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o LogLevel=ERROR -o ServerAliveInterval=30 "${VM_USER:-rdmtest}@${VM_SSH_HOST:-127.0.0.1}")
+
+if [ "${VM_GUEST_SHELL:-}" = sh ]; then
+    # The share is the folder tart mounts (tart run --dir), in every session: nothing to map.
+    PRELUDE="R='/Volumes/My Shared Files/${VM_SHARE_TAG:-wt}'; export R"
+    if [ "${1:-}" = "-" ]; then
+        { printf '%s\n' "$PRELUDE"; cat; } | "${SSH[@]}" 'bash -s' 2>&1
+    else
+        printf '%s\n%s\n' "$PRELUDE" "$*" | "${SSH[@]}" 'bash -s' 2>&1
+    fi
+    exit "${PIPESTATUS[1]}"
+fi
 
 # SSH sessions don't inherit the desktop's drive mappings, so every call maps R: itself. QEMU starts the host's smbd on
 # the guest's first connection, which can take seconds (longer with two VMs booting): retry for up to 60 s.

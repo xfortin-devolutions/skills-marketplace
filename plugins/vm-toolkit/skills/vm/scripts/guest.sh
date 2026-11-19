@@ -21,14 +21,16 @@
 #                                                       (vmt voice), returning just before the line ends
 #     <highlight>: --highlight x,y,width,height[,label] once per region, then --no-dim to keep the rest of the screen as
 #                  it is (vm/highlight.py)
-#   guest.sh <vm run dir> run '<powershell>'            one PowerShell command in the guest (logs, settings, files), 5 min;
-#                                                       R: is mapped only when the command names it
+#   guest.sh <vm run dir> run '<command>'               one command in the guest's shell (logs, settings, files), 5 min:
+#                                                       PowerShell (R: is mapped only when the command names it), or
+#                                                       bash in a macOS guest (the worktree is "$R")
 # Exit: 0 green, 1 the build or tests fail, 3 the harness failed (no exit code: time box, SSH, share; restore or SDK
 # errors), 2 usage. It prints the errors and the summary; the full log is <vm run dir>/build.log or test.log.
 # Where it builds: a target with a HOST_BUILD script builds on the Mac (cross-compiled for the guest), and the guest only
 # tests and runs what the Mac built: test builds the project on the Mac first, then runs the guest's test script with
 # $NoBuild (the guest never builds: its restore would rewrite obj/ with its own paths). Without one, it builds in the
-# guest. Tests and the app always run in the guest: the product ships there.
+# guest. Tests and the app always run in the guest: the product ships there. A target may have no guest build (it
+# only builds on the Mac: the macOS VM has no SDK) or no guest tests; guest.sh then says so (harness error).
 # <vm run dir>/guest.conf, written by run-loop.sh or vmt init, names the worktree and the target: WORKTREE, GUEST_BUILD,
 # HOST_BUILD, GUEST_TEST, GUEST_BUILD_MIN. bash 3.2 compatible.
 set -u
@@ -64,10 +66,16 @@ else
   eval "$env"
 fi
 
+# stop_share_ps: the guest command that ends everything running from the share
+stop_share_ps() {
+  if [ "${VM_GUEST_SHELL:-}" = sh ]; then echo 'pkill -f "^$R/" ; true'
+  else echo 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue'; fi
+}
+
 # app_stop: ends what runs from the share (the app the builder launched), which would lock the build's output
 app_stop() {
   [ -e "$D/app.running" ] || return 0
-  [ "$VM_UP" = yes ] && VM_NO_SHARE=1 "$X/vm/vmssh" 'Get-Process | Where-Object { $_.Path -like "R:\*" } | Stop-Process -Force -ErrorAction SilentlyContinue' > /dev/null 2>&1 < /dev/null
+  [ "$VM_UP" = yes ] && VM_NO_SHARE=1 "$X/vm/vmssh" "$(stop_share_ps)" > /dev/null 2>&1 < /dev/null
   rm -f "$D/app.running"
 }
 
@@ -104,6 +112,11 @@ report() {
     echo "HARNESS ERROR: no $2 EXIT CODE (time box, SSH or share): $(grep -v '^[[:space:]]*$' "$1" | tail -1)"
     exit 3
   fi
+  # A .NET for macOS SDK newer than the Mac's Xcode (the workload pins an Xcode version): the machine, not the change.
+  if [ "$code" != 0 ] && grep -qE 'requires Xcode [0-9.]+\. The current version of Xcode is' "$1"; then
+    echo "HARNESS ERROR: this Mac's Xcode doesn't match its .NET for macOS SDK: $(grep -oE 'requires Xcode [0-9.]+\. The current version of Xcode is [0-9.]+' "$1" | head -1)"
+    exit 3
+  fi
   # NuGet's restore task can fail with no NU code (an I/O error writing obj/ over the share): still not the change.
   if [ "$code" != 0 ] && grep -qE 'error (NU[0-9]|NETSDK|MSB4236)|NuGet\.[A-Za-z]*\.?targets\([0-9,]+\): error ' "$1"; then
     echo "HARNESS ERROR: restore or SDK failure in the guest"
@@ -122,6 +135,8 @@ case "$CMD" in
     app_stop
     # Ignored files only: in a run's worktree those are build outputs; tracked files and the hand-back stay.
     [ "$clean" = yes ] && git -C "$WORKTREE" clean -fdXq -- . ':!handback'
+    [ -n "$HOST_BUILD" ] || [ -n "${GUEST_BUILD:-}" ] \
+      || { echo "HARNESS ERROR: this target builds on the Mac only, and this Mac can't: $HOST_WHY"; exit 3; }
     [ -n "$HOST_WHY" ] && echo "building in the guest, not on the Mac: $HOST_WHY"
     if [ -n "$HOST_BUILD" ]; then host_run "$D/build.log" "$proj"
     else run "$D/build.log" "$GUEST_BUILD" "\$Project = $(ps_str "$proj")"; fi
@@ -130,6 +145,7 @@ case "$CMD" in
     nob='$false'
     [ "${1:-}" = --no-build ] && { nob='$true'; shift; }
     [ $# -ge 1 ] && [ $# -le 2 ] || usage
+    [ -n "${GUEST_TEST:-}" ] || { echo "HARNESS ERROR: this target runs no tests in the guest (its product definition has no test script)"; exit 3; }
     app_stop
     # Built on the Mac: the test project first (unless --no-build), and the guest runs what that left.
     if [ -n "$HOST_BUILD" ]; then
@@ -187,7 +203,7 @@ case "$CMD" in
             pid=$(cat "$VM_RUN_DIR/record.pid" 2> /dev/null) && kill -0 "$pid" 2> /dev/null \
               && { echo "already recording: app record stop first"; exit 1; }
             command -v ffmpeg > /dev/null || { echo "HARNESS ERROR: no ffmpeg on this Mac (brew install ffmpeg)"; exit 3; }
-            [ -S "$VM_RUN_DIR/rec.sock" ] \
+            [ -S "$VM_RUN_DIR/rec.sock" ] || [ -n "${VM_VNC_PASS_FILE:-}" ] \
               || { echo "HARNESS ERROR: this VM was started without the recorder's socket: vmt down and up again to record"; exit 3; }
             n=$(ls "$D/app" 2> /dev/null | sed -n 's/^video-\([0-9]*\)\.mp4$/\1/p' | sort -n | tail -1)
             n=$((${n:-0} + 1))
@@ -211,7 +227,11 @@ case "$CMD" in
     printf '%s' "$1" | grep -qE '(^|[^[:alnum:]_])[Rr]:' || export VM_NO_SHARE=1
     timebox 300 "$X/vm/vmssh" "$1" ;;
   info)
-    g=$("$X/vm/vmssh" '"guest: {0} {1} {2}; dotnet {3}" -f (Get-CimInstance Win32_OperatingSystem).Caption, [Environment]::OSVersion.Version, $env:PROCESSOR_ARCHITECTURE, (dotnet --version)') || exit
+    if [ "${VM_GUEST_SHELL:-}" = sh ]; then
+      g=$("$X/vm/vmssh" 'echo "guest: macOS $(sw_vers -productVersion) ($(sw_vers -buildVersion)) $(uname -m)"') || exit
+    else
+      g=$("$X/vm/vmssh" '"guest: {0} {1} {2}; dotnet {3}" -f (Get-CimInstance Win32_OperatingSystem).Caption, [Environment]::OSVersion.Version, $env:PROCESSOR_ARCHITECTURE, (dotnet --version)') || exit
+    fi
     [ -z "$HOST_BUILD" ] && { echo "$g"; exit 0; }
     echo "$g; built on the Mac: macOS $(sw_vers -productVersion 2> /dev/null) $(uname -m), dotnet $(dotnet --version 2> /dev/null)" ;;
   *) usage ;;

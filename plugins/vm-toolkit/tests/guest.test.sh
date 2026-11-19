@@ -133,4 +133,19 @@ G test Tests.csproj > /dev/null 2>&1
   || fail "declined test: $(cat "$FAKE_STATE/vmssh.log")"
 rm "$FAKE_STATE/host-declines"
 
+echo "a target that only builds on the Mac, in a macOS guest (no guest build or test scripts, bash)"
+sed -i '' -e "s|^GUEST_BUILD=.*|GUEST_BUILD=''|" -e "s|^GUEST_TEST=.*|GUEST_TEST=''|" "$T/vmrun/guest.conf"
+echo "export VM_GUEST_SHELL=sh" >> "$T/vmrun/vm.env"
+G build > "$T/out" 2>&1; [ $? -eq 0 ] && ok "it builds on the Mac" || fail "Mac-only build: $(cat "$T/out")"
+touch "$FAKE_STATE/host-declines"
+G build > "$T/out" 2>&1; [ $? -eq 3 ] && grep -q "builds on the Mac only, and this Mac can't: this commit predates the fix" "$T/out" \
+  && ok "a Mac that can't build it is a harness error, and says why" || fail "Mac-only declined: $(cat "$T/out")"
+rm "$FAKE_STATE/host-declines"
+G test Tests.csproj > "$T/out" 2>&1; [ $? -eq 3 ] && grep -q 'runs no tests in the guest' "$T/out" \
+  && ok "test without a guest test script is a harness error" || fail "no test script: $(cat "$T/out")"
+G app launch > /dev/null 2>&1; : > "$FAKE_STATE/vmssh.log"
+G app stop > /dev/null 2>&1
+grep -q 'pkill -f "^$R/"' "$FAKE_STATE/vmssh.log" && ! grep -q 'Stop-Process' "$FAKE_STATE/vmssh.log" \
+  && ok "app stop ends what runs from the share with bash" || fail "app stop in a macOS guest: $(cat "$FAKE_STATE/vmssh.log")"
+
 [ "$FAILS" -eq 0 ] && echo "guest.sh: all passed" || { echo "guest.sh: $FAILS failed"; exit 1; }
