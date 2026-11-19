@@ -19,7 +19,7 @@
 #                                        key|scroll|stop | app record start [<min>]|stop | app caption <text> [<s>]
 #                                        (shot and caption take --highlight x,y,w,h[,label]... [--no-dim];
 #                                        caption --say <speech> narrates)
-#                                        | run '<powershell>' | info
+#                                        | run '<command>' (PowerShell; bash on macOS) | info
 #   vmt apply <vm dir> <folder> [<guest folder>]   puts a setup folder in the VM (scripts/apply.sh); the guest folder
 #                                        defaults to C:\factory\setup\<folder name>
 #   vmt env|alive|show <vm dir>          vmctl.sh's: export lines, running?, open the screen on this Mac
