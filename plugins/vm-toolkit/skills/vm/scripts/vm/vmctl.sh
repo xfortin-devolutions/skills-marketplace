@@ -25,7 +25,8 @@
 # Virtualization.framework, its screen and input on that framework's VNC server (vnc.py drives it), the worktree
 # mounted at /Volumes/My Shared Files/wt, SSH on the VM's own address. Apple allows two macOS VMs at once on a Mac, and
 # the kernel enforces it: VM_MAX is at most 2 there. A checkpoint of one (freeze) is its clone renamed ck-<name>, with
-# a marker checkpoints/<name>.tart; VM_IMAGE=checkpoints/<name>.tart clones it instead of base.
+# a marker checkpoints/<name>.tart; VM_IMAGE=checkpoints/<name>.tart clones it instead of base. Its clipboard is shared
+# with this Mac's only once a person shows it (tart_clipboard).
 # bash 3.2 compatible.
 set -u
 
@@ -419,20 +420,37 @@ tart_freeze() {
   echo "frozen after ${i}s: $VM_HOME/$img (tart VM $ck)"
 }
 
+# tart_clipboard <vm dir>: share a macOS VM's clipboard with this Mac's, until the VM goes down. tart gives every VM the
+# SPICE agent port (Virtualization.framework syncs it with this Mac's pasteboard, both ways, whatever the viewer); the
+# golden image carries Cirrus's guest agent for it (golden/macos-setup.sh) but never starts it on its own: a VM only an
+# agent drives must not read what the person copies on the Mac. show starts it in the desktop session, not persistently,
+# so a checkpoint doesn't carry it either.
+tart_clipboard() {
+  local out
+  out=$( . "$1/vm.env"; "$X/vmssh" 'p=/Library/vmt/tart-guest-agent.plist; [ -f "$p" ] || { echo NO-AGENT; exit; }
+    u=$(id -u admin); launchctl print "gui/$u/org.cirruslabs.tart-guest-agent" > /dev/null 2>&1 && { echo RUNNING; exit; }
+    sudo launchctl bootstrap "gui/$u" "$p" && echo STARTED' 2>&1 )
+  case "$out" in
+    *RUNNING*|*STARTED*) echo "the clipboard is shared with this Mac's (both ways) while this VM runs" ;;
+    *NO-AGENT*) echo "vmctl: no shared clipboard: this macOS image predates its guest agent (golden/macos-setup.sh --update)" >&2; return 1 ;;
+    *) echo "vmctl: no shared clipboard: the guest agent did not start (${out##*$'\n'})" >&2; return 1 ;;
+  esac
+}
+
 show() {
   local d
   d=$(vmdir "${1:-}")
   alive "$d" || die "no VM running for ${1:-}"
   . "$d/vm.env"
+  # A macOS VM's clipboard goes through Virtualization.framework, not the viewer: Screen Sharing gets it too.
+  [ "$BACKEND" = tart ] && tart_clipboard "$d"
   # TigerVNC shares the clipboard with the guest (clipboard.sh); Screen Sharing can't: it has no extended clipboard.
   if [ "${VM_VIEWER:-}" != screensharing ] && [ -d "$TIGERVNC" ]; then
-    if [ "$BACKEND" = tart ]; then
-      echo "vmctl: no shared clipboard with a macOS VM yet" >&2
-    else
-      "$X/clipboard.sh" "$d" || echo "vmctl: opening the VM without a shared clipboard" >&2
-    fi
-    # TigerVNC's password file is the password DES-encrypted under VNC's fixed key (bits reversed, as VNC reads keys).
-    (umask 077; printf '%s' "$(cat "$d/vnc.pass")" | /usr/bin/openssl enc -des-ecb -nopad -K e84ad660c4721ae0 > "$d/vnc.tigervnc")
+    [ "$BACKEND" = tart ] || "$X/clipboard.sh" "$d" || echo "vmctl: opening the VM without a shared clipboard" >&2
+    # TigerVNC's password file is the password DES-encrypted under VNC's fixed key (bits reversed, as VNC reads keys):
+    # one 8-byte block, as VNC uses only the first 8 characters (QEMU's are 8; tart's are longer), padded with NULs.
+    (umask 077; printf '%s' "$(cat "$d/vnc.pass")" | head -c 8 | dd bs=8 count=1 conv=sync 2> /dev/null \
+      | /usr/bin/openssl enc -des-ecb -nopad -K e84ad660c4721ae0 > "$d/vnc.tigervnc")
     echo "TigerVNC: 127.0.0.1::$VM_VNC_PORT (password in $d/vnc.pass)$([ "$BACKEND" = qemu ] && echo "; the clipboard is shared both ways")"
     open -n -a "$TIGERVNC" --args PasswordFile="$d/vnc.tigervnc" "127.0.0.1::$VM_VNC_PORT"
     return

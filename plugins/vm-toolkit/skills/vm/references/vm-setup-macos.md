@@ -65,5 +65,12 @@ asks before quitting holds the shutdown up, and the checkpoint is refused with a
 still up. `shutdown -h now` would kill the apps instead: `--force` does that, when a crash report on the next start is
 acceptable.
 
-## Not yet
-The shared clipboard is Windows-only for now (GAPS.md).
+## Clipboard
+tart gives every VM Virtualization.framework's SPICE agent port, which syncs the guest's clipboard with this Mac's, both
+ways, whatever the viewer (Screen Sharing too). The guest end is Cirrus's guest agent (`tart-guest-agent`, FSL-1.1 like
+tart; only its clipboard part, `--run-vdagent`), which `macos-setup.sh` installs in the image (a pinned release,
+checksum checked) with its launchd file in `/Library/vmt/`, outside `LaunchAgents`, so nothing starts it at login.
+`vmt show` (`vm_show`) starts it in the desktop session: the clipboard is shared from then until the VM goes down.
+A VM that only agents drive never shares it, so nothing in it reads what the person copies on the Mac (a password,
+say). It isn't persistent: a reboot or a checkpoint doesn't carry it. An image built before 0.8.2 has no agent:
+`show` says so, and `macos-setup.sh --update` adds it.
