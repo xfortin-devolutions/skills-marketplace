@@ -9,7 +9,8 @@
                                       --say speaks SPEECH (the narration voice, below) from now, and returns just before it ends,
                                       so the next step lands on its last words
 
-The frames come from QEMU's second QMP socket (REC_SOCK, <run dir>/rec.sock): the first serves one client at a time,
+On a VM with no QMP (tart's macOS VMs) the frames come from its own connection to the VM's VNC server (vnc.py), and
+only what changed crosses it. Otherwise they come from QEMU's second QMP socket (REC_SOCK, <run dir>/rec.sock): the first serves one client at a time,
 so a recorder holding it would hold back every click and keystroke until it stopped. Each frame is a PPM screendump
 (about 8 ms; a PNG takes 200), piped to ffmpeg at a fixed rate and encoded as it comes by the Mac's hardware H.264
 encoder. While it runs, <run dir>/recording names the events file captions and vm.py's clicks go to; once it stops,
@@ -73,7 +74,7 @@ def record(out, max_s):
     signal.signal(signal.SIGINT, lambda *_: stop.append(1))
     vm.SOCK = os.environ.get("REC_SOCK") or os.path.join(RUN_DIR, "rec.sock")
     try:
-        q = vm.Qmp()
+        q = vm.connect()
     except OSError:
         say("this VM was started without the recorder's QMP socket: vmt down and up again to record")
         return 1

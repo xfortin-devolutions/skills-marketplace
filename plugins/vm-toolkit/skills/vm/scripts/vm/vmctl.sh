@@ -18,6 +18,11 @@
 # Sizing and limits come from the environment (lib/config.sh exports them; a caller like the factory may set its own);
 # VM_SHARE_CHECK, when set, is a file the shared worktree must contain (the target's sanity check); VM_TITLE names the
 # VM's window.
+# A guest OS folder holding a tart/ home (macOS: golden/macos-setup.sh) is driven by tart instead of QEMU: VM_IMAGE is
+# then a tart VM there (base, the golden one), each VM an APFS clone of it (instant, copy-on-write) run by tart with
+# Virtualization.framework, its screen and input on that framework's VNC server (vnc.py drives it), the worktree
+# mounted at /Volumes/My Shared Files/wt, SSH on the VM's own address. Apple allows two macOS VMs at once on a Mac, and
+# the kernel enforces it: VM_MAX is at most 2 there. No freeze (checkpoints) for them yet.
 # bash 3.2 compatible.
 set -u
 
@@ -34,9 +39,22 @@ VM_YRES=${VM_YRES:-900}
 VM_BOOT_MIN=${VM_BOOT_MIN:-10}
 VM_SLOT_WAIT_MIN=${VM_SLOT_WAIT_MIN:-120}
 TIGERVNC=${TIGERVNC:-/Applications/TigerVNC.app}
+BACKEND=qemu
+if [ -d "$VM_HOME/tart" ]; then
+  BACKEND=tart
+  [ "$VM_IMAGE" = base.qcow2 ] && VM_IMAGE=base
+  [ "$VM_MAX" -gt 2 ] && VM_MAX=2
+  # Smaller than a Windows VM: the Mac builds, and the guest only runs the app.
+  VM_CPUS=${VM_MACOS_CPUS:-4}
+  VM_MEM=${VM_MACOS_MEM:-8G}
+  # tart prunes its caches when the disk runs low, after a clone: never behind a run's back.
+  export TART_HOME=$VM_HOME/tart TART_NO_AUTO_PRUNE=1
+fi
 
 die() { echo "vmctl: $*" >&2; exit 1; }
 alive() { [ -f "$1/qemu.pid" ] && kill -0 "$(cat "$1/qemu.pid")" 2> /dev/null; }
+# tart_name <slot>: the tart VM a slot runs (one at a time: the slot is the lock)
+tart_name() { echo "vmt-slot-$1"; }
 # A layer boots with its own firmware variables: its maintenance boots must not change the base's.
 image_vars() { [ "$VM_IMAGE" = base.qcow2 ] && echo vars.base.fd || echo "${VM_IMAGE%.qcow2}.vars.fd"; }
 # vm_title <run dir>: the VM's name, which Screen Sharing shows as its window title. The caller says what the VM is for
@@ -50,6 +68,7 @@ vmdir() { [ -n "${1:-}" ] || die "missing <run dir>"; echo "$(cd "$1" 2> /dev/nu
 up() {
   local run=${1:-} wt=${2:-} d n port vnc pw smbd share rt
   [ -n "$run" ] && [ -n "$wt" ] || die "usage: vmctl.sh up <run dir> <worktree>"
+  [ "$BACKEND" = tart ] && { tart_up "$run" "$wt"; return; }
   command -v qemu-system-aarch64 > /dev/null || die "QEMU missing: brew install qemu"
   smbd="$(brew --prefix 2> /dev/null)/sbin/samba-dot-org-smbd"
   [ -x "$smbd" ] || die "the worktree share needs Samba: brew install samba"
@@ -72,20 +91,7 @@ up() {
   alive "$d" && die "a VM is already running for $run"
   share=$(cd "$wt" && pwd)
 
-  # A busy machine is a queue, not an error: wait for a slot (another run's VM going down) up to VM_SLOT_WAIT_MIN.
-  local waited=0
-  while :; do
-    n=1
-    while [ "$n" -le "$VM_MAX" ] && ! mkdir "$SLOTS/$n" 2> /dev/null; do n=$((n + 1)); done
-    [ "$n" -le "$VM_MAX" ] && break
-    [ "$waited" -ge $((VM_SLOT_WAIT_MIN * 60)) ] && die "all $VM_MAX VM slots stayed busy for $VM_SLOT_WAIT_MIN min (vmctl.sh list; vmctl.sh gc frees dead ones)"
-    [ "$waited" = 0 ] && echo "vmctl: all $VM_MAX VM slots are busy: waiting up to $VM_SLOT_WAIT_MIN min for one" >&2
-    sleep 10; waited=$((waited + 10))
-    gc > /dev/null
-  done
-  echo "$d" > "$SLOTS/$n/vm"
-  # Until QEMU runs, the slot looks dead: the marker keeps a parallel up's gc from deleting this VM's files mid-start.
-  touch "$SLOTS/$n/starting"
+  n=$(take_slot "$d") || exit 1
   port=$((2230 + n))
   vnc=$((20 + n))
   pw=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 8)
@@ -181,6 +187,76 @@ EOF
   VM_SSH_PORT=$port python3 "$X/vm.py" wait-ssh $((VM_BOOT_MIN * 60)) || die "guest SSH did not answer in $VM_BOOT_MIN min (VNC: vmctl.sh show $run)"
 }
 
+# take_slot <vm dir>: a free slot's number, marked starting. A busy machine is a queue, not an error: wait for a slot
+# (another run's VM going down) up to VM_SLOT_WAIT_MIN.
+take_slot() {
+  local n waited=0
+  while :; do
+    n=1
+    while [ "$n" -le "$VM_MAX" ] && ! mkdir "$SLOTS/$n" 2> /dev/null; do n=$((n + 1)); done
+    [ "$n" -le "$VM_MAX" ] && break
+    [ "$waited" -ge $((VM_SLOT_WAIT_MIN * 60)) ] && die "all $VM_MAX VM slots stayed busy for $VM_SLOT_WAIT_MIN min (vmctl.sh list; vmctl.sh gc frees dead ones)"
+    [ "$waited" = 0 ] && echo "vmctl: all $VM_MAX VM slots are busy: waiting up to $VM_SLOT_WAIT_MIN min for one" >&2
+    sleep 10; waited=$((waited + 10))
+    gc > /dev/null
+  done
+  echo "$1" > "$SLOTS/$n/vm"
+  # Until the VM runs, the slot looks dead: the marker keeps a parallel up's gc from deleting this VM's files mid-start.
+  touch "$SLOTS/$n/starting"
+  echo "$n"
+}
+
+# tart_up <run dir> <worktree>: up, for a macOS guest (see the header)
+tart_up() {
+  local run=$1 wt=$2 d n name share i url pw vport ip mem
+  command -v tart > /dev/null || die "tart missing: brew install openai/tools/tart"
+  [ -d "$TART_HOME/vms/$VM_IMAGE" ] || die "no tart VM $VM_IMAGE in $TART_HOME: build the golden image first (references/vm-setup-macos.md)"
+  [ -f "$VM_HOME/id_ed25519" ] || die "no $VM_HOME/id_ed25519: build the golden image first (references/vm-setup-macos.md)"
+  [ -z "${VM_SHARE_CHECK:-}" ] || [ -e "$wt/$VM_SHARE_CHECK" ] || die "$wt has no $VM_SHARE_CHECK"
+  mkdir -p "$run" "$SLOTS"
+  gc > /dev/null
+  d=$(vmdir "$run")
+  alive "$d" && die "a VM is already running for $run"
+  share=$(cd "$wt" && pwd)
+  mkdir -p "$d"
+  n=$(take_slot "$d") || exit 1
+  name=$(tart_name "$n")
+  rm -f "$d/known_hosts" "$d/.screen-size" "$d/qemu.pid"
+  tart delete "$name" > /dev/null 2>&1
+  case "$VM_MEM" in *G) mem=$((${VM_MEM%G} * 1024)) ;; *M) mem=${VM_MEM%M} ;; *) mem=$VM_MEM ;; esac
+  # px: at 72 ppi, one guest point is one screenshot pixel, as in the Windows VMs.
+  { tart clone "$VM_IMAGE" "$name" && tart set "$name" --cpu "$VM_CPUS" --memory "$mem" --display "${VM_XRES}x${VM_YRES}px"; } \
+    > "$d/tart.log" 2>&1 || { release_slot "$n" "$d"; die "tart clone failed: $(tail -2 "$d/tart.log")"; }
+  # tart is the VM's process: its pid is the VM's (alive, down), as QEMU's is.
+  nohup tart run --no-graphics --vnc-experimental --dir="wt:$share" "$name" >> "$d/tart.log" 2>&1 < /dev/null &
+  echo $! > "$d/qemu.pid"
+  url=""
+  for i in $(seq 1 120); do
+    url=$(sed -n 's|.*VNC server is running at \(vnc://[^ ]*\).*|\1|p' "$d/tart.log" | tail -1)
+    [ -n "$url" ] && break
+    alive "$d" || break
+    sleep 0.5
+  done
+  [ -n "$url" ] || { tart delete "$name" > /dev/null 2>&1; release_slot "$n" "$d"; die "tart did not start: $(tail -3 "$d/tart.log")"; }
+  rm -f "$SLOTS/$n/starting"
+  pw=$(echo "$url" | sed -n 's|vnc://:\([^@]*\)@.*|\1|p') vport=${url##*:}
+  (umask 077; echo "$pw" > "$d/vnc.pass")
+  ip=$(tart ip --wait $((VM_BOOT_MIN * 60)) "$name" 2> /dev/null) || die "the guest got no address in $VM_BOOT_MIN min (VNC: vmctl.sh show $run)"
+  cat > "$d/vm.env" <<EOF
+export VM_RUN_DIR='$d' VM_SSH_HOST=$ip VM_SSH_PORT=22 VM_USER=admin VM_KNOWN_HOSTS='$d/known_hosts' VM_GUEST_SHELL=sh
+export VM_SHARE_TAG=wt VM_VNC_PORT=$vport VM_VNC_PASS_FILE='$d/vnc.pass' VM_SLOT=$n VM_SHARE='$share' VM_HOME='$VM_HOME'
+export FACTORY_VM_HOME='$VM_HOME' VM_TART_NAME=$name
+EOF
+  echo "slot $n: SSH admin@$ip, VNC 127.0.0.1:$vport, sharing $share at /Volumes/My Shared Files/wt"
+  VM_SSH_HOST=$ip VM_SSH_PORT=22 python3 "$X/vm.py" wait-ssh $((VM_BOOT_MIN * 60)) || die "guest SSH did not answer in $VM_BOOT_MIN min (VNC: vmctl.sh show $run)"
+  # SSH answers while the screen still shows the boot progress: up returns once admin's desktop runs (Dock, Finder), so
+  # a launch or a screenshot right after it finds the desktop.
+  # shellcheck disable=SC2016
+  ( . "$d/vm.env"; "$X/vmssh" 'for i in $(seq 1 '$((VM_BOOT_MIN * 30))'); do pgrep -x Dock > /dev/null && pgrep -x Finder > /dev/null && sleep 3 && exit 0; sleep 2; done; exit 1' ) > /dev/null 2>&1 \
+    || die "the guest's desktop did not start in $VM_BOOT_MIN min (VNC: vmctl.sh show $run)"
+  echo "desktop up"
+}
+
 rmdir_slot() { rm -rf "${SLOTS:?}/$1" "$(smb_runtime "$1")"; }
 # smb_runtime <slot>: a short per-slot folder for Samba's sockets (see up).
 smb_runtime() { echo "/tmp/vmt-smb-$(id -u)-$1"; }
@@ -199,6 +275,24 @@ down() {
   d=$(vmdir "${1:-}")
   [ "${2:-}" = "--keep-disk" ] && keep=yes
   record_end "$d"
+  if [ "$BACKEND" = tart ]; then
+    s=$(slot_of "$d")
+    if alive "$d"; then
+      pid=$(cat "$d/qemu.pid")
+      # A disposable guest needs no clean shutdown.
+      kill "$pid" 2> /dev/null
+      for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2> /dev/null || break; sleep 1; done
+      kill -9 "$pid" 2> /dev/null
+    fi
+    if [ -n "$s" ]; then
+      if [ "$keep" = yes ]; then tart rename "$(tart_name "$s")" "vmt-kept-$(basename "$(dirname "$d")")" > /dev/null 2>&1
+      else tart delete "$(tart_name "$s")" > /dev/null 2>&1; fi
+      rmdir_slot "$s"
+    fi
+    rm -f "$d/qemu.pid"
+    echo "vm down: $d (disk $([ "$keep" = yes ] && echo "kept: tart VM vmt-kept-$(basename "$(dirname "$d")")" || echo deleted))"
+    return
+  fi
   if alive "$d"; then
     pid=$(cat "$d/qemu.pid")
     # A disposable guest needs no clean shutdown: quit right away.
@@ -245,6 +339,7 @@ freeze() {
   d=$(vmdir "${1:-}"); img=${2:-}
   [ -n "$img" ] || die "usage: vmctl.sh freeze <run dir> <image>"
   alive "$d" || die "no VM running for ${1:-}"
+  [ "$BACKEND" = tart ] && die "checkpoints of a macOS VM are not supported yet (GAPS.md)"
   [ -e "$VM_HOME/$img" ] && die "$VM_HOME/$img already exists"
   n=$(slot_of "$d"); pid=$(cat "$d/qemu.pid")
   # Once QEMU exits the slot looks dead, and any up's gc would delete the disk before it moves: mark it starting.
@@ -277,16 +372,20 @@ show() {
   . "$d/vm.env"
   # TigerVNC shares the clipboard with the guest (clipboard.sh); Screen Sharing can't: it has no extended clipboard.
   if [ "${VM_VIEWER:-}" != screensharing ] && [ -d "$TIGERVNC" ]; then
-    "$X/clipboard.sh" "$d" || echo "vmctl: opening the VM without a shared clipboard" >&2
+    if [ "$BACKEND" = tart ]; then
+      echo "vmctl: no shared clipboard with a macOS VM yet" >&2
+    else
+      "$X/clipboard.sh" "$d" || echo "vmctl: opening the VM without a shared clipboard" >&2
+    fi
     # TigerVNC's password file is the password DES-encrypted under VNC's fixed key (bits reversed, as VNC reads keys).
     (umask 077; printf '%s' "$(cat "$d/vnc.pass")" | /usr/bin/openssl enc -des-ecb -nopad -K e84ad660c4721ae0 > "$d/vnc.tigervnc")
-    echo "TigerVNC: 127.0.0.1::$VM_VNC_PORT (password in $d/vnc.pass); the clipboard is shared both ways"
+    echo "TigerVNC: 127.0.0.1::$VM_VNC_PORT (password in $d/vnc.pass)$([ "$BACKEND" = qemu ] && echo "; the clipboard is shared both ways")"
     open -n -a "$TIGERVNC" --args PasswordFile="$d/vnc.tigervnc" "127.0.0.1::$VM_VNC_PORT"
     return
   fi
   echo "Screen Sharing: vnc://127.0.0.1:$VM_VNC_PORT (password in $d/vnc.pass)"
   [ "${VM_VIEWER:-}" = screensharing ] \
-    || echo "vmctl: no shared clipboard in Screen Sharing; for one: brew install --cask tigervnc-viewer" >&2
+    || [ "$BACKEND" = tart ] || echo "vmctl: no shared clipboard in Screen Sharing; for one: brew install --cask tigervnc-viewer" >&2
   open "vnc://:$(cat "$d/vnc.pass")@127.0.0.1:$VM_VNC_PORT"
 }
 
@@ -297,7 +396,7 @@ list() {
     d=$(cat "$s/vm")
     if alive "$d"; then
       . "$d/vm.env"
-      echo "slot $(basename "$s"): running  ssh $VM_SSH_PORT  vnc $VM_VNC_PORT  share $VM_SHARE  ($d)"
+      echo "slot $(basename "$s"): running  ssh ${VM_SSH_HOST:+$VM_SSH_HOST:}$VM_SSH_PORT  vnc $VM_VNC_PORT  share $VM_SHARE  ($d)"
     else
       echo "slot $(basename "$s"): dead  ($d)  -> vmctl.sh gc"
     fi

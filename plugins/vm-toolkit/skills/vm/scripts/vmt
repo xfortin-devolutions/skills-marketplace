@@ -85,8 +85,7 @@ case "$cmd" in
         echo "$p: $APP_NAME; code: $CODE_PATHS"
         for t in $TARGETS; do
           ( load_product "$d/$p" "$t" > /dev/null 2>&1 || exit 0
-            img=$(home_of "${GUEST_OS:-$t}")/$GOLDEN_IMAGE
-            echo "  target $t: $GUEST_DESC, image $GOLDEN_IMAGE ($([ -f "$img" ] || echo "not ")on this machine)$([ -n "${HOST_BUILD:-}" ] \
+            echo "  target $t: $GUEST_DESC, image $GOLDEN_IMAGE ($(image_present "$(home_of "${GUEST_OS:-$t}")" "$GOLDEN_IMAGE" || echo "not ")on this machine)$([ -n "${HOST_BUILD:-}" ] \
               && echo "; can build on the Mac ($([ "$VM_HOST_BUILD" = yes ] && echo "on: VM_HOST_BUILD=yes" || echo "off: VM_HOST_BUILD=no"))")" )
         done
       )

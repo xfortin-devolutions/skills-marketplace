@@ -1,6 +1,6 @@
 ---
 name: vm
-description: "[EXPERIMENTAL] Throwaway QEMU VMs of a product's target OS (Windows 11 ARM64 today), run from a Mac: build and test a repo's worktree inside a VM that shares it live (or build it on the Mac when the product cross-compiles, and only test and run it in the VM), launch the built app in the guest's desktop, take screenshots and drive it with mouse and keyboard, record a demo video with captions, apply test data, and open the VM's screen for a person (TigerVNC with a shared clipboard, else Screen Sharing). Products (RDM, Devolutions Console, …) are defined per repo: the repo's .vm/ folder, else a definition bundled with this skill. Also the one-time golden image, product VM layers (IIS, SQL Server, DVLS…), and setting up a new product. Use when the user says 'test this branch on Windows', 'build it in a VM', 'show me the app in the VM', 'set up the VM image', 'build the console layer', 'add a product to the VMs', or when an agent needs a real target OS to check a change. The same tools are an MCP server (vm_up, vm_build, vm_screenshot, …) for agents in other harnesses. The factory skill runs its loop on these VMs."
+description: "[EXPERIMENTAL] Throwaway VMs of a product's target OS (Windows 11 ARM64 on QEMU, macOS on tart), run from a Mac: build and test a repo's worktree inside a VM that shares it live (or build it on the Mac when the product cross-compiles, and only test and run it in the VM), launch the built app in the guest's desktop, take screenshots and drive it with mouse and keyboard, record a demo video with captions, apply test data, and open the VM's screen for a person (TigerVNC with a shared clipboard, else Screen Sharing). Products (RDM, Devolutions Console, …) are defined per repo: the repo's .vm/ folder, else a definition bundled with this skill. Also the one-time golden image, product VM layers (IIS, SQL Server, DVLS…), and setting up a new product. Use when the user says 'test this branch on Windows', 'test it on macOS', 'set up the macOS VM', 'build it in a VM', 'show me the app in the VM', 'set up the VM image', 'build the console layer', 'add a product to the VMs', or when an agent needs a real target OS to check a change. The same tools are an MCP server (vm_up, vm_build, vm_screenshot, …) for agents in other harnesses. The factory skill runs its loop on these VMs."
 ---
 
 # VM toolkit
@@ -13,6 +13,12 @@ and runs what the Mac built (`guest test` builds the test project on the Mac fir
 RDM commit before its cross-compile fix, no .NET 10 SDK) builds in the guest, and says why; `VM_HOST_BUILD=no` in
 `~/.vm-toolkit/config.sh` builds everything in the guest.
 Never run `dotnet` yourself for a target: `guest build` builds it where the target and the machine say.
+
+**macOS guests** (a product's `macos` target, e.g. `vmt init … --product rdm --target macos`) are tart VMs, not QEMU: each
+an instant APFS clone of a lean macOS image with no SDK. The Mac always builds; the guest only runs the app, from the
+worktree at `/Volumes/My Shared Files/wt` (`$R` in a guest command). `guest run` takes bash there, `app key` names
+Command `cmd` (`cmd-q`), at most two macOS VMs run at once (Apple's licence), and there are no checkpoints or shared
+clipboard yet. Setup: [references/vm-setup-macos.md](references/vm-setup-macos.md).
 
 `V=<skill dir>/scripts`, where `<skill dir>` is this skill's base directory (an absolute path: installed as a plugin,
 apart from any repo). Run `vmt` from inside the repo, or pass `--repo <path>` first.
@@ -28,6 +34,7 @@ Windows). Contract: [references/products.md](references/products.md).
 | "test / build this branch in a VM", "does it build on Windows" | **use a VM** below |
 | "show me the VM", "let me see the app" | `bash $V/vmt show <vm dir>` (TigerVNC with the clipboard shared both ways, else Screen Sharing; this Mac only) |
 | "set up the VMs", no image yet (`vmt products` says "not on this machine") | **setup** |
+| "set up the macOS VM", a `macos` target with no image | walk the user through [references/vm-setup-macos.md](references/vm-setup-macos.md) |
 | "build / update the console layer" | **layer** |
 | "add DVLS to the VMs", a path with no product (`vmt which` says "no product") | **new product** |
 | "what VMs are running", a slot stuck | `bash $V/vmt list`, `bash $V/vmt gc` (frees dead VMs' slots) |
@@ -51,7 +58,8 @@ Windows). Contract: [references/products.md](references/products.md).
    The summary prints the errors and the log's path (`<vm dir>/build.log`, `test.log`).
 4. The app: `vmt guest <vm dir> app launch`, then `app wait <s>`, `app shot` (prints the PNG's path: read it),
    `app click <x> <y> [right|double]`, `app type <text>`, `app key ctrl-n tab ret`, `app scroll <x> <y> <n>`,
-   `app stop`. Coordinates are screenshot pixels. One PowerShell command in the guest: `vmt guest <vm dir> run '<ps>'`.
+   `app stop`. Coordinates are screenshot pixels. One command in the guest: `vmt guest <vm dir> run '<command>'`
+   (PowerShell on Windows, bash on macOS).
    To show a person something (a bug, a change, a step): `app shot --highlight <x>,<y>,<w>,<h>[,<label>]` (once per
    region; `--no-dim` keeps the rest of the screen bright) also prints `highlighted <path>`, a copy with each region
    outlined a few pixels outside it (never over what it shows) and the rest dimmed; the plain shot is kept.
@@ -141,7 +149,7 @@ scripts on a VM (**use a VM**). The `rdm` and `console` definitions in `projects
 
 | What | Where |
 |---|---|
-| Golden image, layers, guest SSH key, installers | `<VM root>/<os>/` (`vmt root`; default `~/VMs/factory`) |
+| Golden image, layers, guest SSH key, installers | `<VM root>/<os>/` (`vmt root`; default `~/VMs/factory`); macOS: tart's home `<VM root>/macos/tart` |
 | A VM's clone disk, logs, screenshots, videos, settings (`guest.conf`) | its VM folder (`<VM root>/mcp/<name>/` for the MCP server's) |
 | Machine settings: VM root, CPUs, RAM, slots, idle minutes, `VM_HOST_BUILD` | `~/.vm-toolkit/config.sh` (`~/.factory/config.sh` is read first, for older setups) |
 | Product definitions | the repo's `.vm/`, else `projects/<project>/` in this skill |

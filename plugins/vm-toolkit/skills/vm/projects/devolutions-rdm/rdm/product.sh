@@ -2,7 +2,7 @@
 # references/products.md; `vmt check rdm`.
 
 APP_NAME="Remote Desktop Manager (RDM)"
-# Guest targets under targets/<name>/; the first is the default. macOS and Linux come later.
-TARGETS="windows"
+# Guest targets under targets/<name>/; the first is the default. Linux comes later.
+TARGETS="windows macos"
 # Where its code is (repo paths, space-separated): `vmt which <path>` picks the product from these.
 CODE_PATHS="RDM/"

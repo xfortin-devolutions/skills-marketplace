@@ -382,7 +382,7 @@ function renderImages() {
   if (!S.images.length) { $("#images").innerHTML = `<div class="empty">No golden image yet (references/vm-setup.md).</div>`; return; }
   const runs = S.factory_runs.filter((r) => r.count);
   $("#images").innerHTML = `<div class="scroll"><table><tr><th>Image</th><th class="num">Size</th><th class="num">Built</th></tr>` +
-    S.images.map((i) => `<tr><td><div class="name">${esc(i.name)}</div><div class="sub">${esc(i.os)}${i.name === "base.qcow2" ? " · golden image" : " · product layer"}${i.readonly ? "" : ` <span class="badge bad">writable: chmod a-w it</span>`}</div></td>
+    S.images.map((i) => `<tr><td><div class="name">${esc(i.name)}</div><div class="sub">${esc(i.os)} · ${esc(i.kind || (i.name === "base.qcow2" ? "golden image" : "product layer"))}${i.readonly ? "" : ` <span class="badge bad">writable: chmod a-w it</span>`}</div></td>
       <td class="num">${size(i.kb)}</td><td class="num">${ago(i.t)}</td></tr>`).join("") + `</table></div>` +
     (runs.length ? `<div class="foot">${runs.map((r) => `${esc(r.os)}/runs: ${r.count} factory run folder(s), ${size(r.kb)}: the factory's own (factory clean &lt;KEY&gt;)`).join("<br>")}</div>` : "");
 }

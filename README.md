@@ -20,8 +20,8 @@ Restart Claude Code. The repository is private: you need read access to it.
 
 ### vm-toolkit (0.x, experimental)
 
-The `vm` skill and an MCP server (`vm`): throwaway QEMU VMs of the OS a product ships on, cloned per use from a read-only
-golden image, sharing a worktree live as `R:`. Build and test in the guest, launch the app in its desktop, take
+The `vm` skill and an MCP server (`vm`): throwaway VMs of the OS a product ships on (Windows on QEMU, macOS on tart),
+cloned per use from a golden image, sharing a worktree live (`R:` on Windows). Build and test in the guest, launch the app in its desktop, take
 screenshots and drive it, apply test data, open it in Screen Sharing. `vmt dashboard` shows what the VMs keep on the
 Mac (running VMs, checkpoints, VM folders, images) and cleans it up from a browser. The factory runs its loop on it; any agent can use
 it too (the MCP server for other harnesses, e.g. a FleetView agent).
@@ -29,10 +29,11 @@ it too (the MCP server for other harnesses, e.g. a FleetView agent).
 - **Product definitions:** what each product is and how its VM builds, tests and launches it (`product.sh`,
   `targets/<os>/` scripts, optional VM layer): the repo's `.vm/`, else bundled in
   [`skills/vm/projects/`](plugins/vm-toolkit/skills/vm/projects/), picked by the repo's `origin`. Today: Devolutions/RDM
-  (RDM and Devolutions Console, on Windows). Contract:
+  (RDM on Windows and macOS, Devolutions Console on Windows). Contract:
   [references/products.md](plugins/vm-toolkit/skills/vm/references/products.md).
 - **Per machine:** `~/.vm-toolkit/config.sh` (VM root, CPUs, RAM, slots, building on the Mac) and the golden VM image
-  ([references/vm-setup.md](plugins/vm-toolkit/skills/vm/references/vm-setup.md)).
+  ([references/vm-setup.md](plugins/vm-toolkit/skills/vm/references/vm-setup.md); macOS:
+  [references/vm-setup-macos.md](plugins/vm-toolkit/skills/vm/references/vm-setup-macos.md)).
 - [GAPS.md](plugins/vm-toolkit/GAPS.md): what the VMs still lack.
 
 ### factory-toolkit (0.x, experimental)
