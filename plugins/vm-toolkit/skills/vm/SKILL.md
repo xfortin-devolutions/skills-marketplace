@@ -59,7 +59,7 @@ Windows). Contract: [references/products.md](references/products.md).
    The summary prints the errors and the log's path (`<vm dir>/build.log`, `test.log`).
 4. The app: `vmt guest <vm dir> app launch`, then `app wait <s>`, `app shot` (prints the PNG's path: read it),
    `app click <x> <y> [right|double]`, `app type <text>`, `app key ctrl-n tab ret`, `app scroll <x> <y> <n>`,
-   `app stop`. Coordinates are screenshot pixels. One command in the guest: `vmt guest <vm dir> run '<command>'`
+   `app drag <x1> <y1> <x2> <y2>` (press, move, drop: a tree's drag and drop), `app stop`. Coordinates are screenshot pixels. One command in the guest: `vmt guest <vm dir> run '<command>'`
    (PowerShell on Windows, bash on macOS).
    To show a person something (a bug, a change, a step): `app shot --highlight <x>,<y>,<w>,<h>[,<label>]` (once per
    region; `--no-dim` keeps the rest of the screen bright) also prints `highlighted <path>`, a copy with each region
@@ -74,13 +74,14 @@ Windows). Contract: [references/products.md](references/products.md).
    as a person demoing would say it, not the caption read out: first person, contractions, one or two short
    sentences per step ("Let's go with the fastest one, and just hit Connect."); commas and an ellipsis are pauses;
    spell out what isn't said as written ("R-D-M"). Narrate every step or none, usually with `''` as the caption. While
-   it speaks nothing is cut; the wait after a line, until the next step, is cut to a beat; the pointer glides to each
-   click. The voice is Kokoro's once `vmt voice setup` installed it (once, ~350 MB, needs `brew install uv`; `vmt voice
+   it speaks nothing is cut; a still screen after a line is cut to a beat; the pointer glides to each click. The voice is Kokoro's once `vmt voice setup` installed it (once, ~350 MB, needs `brew install uv`; `vmt voice
    try '<text>'` plays one; `VM_VOICE` in `~/.vm-toolkit/config.sh` picks it), else macOS's `say`, much more robotic.
    Set the scenario up before `start` (`run`, `apply`, `app
    launch`); while it records, only the app's input, `wait`, `shot` and `caption`, one at a time, and wait with `app
    wait <s>` then one `shot` (not repeated shots: each is an image to read), never `run 'Start-Sleep'`: a `run` is several seconds of still screen (~15 more when it names `R:`). A still screen over 3 s
-   is cut (`VM_RECORD_STILL_S`, 0 keeps it). A recording ends at its limit or with the VM; `stop` then
+   is cut (`VM_RECORD_STILL_S`, 0 keeps it), never what changes the screen; to show a hang, where nothing happening is
+   the point, `caption '<text>' --keep` keeps every second of it while that caption shows (say how long it waits). A
+   recording ends at its limit or with the VM; `stop` then
    still reports it. Needs ffmpeg (`brew install ffmpeg`) and a VM started by 0.3.0 or later (else down and up).
 6. Test data or a resource the app reads at startup: `vmt apply <vm dir> <folder> [<guest folder>]` before launching
    (copies it, runs its `check.ps1`, then `apply.ps1`, with `$Dir` set).
@@ -119,7 +120,7 @@ checkpoints exist.
 
 The plugin declares an MCP server, `vm` (`mcp/server.py`, Python standard library only), with the same jobs as tools:
 `vm_products`, `vm_up` (`from_checkpoint`), `vm_build`, `vm_test`, `vm_run`, `vm_app_launch`, `vm_app_stop`,
-`vm_wait`, `vm_screenshot` (returns the image and its path; `highlight` regions to point at), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_record_start`,
+`vm_wait`, `vm_screenshot` (returns the image and its path; `highlight` regions to point at), `vm_click`, `vm_type`, `vm_key`, `vm_scroll`, `vm_drag`, `vm_record_start`,
 `vm_caption` (and its `highlight` and `say`), `vm_record_stop` (a demo video's path), `vm_apply`, `vm_show`,
 `vm_checkpoint`, `vm_checkpoints` (list, or one's note), `vm_list`, `vm_down`; none deletes a checkpoint. A named VM's
 folder is `<VM root>/mcp/<name>`. Claude Code gets it with the plugin; another harness (Codex, Cursor, a FleetView agent

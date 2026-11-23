@@ -4,6 +4,7 @@
   vm.py shot OUT.png              screenshot (PNG)
   vm.py click X Y [right|double]  click at screenshot pixel X,Y
   vm.py move X Y
+  vm.py drag X1 Y1 X2 Y2          press at X1,Y1, move to X2,Y2 as a hand would, release (a tree's drag and drop)
   vm.py type TEXT                 type text (US layout)
   vm.py key COMBO [COMBO...]      e.g. ctrl-n  ret  esc  tab  alt-f4  meta_l
   vm.py scroll X Y N              wheel at X,Y; N>0 down, N<0 up
@@ -34,6 +35,7 @@ RECORDING = os.path.join(os.environ.get("VM_RUN_DIR") or VM_HOME, "recording")
 # Where the pointer was last put, so a recorded click glides there from it.
 CURSOR = os.path.join(os.environ.get("VM_RUN_DIR") or VM_HOME, ".cursor")
 GLIDE_S = 0.5
+DRAG_S = 0.8  # a drag's move, start to drop
 
 
 class Qmp:
@@ -106,6 +108,16 @@ def abs_events(q, x, y):
             {"type": "abs", "data": {"axis": "y", "value": ay}}]
 
 
+def path(q, x0, y0, x, y, seconds, steps=24):
+    """The pointer from (x0, y0) to (x, y) in seconds, eased: starts and lands slowly."""
+    for i in range(1, steps):
+        f = i / steps
+        f = f * f * (3 - 2 * f)  # smoothstep
+        q.events(abs_events(q, round(x0 + (x - x0) * f), round(y0 + (y - y0) * f)))
+        pause(seconds / steps)
+    q.events(abs_events(q, x, y))
+
+
 def glide(q, x, y):
     """Move the pointer to (x, y): while recording, along an eased path from where it was, as a hand would (a pointer
     that jumps reads as a robot in a demo); else at once."""
@@ -114,13 +126,7 @@ def glide(q, x, y):
     except (OSError, ValueError):
         x0, y0 = x, y
     if os.path.exists(RECORDING) and (x0, y0) != (x, y):
-        steps = 24
-        for i in range(1, steps):
-            f = i / steps
-            f = f * f * (3 - 2 * f)  # smoothstep: starts and lands slowly
-            q.events(abs_events(q, round(x0 + (x - x0) * f), round(y0 + (y - y0) * f)))
-            pause(GLIDE_S / steps)
-        q.events(abs_events(q, x, y))
+        path(q, x0, y0, x, y, GLIDE_S)
         pause(0.15)  # the beat before the click
     else:
         q.events(abs_events(q, x, y))
@@ -222,6 +228,23 @@ def main():
                 pause(0.05)
                 q.events([btn(button, False)])
                 pause(0.08)
+    elif op == "drag":
+        if len(a) != 4:
+            print(__doc__)
+            return 1
+        x1, y1, x2, y2 = (int(v) for v in a)
+        add_event({"input": "drag"})
+        glide(q, x1, y1)
+        pause(0.08)
+        add_event({"click": [x1, y1]})
+        q.events([btn("left", True)])
+        pause(0.3)  # held a moment before moving, or many lists take it for a click
+        path(q, x1, y1, x2, y2, DRAG_S, steps=30)
+        pause(0.5)  # over the target long enough for it to show it accepts the drop
+        add_event({"click": [x2, y2]})
+        q.events([btn("left", False)])
+        with open(CURSOR, "w") as fh:
+            fh.write(f"{x2} {y2}")
     elif op == "scroll":
         x, y, n = int(a[0]), int(a[1]), int(a[2])
         add_event({"input": "scroll"})

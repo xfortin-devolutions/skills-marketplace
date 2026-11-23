@@ -157,6 +157,12 @@ def main():
               f"guest {d} app caption Its edge is cut --highlight 10,20,300,40,Save, clipped" in calls, True)
         check("vm_caption passes say as --say", f"guest {d} app caption  --say So, let's hit Connect." in calls, True)
 
+        session(("vm_caption", {"name": "my-worktree", "text": "Frozen: waiting 20 s", "keep": True}),
+                ("vm_drag", {"name": "my-worktree", "from_x": 445, "from_y": 355, "to_x": 428, "to_y": 378}))
+        calls = open(log).read().splitlines()
+        check("vm_caption passes keep as --keep", f"guest {d} app caption Frozen: waiting 20 s --keep" in calls, True)
+        check("vm_drag maps to app drag from, to", f"guest {d} app drag 445 355 428 378" in calls, True)
+
         open(os.path.join(root, "red"), "w").close()
         r = session(("vm_build", {"name": "my-worktree"}))
         res = r[1]["result"]

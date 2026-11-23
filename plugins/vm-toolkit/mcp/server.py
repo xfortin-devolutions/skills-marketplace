@@ -23,7 +23,7 @@ LOG_TAIL = 80
 INSTRUCTIONS = """Throwaway VMs of a product's target OS (Windows 11 ARM64 on QEMU; macOS on tart, the `macos` target), on the machine this server runs on.
 Start with vm_products on the repo or worktree, then vm_up the worktree (the VM shares it live as R:), and build and
 test in it with vm_build / vm_test (in the guest, or on the host for a target that cross-compiles when the host allows it; run no build yourself). vm_app_launch starts the built app in the
-guest's desktop; vm_screenshot, vm_click, vm_type, vm_key and vm_scroll drive it (vm_wait while it loads), and vm_record_start / vm_caption /
+guest's desktop; vm_screenshot, vm_click, vm_type, vm_key, vm_scroll and vm_drag drive it (vm_wait while it loads), and vm_record_start / vm_caption /
 vm_record_stop make a demo video of it. A macOS VM only runs what this host built: the worktree is at
 /Volumes/My Shared Files/wt ($R), vm_run takes bash, Command is cmd in vm_key, and it has no tests. Exit meanings: green (0), red (1,
 the change), harness error (3, the VM or the share, not the change: retry or say so). vm_down when done. A VM not
@@ -212,6 +212,12 @@ def t_scroll(a):
     return text(out or "scrolled", rc != 0)
 
 
+def t_drag(a):
+    rc, out = vmt("guest", existing(a["name"]), "app", "drag",
+                  *(str(int(a[k])) for k in ("from_x", "from_y", "to_x", "to_y")))
+    return text(out or "dragged", rc != 0)
+
+
 def t_record_start(a):
     args = ["guest", existing(a["name"]), "app", "record", "start"]
     if a.get("max_minutes"):
@@ -231,6 +237,8 @@ def t_caption(a):
         args.append(str(a["seconds"]))
     if a.get("say", "").strip():
         args += ["--say", a["say"]]
+    if a.get("keep"):
+        args.append("--keep")
     rc, out = vmt(*args, *highlight_args(a))
     return text(out, rc != 0)
 
@@ -345,12 +353,18 @@ TOOLS = {
     "vm_scroll": ("Scroll the wheel at a screenshot pixel; amount > 0 scrolls down, < 0 up.",
                   {"name": NAME, "x": {"type": "integer"}, "y": {"type": "integer"}, "amount": {"type": "integer"}},
                   ["name", "x", "y", "amount"], t_scroll),
+    "vm_drag": ("Drag with the left button, from one screenshot pixel to another (a tree's drag and drop, a splitter): "
+                "press, move as a hand would, hold over the target a moment, release.",
+                {"name": NAME, "from_x": {"type": "integer"}, "from_y": {"type": "integer"},
+                 "to_x": {"type": "integer"}, "to_y": {"type": "integer"}},
+                ["name", "from_x", "from_y", "to_x", "to_y"], t_drag),
     "vm_record_start": ("Start recording the guest's screen as an MP4 (15 fps) for a demo: drive the app as usual meanwhile; "
                         "vm_click's clicks are circled in it. Stops by itself after max_minutes; vm_down ends it too. "
                         "Explain on screen with vm_caption. Set the scenario up first (vm_run, vm_apply, vm_app_launch): "
-                        "while it records use only vm_click, vm_type, vm_key, vm_scroll, vm_wait, vm_screenshot and vm_caption, "
+                        "while it records use only vm_click, vm_type, vm_key, vm_scroll, vm_drag, vm_wait, vm_screenshot and vm_caption, "
                         "one call at a time (a call made alongside another waits for it); wait for the app with vm_wait "
-                        "then one vm_screenshot, not vm_run Start-Sleep or repeated screenshots. A still screen over 3 s is cut from the video. If it goes wrong, "
+                        "then one vm_screenshot, not vm_run Start-Sleep or repeated screenshots. A still screen over 3 s is cut from the video "
+                        "(never speech, nor anything that changes the screen; vm_caption's keep shows a hang uncut). If it goes wrong, "
                         "vm_record_stop, fix it, and record again from the start.",
                         {"name": NAME, "max_minutes": {"type": "integer", "description": "1-60, default 10."}},
                         ["name"], t_record_start),
@@ -368,7 +382,11 @@ TOOLS = {
                             "not the caption read out (\"Let's go with the fastest one, and just hit Connect.\"): first "
                             "person, contractions, one or two short sentences per step; commas and an ellipsis are "
                             "pauses; spell out what is not said as written (\"R-D-M\"). Narrate every step or none: "
-                            "a narrated video usually takes an empty text (no caption)."}},
+                            "a narrated video usually takes an empty text (no caption)."},
+                    "keep": {"type": "boolean", "description":
+                             "Keep every second of a still screen while this caption shows (until the next caption, or "
+                             "its seconds), instead of cutting it: for a hang or a wait that is what the video shows. "
+                             "Say in the caption how long it waits."}},
                    ["name", "text"], t_caption),
     "vm_record_stop": ("Stop the recording and return the MP4's path on this machine (takes a few seconds: the captions and "
                        "clicks are laid over it then). Also reports a recording that ended by itself.",

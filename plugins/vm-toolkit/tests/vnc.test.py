@@ -48,7 +48,21 @@ class FakeServer:
         self.port = self.ls.getsockname()[1]
         self.events = []
         self.updates = []
+        self.hold = False  # True: a request for what changed waits, as on a still screen, until change()
+        self.waiting = None
         threading.Thread(target=self.serve, daemon=True).start()
+
+    @staticmethod
+    def frame(c):
+        px = bytearray(W * H * 4)
+        px[(1 * W + 1) * 4:(1 * W + 1) * 4 + 3] = b"\x00\x00\xff"  # red, as B G R
+        c.sendall(struct.pack(">BxH", 0, 1) + struct.pack(">HHHHi", 0, 0, W, H, 0) + bytes(px))
+
+    def change(self):
+        """The screen changes: the request waiting for it is answered."""
+        self.hold, c, self.waiting = False, self.waiting, None
+        if c:
+            self.frame(c)
 
     def serve(self):
         while True:
@@ -81,9 +95,10 @@ class FakeServer:
                 elif t == 3:
                     inc, x, y, w, h = struct.unpack(">BHHHH", read(c, 9))
                     self.updates.append(inc)
-                    px = bytearray(W * H * 4)
-                    px[(1 * W + 1) * 4:(1 * W + 1) * 4 + 3] = b"\x00\x00\xff"  # red, as B G R
-                    c.sendall(struct.pack(">BxH", 0, 1) + struct.pack(">HHHHi", 0, 0, W, H, 0) + bytes(px))
+                    if inc and self.hold:
+                        self.waiting = c
+                    else:
+                        self.frame(c)
                 elif t == 4:
                     down, sym = struct.unpack(">BxxI", read(c, 7))
                     self.events.append(("key", down, sym))
@@ -108,6 +123,13 @@ ppm = open(png + ".ppm", "rb").read()
 check(ppm.startswith(b"P6\n8 4\n255\n") and ppm[-W * H * 3:][(W + 1) * 3:(W + 1) * 3 + 3] == b"\xff\x00\x00",
       "screendump writes a PPM in RGB, from the server's own pixel format")
 check(srv.updates == [0, 1], "the first update asks for the whole screen, later ones for what changed")
+srv.hold = True
+t = time.monotonic()
+check(v.update(0.2) is False and 0.15 < time.monotonic() - t < 1, "a still screen: no answer within the wait is False")
+check(v.update(0) is False and srv.updates == [0, 1, 1], "the request stays pending: the next wait sends no other")
+srv.change()
+check(v.update(1) is True and srv.updates == [0, 1, 1], "the screen changes: the pending request's answer is True")
+check(v.update(1) is True and srv.updates == [0, 1, 1, 1], "then a new request")
 try:
     vnc.Vnc(srv.port, "wrong")
     check(False, "a wrong password fails")
@@ -144,6 +166,12 @@ syms = [e[2] for e in srv.events if e[1] == 1]
 check(syms == [0xffe1, ord("a"), 0xffe1, ord("1")], f"typing shifts capitals and symbols: {syms}")
 vmpy("scroll", "4", "2", "-2")
 check([e[1] for e in srv.events] == [0, 8, 0, 8, 0], f"scroll up is wheel button 4: {srv.events}")
+vmpy("drag", "1", "1", "6", "3")
+masks = [e[1] for e in srv.events]
+held = [e[2:] for e in srv.events if e[1] == 1]
+check(srv.events[0] == ("ptr", 0, 1, 1) and masks[-1] == 0 and srv.events[-1][2:] == (6, 3)
+      and held[0] == (1, 1) and held[-1] == (6, 3) and len(held) > 3,
+      f"a drag presses at its start, moves held down, and releases at its end: {srv.events}")
 
 print("vnc: all passed" if not FAILS else f"vnc: {len(FAILS)} failed")
 sys.exit(1 if FAILS else 0)

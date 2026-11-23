@@ -4,9 +4,11 @@ are Virtualization.framework's own VNC server (tart run --vnc-experimental, on 1
 Vnc(port, password) answers the few QMP commands vm.py and record.py send: screendump (PNG or PPM) and
 input-send-event (QMP's abs, btn and key events, with QEMU's key names). Standard library only.
 """
+import select
 import socket
 import struct
 import subprocess
+import time
 import zlib
 
 # QEMU qcodes (vm.py's key names) to X11 keysyms, which RFB sends.
@@ -75,7 +77,7 @@ class Vnc:
         self.fb = bytearray(self.w * self.h * 4)
         self.mask = 0
         self.x = self.y = 0
-        self.full = False
+        self.full = self.pending = False
 
     def read(self, n):
         buf = bytearray()
@@ -92,10 +94,17 @@ class Vnc:
     def u32(self):
         return struct.unpack(">I", self.read(4))[0]
 
-    def update(self):
-        """Bring the framebuffer up to date: the whole screen the first time, then what changed."""
-        self.s.sendall(struct.pack(">BBHHHH", 3, 1 if self.full else 0, 0, 0, self.w, self.h))
+    def update(self, wait=None):
+        """Bring the framebuffer up to date: the whole screen the first time, then what changed. The server answers a
+        request for what changed only once something does: with wait (seconds), False when nothing did by then (the
+        request stays pending, and the next call waits on it), else True."""
+        if not self.pending:
+            self.s.sendall(struct.pack(">BBHHHH", 3, 1 if self.full else 0, 0, 0, self.w, self.h))
+            self.pending = True
+        end = None if wait is None else time.monotonic() + wait
         while True:
+            if end is not None and not select.select([self.s], [], [], max(end - time.monotonic(), 0))[0]:
+                return False
             t = self.u8()
             if t == 0:
                 self.read(1)
@@ -114,8 +123,8 @@ class Vnc:
                     else:
                         raise RuntimeError(f"VNC: unexpected encoding {enc}")
                 if not resized:
-                    self.full = True
-                    return
+                    self.full, self.pending = True, False
+                    return True
                 # A new size: the whole screen again
                 self.full = False
                 self.s.sendall(struct.pack(">BBHHHH", 3, 0, 0, 0, self.w, self.h))

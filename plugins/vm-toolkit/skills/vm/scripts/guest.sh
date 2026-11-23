@@ -8,17 +8,19 @@
 #   guest.sh <vm run dir> info                          the guest's OS and SDK versions, and the Mac's when it builds
 #                                                       there (for a verification record)
 #   guest.sh <vm run dir> app launch | wait <s> | shot [<highlight>] | click <x> <y> [right|double] | type <text> |
-#                         key <combo>... | scroll <x> <y> <n> | stop   the builder's app, at any point while it works (not
-#                                                       QA): launch (re)starts the build in the desktop session, shot saves
-#                                                       a screenshot under <vm run dir>/app/ and prints its path (and the
-#                                                       highlighted copy's, after "highlighted"); build and test stop a
-#                                                       launched app first (it locks bin/)
+#                         key <combo>... | scroll <x> <y> <n> | drag <x1> <y1> <x2> <y2> | stop   the builder's app, at
+#                                                       any point while it works (not QA): launch (re)starts the build
+#                                                       in the desktop session, shot saves a screenshot under
+#                                                       <vm run dir>/app/ and prints its path (and the highlighted
+#                                                       copy's, after "highlighted"); build and test stop a launched app
+#                                                       first (it locks bin/)
 #   guest.sh <vm run dir> app record start [<min>] | stop | caption <text> [<s>] [<highlight>]   a video of the screen
 #                                                       (vm/record.py): start records <vm run dir>/app/video-N.mp4 until
 #                                                       stop (at most <min>, default VM_RECORD_MAX_MIN), clicks circled;
 #                                                       caption shows text on it, and its highlight, until the next one
 #                                                       (or for <s> seconds; "" clears); --say <speech> narrates it
-#                                                       (vmt voice), returning just before the line ends
+#                                                       (vmt voice), returning just before the line ends; --keep keeps
+#                                                       a still screen uncut while it shows (a hang being shown)
 #     <highlight>: --highlight x,y,width,height[,label] once per region, then --no-dim to keep the rest of the screen as
 #                  it is (vm/highlight.py)
 #   guest.sh <vm run dir> run '<command>'               one command in the guest's shell (logs, settings, files), 5 min:
@@ -36,7 +38,7 @@
 set -u
 X=$(cd "$(dirname "$0")" && pwd)
 . "$X/lib/timebox.sh"
-usage() { sed -n '3,25p' "$0" >&2; exit 2; }
+usage() { sed -n '3,28p' "$0" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 D=$1 CMD=$2
 shift 2
@@ -191,7 +193,7 @@ case "$CMD" in
         [ ${#regions[@]} -eq 0 ] && exit 0
         p=$(python3 "$X/vm/highlight.py" "$D/app/shot-$n.png" "$D/app/highlight-$n.png" "${regions[@]}") || exit
         echo "highlighted $p" ;;
-      click|type|key|scroll)
+      click|type|key|scroll|drag)
         [ $# -ge 1 ] || usage
         python3 "$X/vm/vm.py" "$sub" "$@" ;;
       stop) : > "$D/app.running"; app_stop; echo "stopped" ;;
