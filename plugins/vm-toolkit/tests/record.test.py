@@ -71,5 +71,84 @@ with tempfile.TemporaryDirectory() as run:
     check("silent before the line's time", "max_volume: -91" in vol, True)
     check("the clip is removed once on the video", os.path.exists(ev["audio"]), False)
 
+# Pace: what the video keeps, on frames of 2000 samples (LOOSE: 10 of them) and a clock in seconds.
+SAMPLES = 2000
+BASE = bytes(record.STRIDE * SAMPLES)
+
+
+def frame(*changed):
+    b = bytearray(BASE)
+    for i in changed:
+        b[i * record.STRIDE] = 1
+    return bytes(b)
+
+
+class Run:
+    """Frames and events fed to a Pace at 15 fps, from t; cut() tells which moments it cut."""
+
+    def __init__(self, still_s=3.0):
+        self.pace, self.evs, self.t = record.Pace(0.0, still_s), [], 0.0
+
+    def event(self, **ev):
+        self.evs.append(dict(ev, t=self.t))
+
+    def feed(self, seconds, frames):
+        """Feed for seconds, frames(i) the i-th; the moments cut, as (time, cut) pairs."""
+        out, i = [], 0
+        end = self.t + seconds
+        while self.t < end - 1e-9:
+            out.append((round(self.t, 3), self.pace.cut(self.t, frames(i), len(self.evs), lambda: list(self.evs))))
+            self.t += 1 / 15
+            i += 1
+        return out
+
+
+def first_cut(moments):
+    return next((t for t, c in moments if c), None)
+
+
+still = frame()
+r = Run()
+m = r.feed(5, lambda i: still)
+check("a still screen is kept 3 s, then cut", 3.0 < first_cut(m) < 3.3, True)
+check("and cut from then on", all(c for t, c in m if t > 3.3), True)
+check("a change ends the cut, on its own frame", r.feed(0.1, lambda i: frame(*range(20)))[0][1], False)
+r = Run()
+m = r.feed(6, lambda i: frame(1, 2) if i % 7 < 3 else still)
+check("a blinking caret (under 5 samples) is a still screen", 3.0 < first_cut(m) < 3.4, True)
+r = Run()
+r.feed(4, lambda i: still)
+m = r.feed(4, lambda i: frame(*range(8)))
+check("a small change that happens once (a tooltip, a tick) is kept, then its own 3 s",
+      (m[0][1], 3.0 < first_cut(m) - m[0][0] < 3.3), (False, True))
+r = Run()
+anim = [frame(), frame(*range(6)), frame(*range(3, 9))]
+m = r.feed(6, lambda i: anim[i % 3])
+check("a small animation that never stops (RDM's Quick start) is a still screen", 3.0 < first_cut(m) < 3.6, True)
+r = Run()
+m = r.feed(6, lambda i: frame(*range(i // 2)))
+check("a small change that keeps going (a progress bar) is kept as it goes", first_cut(m), None)
+r = Run()
+r.event(caption="", audio_s=4.0)
+m = r.feed(6, lambda i: still)
+check("a line is never cut, nor its beat (0.6 s) after it", 4.6 < first_cut(m) < 4.8, True)
+r = Run()
+r.feed(4, lambda i: still)
+r.event(caption="The app hangs: 10 s", keep=True)
+m = r.feed(10, lambda i: still)
+check("a caption with keep keeps a still screen while it shows (a hang)", first_cut(m), None)
+r.event(caption="")
+m = r.feed(4, lambda i: still)
+check("until the next caption: then the still screen is cut again", 3.0 < first_cut(m) - m[0][0] < 3.3, True)
+r = Run()
+r.event(caption="Waiting", seconds=5, keep=True)
+m = r.feed(10, lambda i: still)
+check("a keep with seconds ends with them", 8.0 < first_cut(m) < 8.3, True)
+r = Run()
+r.feed(5, lambda i: still)
+r.event(input="click")
+check("an event ends the cut (a click, a key, a caption)", r.feed(0.1, lambda i: still)[0][1], False)
+check("VM_RECORD_STILL_S=0 keeps everything", first_cut(Run(0).feed(10, lambda i: still)), None)
+
 print("record: " + ("all passed" if not fails else f"{fails} failed"))
 sys.exit(1 if fails else 0)

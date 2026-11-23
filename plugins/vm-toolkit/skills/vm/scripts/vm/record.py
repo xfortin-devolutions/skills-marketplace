@@ -2,23 +2,26 @@
 """Record the VM's screen as an MP4, with the clicks circled and an agent's captions and highlights on it.
 
   record.py run OUT.mp4 MAX_SECONDS   record until SIGTERM or MAX_SECONDS (guest.sh starts it in the background)
-  record.py caption TEXT [SECONDS] [--highlight REGION]... [--no-dim] [--say SPEECH]
+  record.py caption TEXT [SECONDS] [--highlight REGION]... [--no-dim] [--say SPEECH] [--keep]
                                       show TEXT from now on: until the next caption, or for SECONDS ("" clears it),
                                       and those regions highlighted (highlight.py's) as long, or until the next click
                                       (the screen changes); an empty TEXT with regions highlights without words;
                                       --say speaks SPEECH (the narration voice, below) from now, and returns just before it ends,
-                                      so the next step lands on its last words
+                                      so the next step lands on its last words; --keep keeps every second of a still
+                                      screen for as long as the caption shows (a hang: nothing happening is the point)
 
 On a VM with no QMP (tart's macOS VMs) the frames come from its own connection to the VM's VNC server (vnc.py), and
-only what changed crosses it. Otherwise they come from QEMU's second QMP socket (REC_SOCK, <run dir>/rec.sock): the first serves one client at a time,
+only what changed crosses it: the server answers once something does, so no answer means the screen is still, at no
+cost (an answer the recorder waited for would put the whole wait in the video as one frozen frame). Otherwise they come from QEMU's second QMP socket (REC_SOCK, <run dir>/rec.sock): the first serves one client at a time,
 so a recorder holding it would hold back every click and keystroke until it stopped. Each frame is a PPM screendump
 (about 8 ms; a PNG takes 200), piped to ffmpeg at a fixed rate and encoded as it comes by the Mac's hardware H.264
 encoder. While it runs, <run dir>/recording names the events file captions and vm.py's clicks go to; once it stops,
 the captions and click rings (drawn by overlay.js with AppKit: this ffmpeg has no text filter) go over the raw video.
 A still screen longer than VM_RECORD_STILL_S (default 3; 0 keeps everything) is cut, so an agent's slow step (a vm_run,
 its own thinking) is not dead air in the demo: a caption or a click counts as a change, so each new one stays readable.
-Narration is never cut. Once a recording has any, a still screen is cut to VOICE_BEAT_S, and so is the wait after a
-line until the next step (moving or not): a person narrating pauses a beat, not for the next line to be written.
+Narration is never cut, nor is anything that changes the screen, nor a still screen while a caption with keep shows
+(Pace says what counts). Once a recording has any narration, a still screen is cut to VOICE_BEAT_S: a person narrating
+pauses a beat, not for the next line to be written.
 
 The voice is Kokoro's once vmt voice setup has installed it (vm/kokoro.py; VM_VOICE), else macOS's say, far more
 robotic. VM_TTS replaces both: a command with {text} and {out} (a WAV) in it.
@@ -43,6 +46,10 @@ VOICE_BEAT_S = 0.6  # the pause a narrated recording keeps after a line
 VOICE_LEAD_S = 0.5  # caption --say returns this long before its speech ends: the next click falls on its last words
 VOICE = os.path.join(os.environ.get("VM_ROOT") or os.path.dirname(vm.VM_HOME), "voice", "venv", "bin", "python")
 STRIDE = 97  # bytes between the samples two frames are compared on (prime: they fall on every column over the rows)
+MOVED = 5  # samples that must differ for a frame to show a change (fewer: a blinking caret, a clock's tick)
+LOOSE = 0.005  # of the samples: a change this big counts even while the screen keeps moving (RDM's Quick start's
+#                animation stays under 0.2%, measured on macOS)
+BUSY_S, BUSY_N = 0.5, 3  # a screen whose frames moved this many times in this long is animating
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN_DIR = os.environ.get("VM_RUN_DIR") or vm.VM_HOME
 
@@ -55,11 +62,69 @@ def ffmpeg(*args):
     return subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *args])
 
 
-def still(a, b):
-    """Whether frame b shows what a did: equal, or under 5 of its samples differ (a blinking caret, a clock's tick)."""
-    if a is None or a == b:
-        return a is not None
-    return sum(x != y for x, y in zip(a[::STRIDE], b[::STRIDE])) < 5
+def differ(a, b):
+    """How many of the samples two frames are compared on differ (all of them when there is no a)."""
+    if a is b or a == b:
+        return 0
+    if a is None:
+        return len(b[::STRIDE])
+    return sum(x != y for x, y in zip(a[::STRIDE], b[::STRIDE]))
+
+
+class Pace:
+    """Which moments of a recording its video keeps. A moment is cut only when nothing worth seeing happens in it: the
+    screen has stayed as it was (a caret's blink and a clock's tick aside) for longer than the limit, no line is being
+    spoken, and no caption asked to keep it (keep: a hang being shown, where nothing happening is the point). Whatever
+    changes the screen (a dialog, a tooltip, a tick in a checkbox, a page that moves) ends the cut and is kept, on its own
+    frame, and so does any event (a click, a key, a caption). An animation that never stops on a small part of the screen
+    (RDM's Quick start has one) does not count as a change: it moves on every frame and stays near where it started,
+    while a change happens once and stays; a small change that keeps going (a progress bar) counts once it has moved
+    LOOSE of the screen from where it was."""
+
+    def __init__(self, t0, still_s=STILL_S):
+        self.t0, self.still_s = t0, still_s
+        self.ref = self.prev = None  # the frame the screen is compared to (the last change); the frame before this one
+        self.since = None  # when the screen last stopped changing
+        self.moves = []  # when frames last differed from the one before (an animation's, recently)
+        self.seen = 0  # how much of the events file has been read
+        self.voiced, self.speaking, self.keep_until = False, t0, 0.0
+
+    def events(self, evs):
+        for ev in evs:
+            if ev.get("audio_s"):
+                self.voiced, self.speaking = True, max(self.speaking, self.t0 + ev["t"] + ev["audio_s"])
+            if "caption" in ev:  # each caption ends the last one's keep
+                self.keep_until = (self.t0 + ev["t"] + ev.get("seconds", float("inf"))) if ev.get("keep") else 0.0
+
+    def cut(self, now, frame, size, read):
+        """Whether the moment now, showing frame, is cut; size is the events file's, read() its events."""
+        event = size != self.seen
+        if event:
+            self.seen = size
+            self.events(read())
+        if frame is not self.prev and differ(self.prev, frame) >= MOVED:
+            self.moves.append(now)
+        self.prev = frame
+        self.moves = [t for t in self.moves if now - t < BUSY_S]
+        d = differ(self.ref, frame)
+        changed = event or d >= LOOSE * len(frame[::STRIDE]) or d >= MOVED and len(self.moves) < BUSY_N
+        if changed:
+            self.ref = frame
+        if changed or now < self.speaking or now < self.keep_until:
+            self.since = None
+            return False
+        self.since = self.since or now
+        return bool(self.still_s) and now - self.since > (VOICE_BEAT_S if self.voiced else self.still_s)
+
+
+def grab(q, path):
+    """The screen as a PPM, or None when it has not changed since the last grab: a VNC server answers a request for what
+    changed only once something does, so no answer yet is that (vnc.py); QMP always gives the whole screen."""
+    if hasattr(q, "update"):
+        return q.ppm() if q.update(0) else None
+    q.cmd("screendump", {"filename": path, "format": "ppm"})
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def shift(cuts):
@@ -88,34 +153,23 @@ def record(out, max_s):
         f.write(f"{t0}\n{events}\n")
     n = 0
     cut, cuts = 0.0, []  # seconds cut so far; when (from the start, wall clock)
-    prev, since, seen, last = None, None, 0, t0
-    voiced, speaking, hush = False, t0, None  # narrated at all; until when the voice speaks; the beat after it ends
+    last, data, written = t0, None, None  # when the last moment was kept or cut; the screen; the last frame written
+    pace = Pace(t0)
+
+    def read():
+        return [json.loads(line) for line in open(events).read().splitlines() if line.strip()]
     try:
         # A stop while the voice speaks (the agent stops right after its last line) waits for the line, and a beat.
-        while (not stop or time.time() < speaking + VOICE_BEAT_S) and time.time() - t0 < max_s:
+        while (not stop or time.time() < pace.speaking + VOICE_BEAT_S) and time.time() - t0 < max_s:
             try:
-                q.cmd("screendump", {"filename": frame, "format": "ppm"})
-                with open(frame, "rb") as f:
-                    data = f.read()
+                data = grab(q, frame) or data
+                if data is None:  # a VNC server's first answer is the whole screen: not there yet
+                    time.sleep(1 / FPS)
+                    continue
                 if n == 0:
                     width, height = map(int, data.split(b"\n", 2)[1].split()[:2])  # PPM: P6, then "width height"
-                now, size = time.time(), os.path.getsize(events)
-                if size != seen:
-                    for line in open(events).read().splitlines():
-                        ev = json.loads(line) if line.strip() else {}
-                        if ev.get("audio_s"):
-                            voiced, speaking = True, max(speaking, t0 + ev["t"] + ev["audio_s"])
-                            hush = speaking + VOICE_BEAT_S
-                        else:
-                            hush = None
-                if size == seen and still(prev, data) and now >= speaking:
-                    since = since or now
-                else:
-                    prev, since, seen = data, None, size
-                limit = VOICE_BEAT_S if voiced else STILL_S
-                # After a line, until the next step, the agent is only writing (and the voice rendering) the next one:
-                # cut by the events, not the pixels, which an animation on the screen would keep moving.
-                if STILL_S and (since and now - since > limit or hush and now > hush and size == seen):
+                now = time.time()
+                if pace.cut(now, data, os.path.getsize(events), read):
                     if cuts and cuts[-1][1] == last - t0:
                         cuts[-1] = (cuts[-1][0], now - t0)
                     else:
@@ -125,10 +179,12 @@ def record(out, max_s):
                     time.sleep(1 / FPS)
                     continue
                 # Frame k shows second k/FPS of the video, the recording's clock less the cuts: a grab that ran late
-                # fills the frames it missed (ffmpeg's own timestamps start when it has read enough to probe, late).
+                # fills the frames it missed (ffmpeg's own timestamps start when it has read enough to probe, late),
+                # with what the screen showed then, and this one on the last.
                 k = max(n + 1, round((now - t0 - cut) * FPS))
-                for _ in range(k - n):
-                    ff.stdin.write(data)
+                for i in range(k - n):
+                    ff.stdin.write(written if written is not None and i < k - n - 1 else data)
+                written = data
             except (OSError, RuntimeError, ValueError):
                 break  # the VM went down (vmt down, the idle reaper, a checkpoint): keep what was recorded
             n, last = k, now
@@ -269,12 +325,14 @@ def main():
     if op == "run" and len(a) == 2:
         return record(os.path.abspath(a[0]), float(a[1]))
     if op == "caption":
-        regions, dim, rest, speech = [], True, [], ""
+        regions, dim, rest, speech, keep = [], True, [], "", False
         try:
             while a:
                 x = a.pop(0)
                 if x == "--no-dim":
                     dim = False
+                elif x == "--keep":
+                    keep = True
                 elif x == "--say" and a:
                     speech = a.pop(0)
                 elif x == "--highlight" and a:
@@ -282,10 +340,12 @@ def main():
                 else:
                     rest.append(x)
             if len(rest) not in (1, 2):
-                raise ValueError("record.py caption TEXT [SECONDS] [--highlight REGION]... [--no-dim]")
+                raise ValueError("record.py caption TEXT [SECONDS] [--highlight REGION]... [--no-dim] [--say SPEECH] [--keep]")
             ev = {"caption": rest[0]}
             if len(rest) == 2:
                 ev["seconds"] = float(rest[1])
+            if keep:
+                ev["keep"] = True
         except ValueError as e:
             say(str(e))
             return 2

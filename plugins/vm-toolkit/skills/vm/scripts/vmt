@@ -16,9 +16,9 @@
 #   vmt guest <vm dir> <command>...      scripts/guest.sh on it, booting it first if needed (not for a build on the
 #                                        Mac: the target's HOST_BUILD): build [<project>] [--clean]
 #                                        | test [--no-build] <project> [<filter>] | app launch|wait|shot|click|type|
-#                                        key|scroll|stop | app record start [<min>]|stop | app caption <text> [<s>]
+#                                        key|scroll|drag|stop | app record start [<min>]|stop | app caption <text> [<s>]
 #                                        (shot and caption take --highlight x,y,w,h[,label]... [--no-dim];
-#                                        caption --say <speech> narrates)
+#                                        caption --say <speech> narrates, --keep keeps a still screen while it shows)
 #                                        | run '<command>' (PowerShell; bash on macOS) | info
 #   vmt apply <vm dir> <folder> [<guest folder>]   puts a setup folder in the VM (scripts/apply.sh); the guest folder
 #                                        defaults to C:\factory\setup\<folder name>
