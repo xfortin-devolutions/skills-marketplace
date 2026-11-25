@@ -24,7 +24,9 @@ Narration is never cut, nor is anything that changes the screen, nor a still scr
 pauses a beat, not for the next line to be written.
 
 The voice is Kokoro's once vmt voice setup has installed it (vm/kokoro.py; VM_VOICE), else macOS's say, far more
-robotic. VM_TTS replaces both: a command with {text} and {out} (a WAV) in it.
+robotic. VM_TTS replaces both: a command with {text} and {out} (a WAV) in it. A demo is narrated unless a person asked
+for a silent one: a caption without --say in a recording no line has been spoken in yet says so, and stop's summary
+names a silent video.
 """
 import json
 import os
@@ -201,10 +203,12 @@ def record(out, max_s):
     if ff.returncode != 0 or n == 0:
         say(f"ffmpeg failed (exit {ff.returncode}) after {n} frames")
         return 1
+    silent = not any(e.get("audio_s") for e in read())
     rc = compose(raw, events, out, secs, (width, height), shift(cuts))
     if rc == 0:
         os.remove(raw)
-        print(f"{out} {secs:.0f}s, {os.path.getsize(out) // 1024} KB" + (f" ({cut:.0f}s of still screen cut)" if cut >= 1 else ""))
+        print(f"{out} {secs:.0f}s, {os.path.getsize(out) // 1024} KB" + (f" ({cut:.0f}s of still screen cut)" if cut >= 1 else "")
+              + (", silent: no caption had --say (record it again narrated unless a silent video was asked for)" if silent else ""))
     return rc
 
 
@@ -354,8 +358,8 @@ def main():
         if not os.path.exists(vm.RECORDING):
             say("nothing is recording: app record start first")
             return 1
+        events = open(vm.RECORDING).read().split("\n")[1].strip()
         if speech.strip():
-            events = open(vm.RECORDING).read().split("\n")[1].strip()
             clip = f"{events}.voice-{time.time():.3f}.wav"
             seconds = speak(speech, clip)
             if seconds:
@@ -365,6 +369,8 @@ def main():
             return 1
         if ev.get("audio_s"):
             vm.pause(max(ev["audio_s"] - VOICE_LEAD_S, 0))
+        elif not speech.strip() and not any('"audio_s"' in line for line in open(events)):
+            print("silent: nothing narrated yet; a demo says each step (--say) unless a silent video was asked for")
         return 0
     print(__doc__, file=sys.stderr)
     return 2

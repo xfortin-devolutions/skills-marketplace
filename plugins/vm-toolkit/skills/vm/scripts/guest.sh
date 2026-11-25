@@ -214,7 +214,8 @@ case "$CMD" in
             echo $! > "$VM_RUN_DIR/record.pid"
             for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$VM_RUN_DIR/recording" ] && break; sleep 0.5; done
             [ -f "$VM_RUN_DIR/recording" ] || { cat "$VM_RUN_DIR/record.log"; echo "HARNESS ERROR: the recorder did not start"; exit 3; }
-            echo "recording $D/app/video-$n.mp4 (stops by itself after $min min): app record stop ends it" ;;
+            echo "recording $D/app/video-$n.mp4 (stops by itself after $min min): narrate each step (caption --say),"\
+              "unless a silent video was asked for; app record stop ends it" ;;
           stop) "$X/vm/vmctl.sh" record-stop "$D" ;;
           *) usage ;;
         esac ;;

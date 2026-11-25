@@ -360,7 +360,8 @@ TOOLS = {
                 ["name", "from_x", "from_y", "to_x", "to_y"], t_drag),
     "vm_record_start": ("Start recording the guest's screen as an MP4 (15 fps) for a demo: drive the app as usual meanwhile; "
                         "vm_click's clicks are circled in it. Stops by itself after max_minutes; vm_down ends it too. "
-                        "Explain on screen with vm_caption. Set the scenario up first (vm_run, vm_apply, vm_app_launch): "
+                        "A demo is narrated: give every step a vm_caption with say (a voice), unless the person asked "
+                        "for a silent video. Set the scenario up first (vm_run, vm_apply, vm_app_launch): "
                         "while it records use only vm_click, vm_type, vm_key, vm_scroll, vm_drag, vm_wait, vm_screenshot and vm_caption, "
                         "one call at a time (a call made alongside another waits for it); wait for the app with vm_wait "
                         "then one vm_screenshot, not vm_run Start-Sleep or repeated screenshots. A still screen over 3 s is cut from the video "
@@ -373,7 +374,8 @@ TOOLS = {
                    "With highlight, those regions are pointed at for as long as the caption shows, or until the next "
                    "vm_click (the screen changes); an empty text with a highlight points without words. "
                    "With say, a voice narrates too, and the call returns just before the line ends: make the next call "
-                   "the step it announces, so the click lands on its last words.",
+                   "the step it announces, so the click lands on its last words. A demo is narrated: say on every step, "
+                   "unless the person asked for a silent video.",
                    {"name": NAME, "text": {"type": "string"},
                     "seconds": {"type": "number", "description": "Hide it after this long."},
                     "highlight": HIGHLIGHT, "dim": DIM,
@@ -381,8 +383,9 @@ TOOLS = {
                             "Narration spoken from now: written for the ear, as a person demoing it would say it, "
                             "not the caption read out (\"Let's go with the fastest one, and just hit Connect.\"): first "
                             "person, contractions, one or two short sentences per step; commas and an ellipsis are "
-                            "pauses; spell out what is not said as written (\"R-D-M\"). Narrate every step or none: "
-                            "a narrated video usually takes an empty text (no caption)."},
+                            "pauses; spell out what is not said as written (\"R-D-M\"). Narrate every step (leave it out "
+                            "only for a silent video the person asked for): a narrated video usually takes an empty "
+                            "text (no caption)."},
                     "keep": {"type": "boolean", "description":
                              "Keep every second of a still screen while this caption shows (until the next caption, or "
                              "its seconds), instead of cutting it: for a hang or a wait that is what the video shows. "

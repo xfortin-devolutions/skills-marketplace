@@ -53,6 +53,16 @@ with tempfile.TemporaryDirectory() as run:
     check("a voice that fails still captions, silently", (p.returncode, "audio" in ev2, "could not speak" in p.stderr),
           (0, False, True))
 
+    caption = [sys.executable, os.path.join(VM, "record.py"), "caption", "Look here"]
+    p = subprocess.run(caption, env=env, capture_output=True, text=True)
+    check("a silent caption once a line was spoken says nothing more", "silent" in p.stdout, False)
+    kept = open(events).read()
+    open(events, "w").close()
+    p = subprocess.run(caption, env=env, capture_output=True, text=True)
+    check("a silent caption in a recording with no line yet asks for narration", (p.returncode, "--say" in p.stdout),
+          (0, True))
+    open(events, "w").write(kept)
+
     # compose: a 4 s video, the clip from 1 s (no caption text, no click: nothing for AppKit to draw)
     raw = os.path.join(run, "raw.mp4")
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=gray:size=320x180:rate=15:duration=4",
