@@ -69,11 +69,13 @@ Windows). Contract: [references/products.md](references/products.md).
    '<text>' [<s>]` shows a caption from then on, until the next one (or for `<s>` seconds; `''` clears it): say what
    is being done or what to look at, one short sentence. `--highlight` (and `--no-dim`), as for `shot`, points at
    regions for as long as the caption shows, or until the next click (the screen changes); `''` with a highlight points
-   without words. `--say '<speech>'` narrates: a voice speaks it from then on, and `caption` returns just before it
+   without words. A demo is narrated: give every step's `caption` `--say '<speech>'`, unless the person asked for a
+   silent video (captions only); a video they didn't ask to be silent and that has no voice is the wrong video. A
+   voice speaks it from then on, and `caption` returns just before it
    ends, so make the next command the step it announces (the click lands on its last words). Write it for the ear,
    as a person demoing would say it, not the caption read out: first person, contractions, one or two short
    sentences per step ("Let's go with the fastest one, and just hit Connect."); commas and an ellipsis are pauses;
-   spell out what isn't said as written ("R-D-M"). Narrate every step or none, usually with `''` as the caption. While
+   spell out what isn't said as written ("R-D-M"). Narrate every step, usually with `''` as the caption. While
    it speaks nothing is cut; a still screen after a line is cut to a beat; the pointer glides to each click. The voice is Kokoro's once `vmt voice setup` installed it (once, ~350 MB, needs `brew install uv`; `vmt voice
    try '<text>'` plays one; `VM_VOICE` in `~/.vm-toolkit/config.sh` picks it), else macOS's `say`, much more robotic.
    Set the scenario up before `start` (`run`, `apply`, `app
