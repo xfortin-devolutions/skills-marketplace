@@ -24,9 +24,13 @@ if [ "${VM_GUEST_SHELL:-}" = sh ]; then
     exit "${PIPESTATUS[1]}"
 fi
 
+# Every call sets the guest's clock to this Mac's when they differ by more than 5 s (GAPS V102): the guest clock stops
+# while the Mac sleeps, and an image frozen before a DST change boots an hour off; Windows itself never syncs it.
 # SSH sessions don't inherit the desktop's drive mappings, so every call maps R: itself. QEMU starts the host's smbd on
 # the guest's first connection, which can take seconds (longer with two VMs booting): retry for up to 60 s.
+NOW_MS=$(python3 -c 'import time; print(int(time.time() * 1000))')
 PRELUDE='$ProgressPreference = "SilentlyContinue"'
+PRELUDE="$PRELUDE"'; $t = [DateTimeOffset]::FromUnixTimeMilliseconds('"$NOW_MS"').UtcDateTime; if ([Math]::Abs(([DateTime]::UtcNow - $t).TotalSeconds) -gt 5) { Set-Date -Date $t.ToLocalTime() | Out-Null }'
 [ -n "${VM_NO_SHARE:-}" ] || PRELUDE="$PRELUDE"'; for ($i = 0; $i -lt 30 -and -not (Test-Path R:\); $i++) { net use R: \\10.0.2.4\qemu 2>&1 | Out-Null; if (-not (Test-Path R:\)) { Start-Sleep 2 } }'
 if [ "${1:-}" = "-" ]; then
     BODY="$(cat)"
