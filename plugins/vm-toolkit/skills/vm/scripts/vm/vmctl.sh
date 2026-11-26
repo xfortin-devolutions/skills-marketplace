@@ -191,6 +191,8 @@ EOF
     || echo "vmctl: could not set the VNC password; show will not connect" >&2
   echo "slot $n: SSH 127.0.0.1:$port, VNC 127.0.0.1:$((5900 + vnc)), sharing $share as R:"
   VM_SSH_PORT=$port python3 "$X/vm.py" wait-ssh $((VM_BOOT_MIN * 60)) || die "guest SSH did not answer in $VM_BOOT_MIN min (VNC: vmctl.sh show $run)"
+  # vmssh sets the guest's clock: an image frozen before a DST change boots an hour off (GAPS V102)
+  ( . "$d/vm.env"; VM_NO_SHARE=1 "$X/vmssh" '' ) > /dev/null 2>&1 || echo "vmctl: could not set the guest's clock" >&2
 }
 
 # take_slot <vm dir>: a free slot's number, marked starting. A busy machine is a queue, not an error: wait for a slot
@@ -442,6 +444,8 @@ show() {
   d=$(vmdir "${1:-}")
   alive "$d" || die "no VM running for ${1:-}"
   . "$d/vm.env"
+  # The guest's clock stops while the Mac sleeps: a person back at a VM left up overnight gets it on time (GAPS V102).
+  [ "$BACKEND" = tart ] || VM_NO_SHARE=1 "$X/vmssh" '' > /dev/null 2>&1 || echo "vmctl: could not set the guest's clock" >&2
   # A macOS VM's clipboard goes through Virtualization.framework, not the viewer: Screen Sharing gets it too.
   [ "$BACKEND" = tart ] && tart_clipboard "$d"
   # TigerVNC shares the clipboard with the guest (clipboard.sh); Screen Sharing can't: it has no extended clipboard.
