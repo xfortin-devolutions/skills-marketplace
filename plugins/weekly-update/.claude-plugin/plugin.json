@@ -1,0 +1,12 @@
+{
+  "name": "weekly-update",
+  "version": "0.1.0",
+  "description": "[EXPERIMENTAL] Drafts the weekly 'what I worked on' Slack post that goes with a weekly video: the PRs merged or open since the last post, each with its Jira ticket and PR linked, grouped by product, in the style of the author's previous posts. Saved as a Slack draft, never sent",
+  "author": {
+    "name": "Xavier Fortin",
+    "url": "https://github.com/xfortin-devolutions/skills-marketplace"
+  },
+  "homepage": "https://github.com/xfortin-devolutions/skills-marketplace",
+  "repository": "https://github.com/xfortin-devolutions/skills-marketplace",
+  "keywords": ["slack", "weekly", "status", "pull-requests", "experimental"]
+}
