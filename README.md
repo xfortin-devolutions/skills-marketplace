@@ -10,6 +10,7 @@ its folder and its entry in `.claude-plugin/marketplace.json`.
 /plugin marketplace add xfortin-devolutions/skills-marketplace
 /plugin install vm-toolkit@xfortin-skills-marketplace
 /plugin install factory-toolkit@xfortin-skills-marketplace
+/plugin install weekly-update@xfortin-skills-marketplace
 ```
 
 `factory-toolkit` needs `vm-toolkit`; `vm-toolkit` works on its own.
@@ -58,3 +59,14 @@ blind exploratory QA that tours the change and re-tries its findings on the base
 
 Requirements: macOS on Apple silicon, QEMU, `claude`, `git`, `jq`, `perl`, `python3`; a Windows 11 ARM64 ISO for the
 golden image.
+
+### weekly-update (0.x, experimental)
+
+The `weekly-update` skill: drafts the Slack post that goes with a weekly video. It reads the author's last post in the
+channel to find the window and what was already reported, gathers the PRs merged or open since then (`gh search prs`
+across the GitHub org), and writes one line per ticket with both the Jira ticket and the PR linked, grouped by product
+in the style of the previous posts. The result is saved as a Slack draft in the channel, never sent.
+
+- **Per machine:** `~/.claude/weekly-update.json` (`channel`, `githubOrg`, `jira`); the skill asks and offers to save it
+  the first time.
+- Needs the Slack connector and an authenticated `gh`.

@@ -28,6 +28,17 @@
       },
       "source": "./plugins/vm-toolkit",
       "category": "development"
+    },
+    {
+      "name": "weekly-update",
+      "description": "[EXPERIMENTAL] Drafts the weekly Slack post that goes with a weekly video: PRs merged or open since the last post, each with its Jira ticket and PR linked, grouped by product, saved as a Slack draft",
+      "version": "0.1.0",
+      "author": {
+        "name": "Xavier Fortin",
+        "email": "xfortin@devolutions.net"
+      },
+      "source": "./plugins/weekly-update",
+      "category": "productivity"
     }
   ]
 }
