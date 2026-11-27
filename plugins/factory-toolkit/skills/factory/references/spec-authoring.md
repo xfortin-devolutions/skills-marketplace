@@ -25,6 +25,9 @@ ACCEPT_FILTER=<optional test filter, no spaces>
 ORACLE_PATHS="<test file(s) and test csproj the builder must not edit>"
 SCOPE_REGEX='<the Touches line as an extended regex over repo paths>'
 ```
+For a project with `TICKET_IN_GIT=no` (a public repo: [profiles.md](profiles.md)), also `BRANCH_SLUG=<the branch's
+name, no ticket key>` (and whatever its profile reads, e.g. avalonia-extensions' `AREA`), set before `factory.sh start`,
+and the spec's oracle commit names no ticket either.
 
 ## <KEY>.assessment.md
 Written by `factory.sh assess <KEY>` once the spec is: the size class (the run's limits) and the test needs (what QA's

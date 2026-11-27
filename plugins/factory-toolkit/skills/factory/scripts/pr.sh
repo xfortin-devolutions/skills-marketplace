@@ -29,8 +29,10 @@ SPEC=$TICKETS_DIR/$TICKET.md
 [ -f "$SPEC" ] || { echo "pr: no spec for $TICKET in the run or $TICKETS_DIR" >&2; exit 1; }
 log() { echo "pr: $*" >&2; [ -f "$RUN/events.log" ] && echo "$(date -u +%FT%TZ) pr: $*" >> "$RUN/events.log"; }
 
-# The hand-back is the factory's working record: never in the product PR. Dropped in its own commit, kept on disk.
-if [ "$OPEN" = yes ] && [ -n "$(git -C "$WT" ls-files -- handback | head -1)" ]; then
+# The hand-back is the factory's working record: never in the product PR. Dropped in its own commit, kept on disk. A
+# public repo's (TICKET_IN_GIT=no) gets the branch without it ever (public_history below) instead: its hand-back commits
+# name the ticket.
+if [ "$OPEN" = yes ] && [ "$TICKET_IN_GIT" != no ] && [ -n "$(git -C "$WT" ls-files -- handback | head -1)" ]; then
   git -C "$WT" rm -r -q --cached -- handback >&2 \
     && git -C "$WT" commit -q -m "[$TICKET] Removed handback/ from the branch" >&2 \
     || { log "could not drop handback/ from $BRANCH"; exit 1; }
@@ -41,6 +43,34 @@ SHA=$(git -C "$WT" rev-parse --short HEAD)
 # The PR's base, not the run's: the ticket's own commits (the oracle) are part of the PR.
 MB=$(git -C "$WT" merge-base "origin/$PR_BASE" HEAD 2> /dev/null) || MB=$S_BASE
 MB=$(git -C "$WT" rev-parse --short "$MB")
+
+# public_history: the branch as a public repo gets it: each commit again without handback/ (one that only touched it
+# goes), with its message, author and committer, so the same branch gives the same commits on each --open; the run's
+# branch and worktree keep theirs. Prints the last commit.
+public_history() {
+  local c t prev ptree idx
+  idx=$(mktemp -d)/index prev=$(git -C "$WT" rev-parse "$MB") ptree=$(git -C "$WT" rev-parse "$MB^{tree}")
+  for c in $(git -C "$WT" rev-list --reverse "$MB..HEAD"); do
+    GIT_INDEX_FILE=$idx git -C "$WT" read-tree "$c" || return 1
+    GIT_INDEX_FILE=$idx git -C "$WT" rm -r -q -f --cached --ignore-unmatch -- handback > /dev/null || return 1
+    t=$(GIT_INDEX_FILE=$idx git -C "$WT" write-tree) || return 1
+    [ "$t" = "$ptree" ] && continue
+    prev=$(who() { git -C "$WT" log -1 --format="$1" "$c"; }
+           export GIT_AUTHOR_NAME="$(who %an)" GIT_AUTHOR_EMAIL="$(who %ae)" GIT_AUTHOR_DATE="$(who %aI)" \
+             GIT_COMMITTER_NAME="$(who %cn)" GIT_COMMITTER_EMAIL="$(who %ce)" GIT_COMMITTER_DATE="$(who %cI)"
+           who %B | git -C "$WT" commit-tree "$t" -p "$prev") || return 1
+    ptree=$t
+  done
+  rm -rf "$(dirname "$idx")"
+  echo "$prev"
+}
+# key_leak: where the text on stdin names a ticket (a key of the ticket's project, a Jira link), at most five places.
+key_leak() { grep -noiE "\b${TICKET%%-*}-[0-9]+\b|atlassian\.net|/browse/" | head -5 | tr '\n' ' '; }
+PUB=HEAD
+if [ "$TICKET_IN_GIT" = no ]; then
+  PUB=$(public_history) || { log "could not write $BRANCH without handback/"; exit 1; }
+  log "the branch without handback/: $(git -C "$WT" rev-parse --short "$PUB") (the run's branch keeps it)"
+fi
 # The repo's own PR instructions come first (the writer runs in the worktree, so its CLAUDE.md and skills load too); the
 # engine's template is the fallback for a repo with none.
 TEMPLATE=$SKILL/templates/pr-template.md
@@ -52,6 +82,10 @@ done
 if [ -n "$found" ]; then INSTRUCTIONS="Read these first:$found."
 else INSTRUCTIONS="The project names none: find them."; fi
 URL=$(grep -m1 -oE "https?://[^ )>\`]*$TICKET\b" "$SPEC")
+# A public repo's PR never names the ticket: outsiders can't open it.
+[ "$TICKET_IN_GIT" = no ] && URL="" INSTRUCTIONS="$INSTRUCTIONS This repo is public: never name the ticket's key ($TICKET) or link it, in the title or the description, and leave out any section that would only hold it; describe the issue in plain words."
+# A repo that wants its agent-written PRs signed (PR_FOOTER; @LOGIN@ is the gh account's login): the runner signs it.
+[ -n "${PR_FOOTER:-}" ] && INSTRUCTIONS="$INSTRUCTIONS Write no signature or footer line: the runner adds the repo's."
 
 { sed -e "s|@TICKET@|$TICKET|g" -e "s|@BRANCH@|$BRANCH|g" -e "s|@BASE@|$MB|g" -e "s|@SHA@|$SHA|g" \
       -e "s|@SPEC@|$SPEC|g" -e "s|@HANDBACK@|$HANDBACK|g" -e "s|@TICKET_URL@|$URL|g" -e "s|@TITLE_MAX@|$PR_TITLE_MAX|g" \
@@ -67,7 +101,7 @@ jq -r '.result // ""' "$RUN/pr.json" > "$RUN/pr.raw" 2> /dev/null
 COST=$(jq -r '.total_cost_usd // 0' "$RUN/pr.json" 2> /dev/null)
 TITLE=$(grep -m1 '^TITLE: ' "$RUN/pr.raw" | sed 's/^TITLE: *//')
 [ "$rc" -eq 0 ] && [ -n "$TITLE" ] || { log "no usable answer (exit $rc): $RUN/pr.json, $RUN/pr.err"; exit 1; }
-case "$TITLE" in "[$TICKET]"*) ;; *) TITLE="[$TICKET] $TITLE" ;; esac
+[ "$TICKET_IN_GIT" = no ] || case "$TITLE" in "[$TICKET]"*) ;; *) TITLE="[$TICKET] $TITLE" ;; esac
 FORMAT=$(grep -m1 '^FORMAT: ' "$RUN/pr.raw" | sed 's/^FORMAT: *//')
 log "format: ${FORMAT:-not said}"
 # The repo's instructions set the title's limit; the engine holds the template's titles to PR_TITLE_MAX only.
@@ -76,7 +110,7 @@ case "$FORMAT" in repo*) ;; *) [ ${#TITLE} -le "$PR_TITLE_MAX" ] \
 printf '%s\n' "$TITLE" > "$RUN/pr-title.txt"
 
 # The commits a reviewer sees: every one that touches something outside handback/.
-COMMITS=$(git -C "$WT" rev-list --reverse "$MB..$SHA" | while read -r c; do
+COMMITS=$(git -C "$WT" rev-list --reverse "$MB..$PUB" | while read -r c; do
   [ -n "$(git -C "$WT" diff-tree --no-commit-id --name-only -r "$c" | grep -v '^handback/')" ] \
     && git -C "$WT" log -1 --format='- %h - %s' --abbrev=8 "$c"
 done)
@@ -84,14 +118,35 @@ BODY=$(awk 'f && !(started == 0 && /^(FORMAT: |$)/) { started = 1; print; next }
 # The factory's own words must not reach the PR: a description that names them is the writer's mistake, for a human.
 LEAK=$(printf '%s\n%s\n' "$TITLE" "$BODY" | grep -noiE 'hand-?back|factory|builder|reviewer|verdict|charter|oracle|exploratory|verification record|golden image|time box|\$[0-9]+(\.[0-9]+)?|\bVMs?\b' | head -5 | tr '\n' ' ')
 printf '%s\n' "$BODY" | COMMITS=$COMMITS awk '$0 == "@COMMITS@" { print ENVIRON["COMMITS"]; next } { print }' > "$RUN/pr.md"
+if [ -n "${PR_FOOTER:-}" ]; then
+  login=$(cd "$WT" && gh api user --jq .login 2> /dev/null)
+  [ -n "$login" ] || { log "PR_FOOTER: no gh login (gh api user) to sign the description with"; [ "$OPEN" = yes ] && exit 1; }
+  printf '\n%s\n' "${PR_FOOTER//@LOGIN@/$login}" >> "$RUN/pr.md"
+fi
 log "wrote $RUN/pr-title.txt and $RUN/pr.md (\$$COST)"
 if [ -n "$LEAK" ]; then
   log "the description names the factory ($LEAK): fix pr.md$([ "$OPEN" = yes ] && echo ", then factory.sh pr $(basename "$RUN") --open again")"
   [ "$OPEN" = yes ] && exit 1
 fi
+# A public repo's: the ticket named anywhere it would publish (the branch, the PR, the commits and what they add) is
+# never pushed. Lines are numbered in that order: the branch's name, the title, the description, the messages, the diff.
+if [ "$TICKET_IN_GIT" = no ]; then
+  KEYS=$( { echo "$BRANCH"; printf '%s\n%s\n' "$TITLE" "$BODY"; git -C "$WT" log --format=%B "$MB..$PUB"
+           git -C "$WT" diff "$MB" "$PUB" | grep '^+'; } | key_leak)
+  if [ -n "$KEYS" ]; then
+    log "this public repo's branch or PR names the ticket ($KEYS): fix the commits or pr.md$([ "$OPEN" = yes ] && echo "; nothing was pushed")"
+    [ "$OPEN" = yes ] && exit 1
+  fi
+fi
 [ "$OPEN" = yes ] || exit 0
 
-git -C "$WT" push -q -u origin "$BRANCH" 2>> "$RUN/pr.err" || { log "push of $BRANCH failed: $RUN/pr.err"; exit 1; }
+if [ "$TICKET_IN_GIT" = no ]; then
+  # The branch without handback/, again on each --open: the same commits (public_history), so never a force push.
+  git -C "$WT" push -q origin "$PUB:refs/heads/$BRANCH" 2>> "$RUN/pr.err" \
+    || { log "push of $BRANCH failed: $RUN/pr.err"; exit 1; }
+else
+  git -C "$WT" push -q -u origin "$BRANCH" 2>> "$RUN/pr.err" || { log "push of $BRANCH failed: $RUN/pr.err"; exit 1; }
+fi
 existing=$(cd "$WT" && gh pr view "$BRANCH" --json url,state -q 'select(.state == "OPEN") | .url' 2> /dev/null)
 if [ -n "$existing" ]; then
   (cd "$WT" && gh pr edit "$BRANCH" --title "$TITLE" --body-file "$RUN/pr.md" > /dev/null 2>> "$RUN/pr.err") \

@@ -201,6 +201,14 @@ case "$cmd" in
     prefix=$(TICKET=$key PROFILE_DIR=$PROJECT_DIR/profiles/$prof; . "$PROFILE_DIR/profile.sh" > /dev/null 2>&1; echo "${BRANCH_PREFIX:-}")
     k=$(echo "$key" | tr '[:upper:]' '[:lower:]')
     branch=$prefix$k wt=$MAIN_REPO/.claude/worktrees/$k
+    # A public repo's project (TICKET_IN_GIT=no) keeps the key out of branch names: the ticket .sh names it, and is read
+    # before the profile, as the loop reads them (the profile's prefix may use what the ticket sets).
+    if [ "$TICKET_IN_GIT" = no ]; then
+      [ -f "$TICKETS_DIR/$key.sh" ] && . "$TICKETS_DIR/$key.sh" > /dev/null 2>&1
+      [ -n "${BRANCH_SLUG:-}" ] || die "$PROJECT_FROM keeps ticket keys out of git (TICKET_IN_GIT=no): set BRANCH_SLUG in $TICKETS_DIR/$key.sh first (the branch's name, e.g. size-drop-down-to-widest-item)"
+      prefix=$(TICKET=$key PROFILE_DIR=$PROJECT_DIR/profiles/$prof; . "$PROFILE_DIR/profile.sh" > /dev/null 2>&1; echo "${BRANCH_PREFIX:-}")
+      branch=$prefix$BRANCH_SLUG
+    fi
     git -C "$REPO" worktree add -q --no-track -b "$branch" "$wt" "$from" || die "could not create $branch at ${wt#$MAIN_REPO/}"
     [ "$PROJECT_DIR" != "$FACTORY_DIR" ] || [ -d "$wt/$FACTORY_DIR_REL/profiles" ] \
       || echo "note: $from has no $FACTORY_DIR_REL/profiles: the loop can't run there until the project is in it (--from <branch that has it>)"
