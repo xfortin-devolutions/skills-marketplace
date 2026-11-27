@@ -612,10 +612,82 @@ t_pr_leak() {
   [ ! -s "$FAKE_STATE/gh.log" ] || fail "gh was called: $(cat "$FAKE_STATE/gh.log")"
 }
 
+# public_setup: a public repo's project (TICKET_IN_GIT=no): the ticket names its branch, the profile starts the commit
+# messages, and the builder commits without the key.
+public_setup() {
+  git init -q --bare "$T/origin.git" && git -C "$R" remote add origin "$T/origin.git"
+  printf 'TICKET_IN_GIT=no\nDOC_PATHS="docs/ .claude/skills/"\nPR_FOOTER="_Signed for @@LOGIN@._"\n' >> "$R/.factory/config.sh"
+  printf 'COMMIT_PREFIX="[Controls] "\n' >> "$R/.factory/profiles/demo/profile.sh"
+  git -C "$R" commit -qam "public project" && git -C "$R" push -q origin master && git -C "$R" fetch -q origin
+  echo 'BRANCH_SLUG=widest-item' >> "$T/tickets/DEMO-1.sh"
+  cat > "$T/scenario.sh" <<'S'
+builder() { mkdir -p src && echo done > src/feature.txt && git add src && git commit -qm "[Controls] Size the drop-down to its widest item"
+  d=$(hb_dir); mkdir -p "$d/docs/claude/skills/x"; echo doc > "$d/docs/claude/skills/x/SKILL.md"; write_handback; }
+pr() { printf 'TITLE: [Controls] Size the drop-down to its widest item\nFORMAT: repo CLAUDE.md\n\n## Description\n\nThe drop-down was as wide as its visible rows.\n\n## Commits\n\n@COMMITS@\n'; }
+S
+}
+
+# public_repo: TICKET_IN_GIT=no keeps the key out of everything pushed: the branch, its commits (the hand-back ones go),
+# the PR; the run's own branch keeps its hand-back on disk and in git for the judge.
+t_public_repo() {
+  public_setup
+  loop --open-pr
+  expect_end '^ready for the judge'
+  wt=$(ls -d "$R"/.claude/worktrees/demo-1-build-*/ | head -1)
+  b=$(git -C "$wt" symbolic-ref --short HEAD)
+  case "$b" in factory/widest-item-build-*) ;; *) fail "branch: $b" ;; esac
+  expect_file "$FAKE_STATE/builder-1.prompt" "with the message '\[Controls\] <what changed>', in the repo's own commit style"
+  expect_file "$FAKE_STATE/builder-1.prompt" "This repo is public: never write the ticket's key \(DEMO-1\)"
+  expect_file "$FAKE_STATE/builder-1.prompt" "with the message 'handback: builder sections'"
+  git -C "$wt" log --format=%s master..HEAD | grep -q '^\[Controls\] Updated the docs the builder staged' || fail "no runner docs commit with the prefix"
+  [ -n "$(git -C "$wt" ls-files handback | head -1)" ] || fail "the run's branch lost its hand-back"
+  pushed=$(git -C "$T/origin.git" rev-parse -q --verify "refs/heads/$b") || fail "the branch was not pushed"
+  [ -z "$(git -C "$T/origin.git" log --format=%H master.."$pushed" -- handback | head -1)" ] || fail "a pushed commit touches handback/"
+  leak=$( { git -C "$T/origin.git" for-each-ref --format='%(refname)'; git -C "$T/origin.git" log --format=%B master.."$pushed"
+            git -C "$T/origin.git" diff master "$pushed"; cat "$RUN/pr-title.txt" "$RUN/pr.md"; } | grep -n -i 'demo-1')
+  [ -z "$leak" ] || fail "the ticket reached what was pushed: $(echo "$leak" | head -3 | tr '\n' ' ')"
+  [ "$(git -C "$T/origin.git" log --format=%s master.."$pushed" | wc -l | tr -d ' ')" = 2 ] \
+    || fail "pushed commits: $(git -C "$T/origin.git" log --format=%s master.."$pushed" | tr '\n' '|')"
+  expect_file "$RUN/pr-title.txt" '^\[Controls\] Size the drop-down to its widest item$'
+  expect_file "$RUN/pr.prompt" "This repo is public: never name the ticket's key \(DEMO-1\)"
+  expect_file "$RUN/pr.prompt" "The ticket's link:  \(empty"
+  expect_file "$FAKE_STATE/gh.log" 'pr create --draft --base master'
+  expect_file "$RUN/pr.prompt" 'Write no signature or footer line: the runner adds'
+  [ "$(tail -1 "$RUN/pr.md")" = "_Signed for @tester._" ] || fail "pr.md ends: $(tail -1 "$RUN/pr.md")"
+  # A second --open pushes the same commits (no force push: the remote refuses one).
+  (cd "$R" && bash "$SKILL/scripts/factory.sh" pr "$(basename "$RUN")" --open > "$T/pr-out" 2>&1) || fail "second --open: $(tail -1 "$T/pr-out")"
+  [ "$(git -C "$T/origin.git" rev-parse "refs/heads/$b")" = "$pushed" ] || fail "the second --open pushed another history"
+}
+
+# public_repo_leak: a key in a commit's content or message is never pushed.
+t_public_repo_leak() {
+  public_setup
+  echo 'builder() { mkdir -p src && echo "see DEMO-7" > src/feature.txt && git add src && git commit -qm "[Controls] Fix it"; write_handback; }' >> "$T/scenario.sh"
+  loop
+  (cd "$R" && bash "$SKILL/scripts/factory.sh" pr "$(basename "$RUN")" --open > "$T/pr-out" 2>&1) && fail "--open pushed a branch naming a ticket"
+  grep -q "names the ticket (.*DEMO-7" "$T/pr-out" || fail "no ticket-leak message: $(tail -1 "$T/pr-out")"
+  [ -z "$(git -C "$T/origin.git" for-each-ref refs/heads/factory)" ] || fail "something was pushed"
+  ! grep -q '^pr ' "$FAKE_STATE/gh.log" 2> /dev/null || fail "a PR was opened: $(grep '^pr ' "$FAKE_STATE/gh.log")"
+}
+
+# public_repo_no_slug: without BRANCH_SLUG, neither the loop nor start names a branch after the ticket.
+t_public_repo_no_slug() {
+  public_setup
+  sed -i '' '/^BRANCH_SLUG=/d' "$T/tickets/DEMO-1.sh"
+  (cd "$R" && bash "$SKILL/scripts/run-loop.sh" DEMO-1 > "$T/out" 2>&1); rc=$?
+  [ "$rc" = 2 ] && grep -q 'set BRANCH_SLUG in' "$T/out" || fail "run: rc $rc, $(tail -1 "$T/out")"
+  (cd "$R" && bash "$SKILL/scripts/factory.sh" start DEMO-1 > "$T/out2" 2>&1) && fail "start named a branch without BRANCH_SLUG"
+  grep -q 'set BRANCH_SLUG in' "$T/out2" || fail "start: $(tail -1 "$T/out2")"
+  [ -z "$(git -C "$R" branch --list '*demo-1*')" ] || fail "a branch names the ticket: $(git -C "$R" branch --list '*demo-1*')"
+  echo 'BRANCH_SLUG=widest-item' >> "$T/tickets/DEMO-1.sh"
+  (cd "$R" && bash "$SKILL/scripts/factory.sh" start DEMO-1 > "$T/out3" 2>&1) || fail "start with a slug: $(tail -1 "$T/out3")"
+  grep -q 'branch factory/widest-item from' "$T/out3" || fail "start: $(head -1 "$T/out3")"
+}
+
 ALL="happy timebox_after_commit timebox_checkpoint qa_fail_then_fix re_review_names_changes qa_defects vm_on_demand host_build vm_idle stall same_binaries iteration_cap flaky
   failing_listed_test listed_red_on_base_too accept_passes_on_base build_fails restore_flake_on_clean accept_dispute handback_rewritten_nested_docs accept_same_fails pause_resume stop_then_resume stale_lock busy_lock no_build_misses explore_blocker recheck_cant_tell
   assessor_writes size_from_assessment size_on_purpose limits_only reviewer_scaled fixture fixture_missing provided_missing provided_check_then_resume
-  qa_needs_input test_expect open_pr pr_instructions pr_leak"
+  qa_needs_input test_expect open_pr pr_instructions pr_leak public_repo public_repo_leak public_repo_no_slug"
 for t in ${*:-$ALL}; do
   ok=yes
   setup

@@ -125,6 +125,13 @@ if [ "$QA" = yes ]; then
 fi
 
 T=$(echo "$TICKET" | tr '[:upper:]' '[:lower:]')
+# The builder's code commit message. A public repo's (TICKET_IN_GIT=no) never names the ticket, nor does its code.
+if [ "$TICKET_IN_GIT" = no ]; then
+  [ -n "$GIT_REF" ] || { echo "$TICKET: the project keeps ticket keys out of git (TICKET_IN_GIT=no): set BRANCH_SLUG in $TICKETS_DIR/$TICKET.sh (the branch's name, e.g. size-drop-down-to-widest-item)" >&2; exit 2; }
+  CODE_MSG="'${MSG_PREFIX}<what changed>', in the repo's own commit style (its CLAUDE.md or git docs say it). This repo is public: never write the ticket's key ($TICKET) or a link to the ticket in anything you commit (code, comments, docs, test names, commit messages); describe the behaviour instead"
+else
+  CODE_MSG="'${MSG_PREFIX}<what changed, past tense>'"
+fi
 SKIP=""
 if [ -n "$RESUME_RUN" ]; then
   # The same run again: its folder, worktree, branch, base and loop state come from its state.sh (save_state), and the
@@ -164,7 +171,7 @@ FIXTURES_DIR=$RUN/fixtures
 RUN_ASSESSMENT=$SPEC_DIR/$TICKET.assessment.md
 # VM disks and the QA agent's folder live outside the repo: the QA agent must not find CLAUDE.md or the source above it.
 QA_ROOT=$FACTORY_VM_HOME/runs/$ID
-BRANCH=$BRANCH_PREFIX$T-build-$STAMP
+BRANCH=$BRANCH_PREFIX$GIT_REF-build-$STAMP
 WT=$MAIN_REPO/.claude/worktrees/$T-build-$STAMP
 if [ -n "$RESUME" ]; then
   BRANCH=$RESUME
@@ -217,7 +224,8 @@ fill() { # fill <template file>: substitutes the @NAME@ placeholders
       -e "s|@GUEST@|$GUEST|g" -e "s|@ACCEPT@|$(echo "$ACCEPT_CMD" | sed 's/[|&\\]/\\&/g')|g" -e "s|@FACTORY@|$FACTORY_DIR_REL|g" -e "s|@SPEC@|$TICKET_FILE|g" \
       -e "s|@TEMPLATES@|$SKILL_REL/templates|g" -e "s|@VM@|$VM|g" -e "s|@APP@|$APP_NAME|g" \
       -e "s|@GUEST_DESC@|${GUEST_DESC:-}|g" -e "s|@XRES@|$VM_XRES|g" -e "s|@YRES@|$VM_YRES|g" \
-      -e "s|@STANDARDS@|${REVIEW_STANDARDS:-none}|g" -e "s|@DOCS@|${DOC_PATHS:-none}|g" -e "s|@BMIN@|$B_MIN|g" "$1"
+      -e "s|@STANDARDS@|${REVIEW_STANDARDS:-none}|g" -e "s|@DOCS@|${DOC_PATHS:-none}|g" -e "s|@BMIN@|$B_MIN|g" \
+      -e "s|@GIT_KEY@|$GIT_KEY|g" -e "s|@MSG_PREFIX@|$MSG_PREFIX|g" -e "s|@CODE_MSG@|$CODE_MSG|g" "$1"
 }
 section() { # section <file> <heading>: the body of one "## <heading>" section
   awk -v h="## $2" '$0 == h { on = 1; next } /^## / { on = 0 } on' "$1"
@@ -462,7 +470,7 @@ except OSError:
 open(p, "w").write(re.sub(r"^- Verification record: .*$", lambda m: "- Verification record: " + line, hb, count=1, flags=re.M))
 PY
   wtgit add "$HANDBACK"
-  wtgit commit -q -m "handback: $TICKET verification record"
+  wtgit commit -q -m "handback: ${GIT_KEY}verification record"
 }
 
 # ensure_handback <name>: what a builder stopped early (time box, budget) left undone and the runner can do for it, so
@@ -486,7 +494,7 @@ PY
     ev "$1 wrote no hand-back: the runner started one from the template"
   fi
   if [ -n "$(git -C "$WT" status --porcelain -- "$HANDBACK")" ]; then
-    wtgit add "$HANDBACK" && wtgit commit -q -m "handback: $TICKET builder sections (committed by the runner)"
+    wtgit add "$HANDBACK" && wtgit commit -q -m "handback: ${GIT_KEY}builder sections (committed by the runner)"
   fi
   return 0
 }
@@ -558,7 +566,7 @@ apply_docs() {
     mkdir -p "$(dirname "$WT/$rel")" && cp "$f" "$WT/$rel" && wtgit add -- "$rel"
   done < <(find "$st" -type f)
   git -C "$WT" diff --cached --quiet && return 0
-  wtgit commit -q -m "$TICKET: Updated the docs the builder staged under $HANDBACK/docs" \
+  wtgit commit -q -m "${MSG_PREFIX}Updated the docs the builder staged under $HANDBACK/docs" \
     && ev "applied the builder's staged docs: $(echo $(git -C "$WT" diff --name-only HEAD~1 HEAD))"
 }
 
@@ -1100,7 +1108,7 @@ write_qa() {
     write_section "Exploratory QA" "$RUN/qa-$n/explore-section.md"
   fi
   wtgit add "$HANDBACK"
-  wtgit commit -q -m "handback: $TICKET runtime check $n"
+  wtgit commit -q -m "handback: ${GIT_KEY}runtime check $n"
 }
 
 # calibrate: one line a finished loop run in $FACTORY_RUNS/.calibration.tsv, what its size bought against what it used,
@@ -1325,7 +1333,7 @@ hb = open(p).read()
 hb = re.sub(r"^Decision: .*$", lambda m: "Decision: send back: " + why, hb, count=1, flags=re.M)
 open(p, "w").write(hb)
 PY
-  [ "$CONTINUE" = yes ] || wtgit commit -q -am "handback: $TICKET judge sent back"
+  [ "$CONTINUE" = yes ] || wtgit commit -q -am "handback: ${GIT_KEY}judge sent back"
   builds=$(ls -d "$WT/$HANDBACK"/qa-* 2> /dev/null | sed 's/.*qa-//' | sort -n | tail -1)
   builds=${builds:-0}
   reason="the human judge sent it back: $JUDGE_REASON. The ticket's spec was updated for it (merged into this branch)."
@@ -1385,7 +1393,7 @@ while :; do
     ckpt=""
     if { [ "$rc" = 142 ] || [ "$st" = error_max_budget_usd ]; } && [ -n "$(git -C "$WT" status --porcelain -- . ':(exclude)handback')" ]; then
       wtgit add -A -- . ':(exclude)handback' \
-        && wtgit commit -q -m "$TICKET: Work in progress, checkpointed by the runner ($name stopped: $out)" \
+        && wtgit commit -q -m "${MSG_PREFIX}Work in progress, checkpointed by the runner ($name stopped: $out)" \
         && ckpt=$(git -C "$WT" rev-parse --short HEAD) && ev "$name: its unfinished work checkpointed as $ckpt"
     fi
     # A builder stopped by its time box after its code commit is not a failed round: the runner commits what it left
@@ -1492,7 +1500,7 @@ while :; do
       echo "- Reviewed code: $rev_code"; echo "- Written back to the harness: none"; } > "$RUN/$rname.section.md"
     write_section "Review (reviewer)" "$RUN/$rname.section.md"
     wtgit add "$HANDBACK/hand-back.md"
-    wtgit commit -q -m "handback: $TICKET review"
+    wtgit commit -q -m "handback: ${GIT_KEY}review"
     row "$builds" reviewer "$rname" "Recommend: $rec"
     case "$rec" in merge*) result "$rname" proceed ;; *) result "$rname" new-round ;; esac
     ev "$rname recommend='$rec' spent=\$$SPENT"

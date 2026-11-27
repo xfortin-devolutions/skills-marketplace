@@ -48,6 +48,9 @@ PR_MODEL=claude-sonnet-5-5  PR_USD=1   PR_MIN=10
 # The repo's PR instructions (a PR skill, a doc), repo-relative, read first by the PR writer; the project sets them. The
 # writer also looks for the repo's own; with none, it fills templates/pr-template.md and titles are held to PR_TITLE_MAX.
 PR_INSTRUCTIONS=""          PR_TITLE_MAX=72
+# A signature line the runner adds to the description, for a repo whose rules want agent-written PRs signed; @LOGIN@ is
+# the gh account's login. Empty: none.
+PR_FOOTER=""
 # Size classes: each sets the limits it names (absolute values; the ones it leaves out keep the values above). The
 # assessor picks a class; SIZE in the ticket .sh or --size picks one on purpose. SIZE_CEILING caps the values of a class
 # the assessor picked, never one a human or an agent set (ticket .sh, --size, --set): going above it is a decision.
@@ -87,6 +90,10 @@ DEFAULT_PROFILE=""
 DOC_PATHS=""
 PR_BASE=master
 BRANCH_PREFIX=factory/
+# Whether the ticket's key goes into git and the PR (branch names, commit messages, the PR's title and description). A
+# public repo's project sets TICKET_IN_GIT=no: outsiders can't open the tickets. Its tickets then name their branch
+# (BRANCH_SLUG in the ticket .sh) and its profile may start the runner's commit messages (COMMIT_PREFIX).
+TICKET_IN_GIT=yes
 PROTECTED_EXTRA=""
 
 PROJECT_DIR="" PROJECT_FROM=""
@@ -132,6 +139,14 @@ if [ -n "${TICKET:-}" ] && [ -f "$TICKETS_DIR/$TICKET.sh" ]; then
   product_dir "$VM_PRODUCT" || return 2
   load_product "$PRODUCT_DIR" "$PLATFORM" || return 2
   . "$PROFILE_DIR/profile.sh"
+fi
+
+# The ticket key as git and the PR carry it: GIT_REF names the branches, GIT_KEY ("KEY " or nothing) goes in the
+# hand-back commits' messages, MSG_PREFIX starts the others'. With TICKET_IN_GIT=no, none of them holds the key.
+if [ "$TICKET_IN_GIT" = no ]; then
+  GIT_REF=${BRANCH_SLUG:-} GIT_KEY="" MSG_PREFIX=${COMMIT_PREFIX:-}
+else
+  GIT_REF=$(echo "${TICKET:-}" | tr '[:upper:]' '[:lower:]') GIT_KEY="${TICKET:-} " MSG_PREFIX="${TICKET:-}: "
 fi
 
 # This machine: the VM toolkit's settings (VM root, CPUs, RAM, slots), then the factory's own, which may set them too.

@@ -25,8 +25,8 @@ what the person copies. Setup: [references/vm-setup-macos.md](references/vm-setu
 apart from any repo). Run `vmt` from inside the repo, or pass `--repo <path>` first.
 
 What a product is, and how its VM builds, tests and launches it, is its **definition**: the repo's `.vm/<product>/`, else
-the one this skill bundles for the repo in `projects/<project>/` (today `devolutions-rdm`: `rdm` and `console`, on
-Windows). Contract: [references/products.md](references/products.md).
+the one this skill bundles for the repo in `projects/<project>/` (today `devolutions-rdm`: `rdm` and `console`;
+`avalonia-extensions`: `sampleapp`; all on Windows). Contract: [references/products.md](references/products.md).
 
 ## Pick the job
 

@@ -40,6 +40,14 @@ The project's `config.sh` may set `PR_INSTRUCTIONS`: the repo's own PR instructi
 reads first and follows; a path missing at run time is logged. Without them it looks for the repo's own, and with none
 it fills the engine's `templates/pr-template.md`.
 
+A public repo's project sets `TICKET_IN_GIT=no` (default `yes`): no ticket key or link reaches git or the PR. The
+ticket's `.sh` names the branch (`BRANCH_SLUG`), the profile's `COMMIT_PREFIX` starts the runner's commit messages (they
+start with the key otherwise), the builder is told to keep the key out of everything it commits, the PR writer out of
+the title and description, and `pr.sh` publishes the branch without `handback/` (each commit again without it: the
+run's own branch keeps it for the judge) and refuses to push when the branch, the PR, a commit message or an added line
+names a key of the ticket's project or a Jira link. A repo whose rules want agent-written PRs signed sets `PR_FOOTER`
+(`@LOGIN@` is the gh account's login): the runner appends it to the description.
+
 The project's `config.sh` also sets `DOC_PATHS`: repo path prefixes of docs any change may update (for RDM, the root
 `.claude/skills/ docs/ CLAUDE.md` plus the DVLS and Console folders' own skills and CLAUDE.md). The builder keeps them
 true, verify accepts them whatever the ticket's scope, the reviewer's Docs line checks them, and `factory.sh which`
@@ -60,6 +68,7 @@ the product's `product.sh` and `target.sh` < `profile.sh` < `~/.vm-toolkit/confi
 | `BRANCH_PREFIX` | yes | prefix of the run's branch; `TICKET` is set when it is read | `devex/factory-` |
 | `PR_BASE` | yes | the draft PR's target branch | `master` |
 | `PROTECTED_EXTRA` | no | paths the builder may never touch, beyond the oracle, `.factory` and `.claude` | `.github` |
+| `COMMIT_PREFIX` | no | with `TICKET_IN_GIT=no` only: what starts the runner's commit messages and the builder's | `[Controls] ` |
 
 No build or test command lives here, nor the app name, code paths or targets: those are the product definition's.
 `factory.sh which <path>` maps a path to its product (the toolkit's `CODE_PATHS`), then to the profile using it.

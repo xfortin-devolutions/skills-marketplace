@@ -43,13 +43,13 @@ a plugin, apart from any repo). Run every command from inside the target repo or
 the repo it is run from. The skill is the engine; what a repo's products need is its **project**, described in
 [references/profiles.md](references/profiles.md). While the factory is experimental, projects ship with the skill:
 `projects/<project>/`, picked by `REPO_MATCH` against the repo's `origin`; the supported ones are listed in
-[projects/README.md](projects/README.md) (today `devolutions-rdm`: RDM and Devolutions Console, on Windows). A repo's own
+[projects/README.md](projects/README.md) (today `devolutions-rdm`: RDM and Devolutions Console, on Windows; `avalonia-extensions`: its SampleApp, on Windows). A repo's own
 `.factory/profiles/` wins, which is how a project moves into its repo later. `factory.sh check` says which one is used.
 The VMs and the products themselves are the **VM toolkit**'s, a plugin of its own (`vm-toolkit`, its skill `vm`), which
 must be installed too: `V=<vm-toolkit skill dir>/scripts` (`factory.sh check` prints it). It owns the golden image and
 layers, the per-run clones, the guest tool, and each product's **definition** (`CODE_PATHS`, guest targets with their
 image and build/test/launch scripts, its VM layer): the repo's `.vm/`, else the one it bundles for the repo
-(`projects/devolutions-rdm/`). Contract: its `references/products.md`.
+(`projects/devolutions-rdm/`, `projects/avalonia-extensions/`). Contract: its `references/products.md`.
 - `<project>/config.sh`: team defaults (models, caps, `DEFAULT_PROFILE`, `REPO_MATCH`, `DASHBOARD_NAME`, `DASHBOARD_PORT`).
 - `<project>/profiles/<name>/`: the factory's settings for one product (`rdm`, `console`, …): `profile.sh` (protected
   paths, branch prefix, PR base, review standards, and `VM_PRODUCT` when the product definition has another name than
