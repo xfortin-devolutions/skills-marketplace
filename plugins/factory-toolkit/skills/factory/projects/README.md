@@ -11,6 +11,7 @@ build/test/launch scripts, VM layers) are the VM toolkit's definitions: the repo
 |---|---|---|---|---|---|
 | `devolutions-rdm` | Devolutions/RDM | `rdm`: Remote Desktop Manager (default) | `RDM/` | windows | `base.qcow2` |
 | | | `console`: Devolutions Console (Avalonia) | `Console/`, `DVLS/Console/Console.Common/` (+ `.Tests/`) | windows | `devolutions-console.qcow2` (layer: the toolkit's `projects/devolutions-rdm/console/layer/`) |
+| `avalonia-extensions` | Devolutions/avalonia-extensions (public: `TICKET_IN_GIT=no`) | `sampleapp`: the themes and controls, run in the SampleApp (default) | `src/`, `samples/`, `tests/` | windows | `base.qcow2` |
 
 Not supported yet in that repo: DVLS (`DVLS/`), Hub, DPM and the rest. A ticket there makes the spec step stop and offer
 to set the product up first (`factory.sh which <path>` says "no profile").
